@@ -1,13 +1,13 @@
 --[=====[
 [[SND Metadata]]
-author: Baanderson40
-version: 0.0.2
-description: Restart pot0to Fate Farming Script
+author: baanderson40
+version: 0.0.3
+description: Restart pot0to Fate Farming script when stuck between fates.
 
 configs:
     Fate Farming Script Name:
         default: Fate Farming - pot0to
-        description: The name for your fate farming script.
+        description: The name of your fate farming script.
         type: string
         required: true
     Wait Interval:
@@ -26,21 +26,57 @@ configs:
         type: boolean
         required: true
 
+
 [[End Metadata]]
+
+********************************************************************************
+*                                  Changelog                                   *
+********************************************************************************
+
+	0.0.2:	Initial release
+	0.0.3:	Updated layout
+		Added  EntityPlayerPosition functions
+		Removed _function.lua dependency
+		Fixed Debug_Chat functionality
+		Removed state machine code
+
+********************************************************************************
+*                               Required Plugins                               *
+********************************************************************************
+
+Plugins that are needed for it to work:
+
+	1. Something Need Doing | https://puni.sh/api/repository/croizat
+
+********************************************************************************
+*                                Optional Plugins                              *
+********************************************************************************
+
+	N/A
+
+********************************************************************************
+*                             Required SND Scripts                             *
+********************************************************************************
+
+Scripts that are needed for it to work:
+
+	1. pot0to - Fate Farming | https://github.com/pot0to/pot0to-SND-Scripts/blob/main/New%20SND/Fate%20Farming/Fate%20Farming.lua
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+
 --]=====]
 
 -- Imports
 import("System.Numerics")
-loadfiyel = os.getenv("appdata").."\\XIVLauncher\\pluginConfigs\\SomethingNeedDoing\\_functions.lua"
-functionsToLoad = loadfile(loadfiyel)
-functionsToLoad()
+
 
 --Config variables
 local Fate_Script = Config.Get("Fate Farming Script Name")
 local Wait_Interval = Config.Get("Wait Interval")
 local Max_Cycle_Count = Config.Get("Max Cycle Count")
-local Display_Debug = Config.Get("Display Debug")
+local Display_Debug = Config.Get("Display Debug in chat")
 local Cycle_Counter = 0
+local CharacterState = {}
 
 
 -- Character Conditions
@@ -66,15 +102,32 @@ CharacterCondition = {
     flying = 77
 }
 
+
 -- State Machine
-local State = nil
-local CharacterState = {}
+
 
 -- Helper Functions
 local function Sleep(seconds)
     yield('/wait ' .. tostring(seconds))
 end
 
+function EntityPlayerPositionX()
+	if Entity.Player.Position then return Entity.Player.Position.X end
+	return 0
+end
+
+function EntityPlayerPositionY()
+	if Entity.Player.Position then return Entity.Player.Position.Y end
+	return 0
+end
+
+function EntityPlayerPositionZ()
+	if Entity.Player.Position then return Entity.Player.Position.Z end
+	return 0
+end
+
+
+-- Main Functions
 function CharacterState.restartFateScript()
 	-- Stop Fate Farming script to restart it
 	Dalamud.LogDebug("[Unstick - Fate] - turning off " .. tostring(Fate_Script))
@@ -91,7 +144,9 @@ function CharacterState.restartFateScript()
 	Cycle_Counter = 0
 end
 
+
 -- Startup
+
 
 -- Main loop
 while true do
