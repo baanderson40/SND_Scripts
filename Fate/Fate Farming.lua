@@ -1,27 +1,18 @@
 --[=====[
 [[SND Metadata]]
 author: pot0to || updated by baanderson40
-version: 3.0.10k
+version: 3.0.10l
 description: >-
   Fate farming script with the following features:
-
   - Can purchase Bicolor Gemstone Vouchers (both old and new) when your gemstones are almost capped
-
   - Priority system for Fate selection: distance w/ teleport > most progress > is bonus fate > least time left > distance
-
   - Will prioritize Forlorns when they show up during Fate
-
   - Can do all fates, including NPC collection fates
-
   - Revives upon death and gets back to fate farming
-
   - Attempts to change instances when there are no fates left in the zone
-
   - Can process your retainers and Grand Company turn ins, then get back to fate farming
-
   - Autobuys gysahl greens and grade 8 dark matter when you run out
-
-  - Has companion scripts dedicated to atma farming, or you can write your own! (See section for companion scripts)
+  - Has companion scripts dedicated to atma farming, or you can write your own! (See section for companion scripts) Probably doesn't work.
 plugin_dependencies:
 - Lifestream
 - vnavmesh
@@ -33,19 +24,61 @@ configs:
     description: "--- General Settings Section ---"
 
   Echo logs:
-    default: All
+    default: Gems
     type: string
-    description: Options - All/Gems/None
+    description: |
+      Supported values:
+        - All
+        - Gems
+        - None
 
   Rotation Plugin:
     default: "Any"
     type: string
-    description: Options - Any/Wrath/RotationSolver/BossMod/BossModReborn. What Rotation Plugin to use.
+    description: |
+      What roation plugin to use
+      Supported values:
+        - Any
+        - Wrath
+        - RotationSolver
+        - BossMod
+        - BossModReborn
 
   Dodging Plugin:
     default: "Any"
     type: string
-    description: Options - Any/BossMod/BossModReborn/None. What Dodging Plugin to use. If your RotationPlugin is BossModReborn/BossMod, then this will be overriden
+    description: |
+      What dodging plugin to use. If your Rotation plugin is BMR or VBM, this will be overriden.
+      Supported values:
+        - Any
+        - BossMod
+        - BossModReborn
+        - None
+
+  BMR/VBM Specific settings:
+    default: false
+    type: boolean
+    description: "--- BMR/VBM Specific settings if you are using one of them as your rotation plugin ---"    
+    
+  Single Target Rotation:
+    default: ""
+    type: string
+    description: Preset name with single strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET   
+
+  AoE Rotation:
+    default: ""
+    type: string
+    description: Preset with AoE and Buff Strategies.
+    
+  Hold Buff Rotation:
+    default: ""
+    type: string
+    description: Preset to hold 2min burst when progress gets to select %
+
+  Percentage to Hold Buff:
+    default: 65
+    type: int
+    description: Ideally you want to make full use of your buffs, higher then 70% will still waste a few seconds if progress is too fast.
 
   Combat & Buffs:
     default: false
@@ -120,7 +153,12 @@ configs:
   Forlorns:
     default: All
     type: string
-    description: Options - All/Small/None
+    description: |
+      Forlorns to attack.
+      Supported values:
+        - All
+        - Small
+        - None
     required: true
 
   Change instances if no FATEs?:
@@ -135,7 +173,7 @@ configs:
   Exchange bicolor gemstones for:
     default: Turali Bicolor Gemstone Voucher
     type: string
-    description: Leave blank if you dont want to spend your bicolors
+    description: Leave blank if you dont want to spend your bicolors. See the bottom options for supported items.
 
   Mount & Chocobo:
     default: false
@@ -181,6 +219,49 @@ configs:
     type: boolean
     description: Auto accept the box to return to home aetheryte when you die.
 
+  Bicolor Gemstone Items:
+    default: false
+    type: boolean
+    description: |
+      Item name to select.  
+      Supported values:
+        - Alexandrian Axe Beak Wing
+        - Alpaca Fillet
+        - Almasty Fur
+        - Amra
+        - Berkanan Sap
+        - Bicolor Gemstone Voucher
+        - Bird of Elpis Breast
+        - Branchbearer Fruit
+        - Br'aax Hide
+        - Dynamis Crystal
+        - Dynamite Ash
+        - Egg of Elpis
+        - Gaja Hide
+        - Gargantua Hide
+        - Gomphotherium Skin
+        - Hammerhead Crocodile Skin
+        - Hamsa Tenderloin
+        - Kumbhira Skin
+        - Lesser Apollyon Shell
+        - Lunatender Blossom
+        - Luncheon Toad Skin
+        - Megamaguey Pineapple
+        - Mousse Flesh
+        - Nopalitender Tuna
+        - Ovibos Milk
+        - Ophiotauros Hide
+        - Petalouda Scales
+        - Poison Frog Secretions
+        - Rroneek Chuck
+        - Rroneek Fleece
+        - Saiga Hide
+        - Silver Lobo Hide
+        - Swampmonk Thigh
+        - Tumbleclaw Weeds
+        - Turali Bicolor Gemstone Voucher
+        - Ty'aitya Wingblade
+
 
 [[End Metadata]]
 --]=====]
@@ -201,7 +282,8 @@ configs:
             h   Removed the remaining yields except for waits.
             i   Ready function optimized and refactord.
             j   Reworked Rotation and Dodging pluings.
-            k   Fixed Materia Extraction
+            k   Fixed Materia Extraction.
+            l   Updated Config settings for BMR/VMR rotation plugins. 
     -> 3.0.9    By Allison.
                 Fix standing in place after fate finishes bug.
                 Add config options for Rotation Plugin and Dodging Plugin (Fixed bug when multiple solvers present at once)
@@ -1384,7 +1466,7 @@ function SelectNextFate()
     Dalamud.Log("[FATE] Finished considering all fates")
     if nextFate == nil then
         Dalamud.Log("[FATE] No eligible fates found.")
-        if Echo == "All" then
+        if Echo == "all" then
             Engines.Run("/echo  [FATE] No eligible fates found.")
         end
     else
@@ -1990,7 +2072,7 @@ function MoveToFate()
     if not MovingAnnouncementLock then
         Dalamud.Log("[FATE] Moving to fate #"..CurrentFate.fateId.." "..CurrentFate.fateName)
         MovingAnnouncementLock = true
-        if Echo == "All" then
+        if Echo == "all" then
             Engines.Run("/echo  [FATE] Moving to fate #"..CurrentFate.fateId.." "..CurrentFate.fateName)
         end
     end
@@ -2529,7 +2611,7 @@ function DoFate()
         elseif not Svc.Targets.Target.IsDead then
             if not ForlornMarked then
                 Engines.Run("/enemysign attack1")
-                if Echo == "All" then
+                if Echo == "all" then
                     Engines.Run("/echo  Found Forlorn! <se.3>")
                 end
                 TurnOffAoes()
@@ -2629,7 +2711,7 @@ function Ready()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(RemainingDurabilityToRepair)
     local spiritbonded = Inventory.GetSpiritbondedItems()
 
-    if not GemAnnouncementLock and (Echo == "All" or Echo == "Gems") then
+    if not GemAnnouncementLock and (Echo == "all" or Echo == "gems") then
         GemAnnouncementLock = true
         if BicolorGemCount >= 1400 then
             Engines.Run("/echo  [FATE] You're almost capped with "..tostring(BicolorGemCount).."/1500 gems! <se.3>")
@@ -2765,7 +2847,7 @@ function HandleDeath()
         if ReturnOnDeath then
             if Echo and not DeathAnnouncementLock then
                 DeathAnnouncementLock = true
-                if Echo == "All" then
+                if Echo == "all" then
                     Engines.Run("/echo  [FATE] You have died. Returning to home aetheryte.")
                 end
             end
@@ -2777,7 +2859,7 @@ function HandleDeath()
         else
             if Echo and not DeathAnnouncementLock then
                 DeathAnnouncementLock = true
-                if Echo == "All" then
+                if Echo == "all" then
                     Engines.Run("/echo  [FATE] You have died. Waiting until script detects you're alive again...")
                 end
             end
@@ -2887,7 +2969,7 @@ function ProcessRetainers()
             Engines.Run("/interact")
             if Addons.GetAddon("RetainerList").Ready then
                 Engines.Run("/ays e")
-                if Echo == "All" then
+                if Echo == "all" then
                     Engines.Run("/echo  [FATE] Processing retainers")
                 end
                 yield("/wait 1")
@@ -2983,7 +3065,7 @@ function Repair()
             end
         elseif ShouldAutoBuyDarkMatter then
             if Svc.ClientState.TerritoryType ~=  129 then
-                if Echo == "All" then
+                if Echo == "all" then
                     Engines.Run("/echo  Out of Dark Matter! Purchasing more from Limsa Lominsa.")
                 end
                 TeleportTo("Limsa Lominsa Lower Decks")
@@ -3012,7 +3094,7 @@ function Repair()
                 end
             end
         else
-            if Echo == "All" then
+            if Echo == "all" then
                 Engines.Run("/echo  Out of Dark Matter and ShouldAutoBuyDarkMatter is false. Switching to Limsa mender.")
             end
             SelfRepair = false
@@ -3197,8 +3279,8 @@ BonusFatesOnly = Config.Get("Do only bonus FATEs?")         --If true, will only
 MeleeDist = Config.Get("Max melee distance")
 RangedDist = Config.Get("Max ranged distance")
 
-RotationPlugin = Config.Get("Rotation Plugin")
-if RotationPlugin == "Any" then
+RotationPlugin = string.lower(Config.Get("Rotation Plugin"))
+if RotationPlugin == "any" then
     if HasPlugin("WrathCombo") then
         RotationPlugin = "Wrath"
     elseif HasPlugin("RotationSolver") then
@@ -3208,13 +3290,13 @@ if RotationPlugin == "Any" then
     elseif HasPlugin("BossMod") then
         RotationPlugin = "VBM"
     end
-elseif RotationPlugin == "Wrath" and HasPlugin("WrathCombo") then
+elseif RotationPlugin == "wrath" and HasPlugin("WrathCombo") then
     RotationPlugin = "Wrath"
-elseif RotationPlugin == "RotationSolver" and HasPlugin("RotationSolver") then
+elseif RotationPlugin == "rotationsolver" and HasPlugin("RotationSolver") then
     RotationPlugin = "RSR"
-elseif RotationPlugin == "BossModReborn" and HasPlugin("BossModReborn") then
+elseif RotationPlugin == "bossmodreborn" and HasPlugin("BossModReborn") then
     RotationPlugin = "BMR"
-elseif RotationPlugin == "BossMod" and HasPlugin("BossMod") then
+elseif RotationPlugin == "bossbod" and HasPlugin("BossMod") then
     RotationPlugin = "VBM"
 else
     StopScript = true
@@ -3222,17 +3304,17 @@ end
     RSRAoeType                      = "Full"        --Options: Cleave/Full/Off
 
     -- For BMR/VBM/Wrath
-    RotationSingleTargetPreset      = ""            --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
-    RotationAoePreset               = ""            --Preset with AOE + Buff strategies.
-    RotationHoldBuffPreset          = ""            --Preset to hold 2min burst when progress gets to seleted %
-    PercentageToHoldBuff            = 65            --Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
+    RotationSingleTargetPreset      = Config.Get("Single Target Rotation") --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
+    RotationAoePreset               = Config.Get("AoE Rotation")           --Preset with AOE + Buff strategies.
+    RotationHoldBuffPreset          = Config.Get("Hold Buff Rotation")     --Preset to hold 2min burst when progress gets to seleted %
+    PercentageToHoldBuff            = Config.Get("Percentage to Hold Buff")--Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
 
 IgnoreForlorns = false
 IgnoreBigForlornOnly = false
-Forlorns = Config.Get("Forlorns")
-if Forlorns == "None" then
+Forlorns = string.lower(Config.Get("Forlorns"))
+if Forlorns == "none" then
     IgnoreForlorns = true
-elseif Forlorns == "Small" then
+elseif Forlorns == "small" then
     IgnoreBigForlornOnly = true
 end
 
@@ -3260,14 +3342,14 @@ ShouldGrandCompanyTurnIn = Config.Get("Dump extra gear at GC?")         --should
 
 ReturnOnDeath = Config.Get("Return on death?")
 
-Echo = Config.Get("Echo logs")
+Echo = string.lower(Config.Get("Echo logs"))
 CompanionScriptMode                 = false         --Set to true if you are using the fate script with a companion script (such as the Atma Farmer)
 
 -- Get user-configured plugin
-local dodgeConfig = Config.Get("Dodging Plugin")  -- Options: Any / BossModReborn / BossMod / None
+local dodgeConfig = string.lower(Config.Get("Dodging Plugin"))  -- Options: Any / BossModReborn / BossMod / None
 
 -- Resolve "any" or specific plugin if available
-if dodgeConfig == "Any" then
+if dodgeConfig == "any" then
     if HasPlugin("BossModReborn") then
         DodgingPlugin = "BMR"
     elseif HasPlugin("BossMod") then
@@ -3275,9 +3357,9 @@ if dodgeConfig == "Any" then
     else
         DodgingPlugin = "None"
     end
-elseif dodgeConfig == "BossModReborn" and HasPlugin("BossModReborn") then
+elseif dodgeConfig == "bossmodreborn" and HasPlugin("BossModReborn") then
     DodgingPlugin = "BMR"
-elseif dodgeConfig == "BossMod" and HasPlugin("BossMod") then
+elseif dodgeConfig == "bossmod" and HasPlugin("BossMod") then
     DodgingPlugin = "VBM"
 else
     DodgingPlugin = "None"
@@ -3332,7 +3414,7 @@ end
 SetMaxDistance()
 
 SelectedZone = SelectNextZone()
-if SelectedZone.zoneName ~= "" and Echo == "All" then
+if SelectedZone.zoneName ~= "" and Echo == "all" then
     Engines.Run("/echo  [FATE] Farming "..SelectedZone.zoneName)
 end
 Dalamud.Log("[FATE] Farming Start for "..SelectedZone.zoneName)
