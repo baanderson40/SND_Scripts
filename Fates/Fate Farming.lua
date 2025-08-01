@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: pot0to || updated by baanderson40
-version: 3.0.10l
+version: 3.0.10m
 description: >-
   Fate farming script with the following features:
   - Can purchase Bicolor Gemstone Vouchers (both old and new) when your gemstones are almost capped
@@ -162,7 +162,12 @@ configs:
     required: true
 
   Change instances if no FATEs?:
+    default: false
+    type: boolean
+
+  Randomly Move if no eligible Fate?:
     default: true
+    description: Will automatically move after a fate if there are no eligible fates available.
     type: boolean
 
   Bicolor Exchange:
@@ -282,8 +287,9 @@ configs:
             h   Removed the remaining yields except for waits.
             i   Ready function optimized and refactord.
             j   Reworked Rotation and Dodging pluings.
-            k   Fixed Materia Extraction.
-            l   Updated Config settings for BMR/VMR rotation plugins. 
+            k   Fixed Materia Extraction
+            l   Updated Config settings for BMR/VMR rotations
+            m   Added option to move to random location after fate if none are eligible.
     -> 3.0.9    By Allison.
                 Fix standing in place after fate finishes bug.
                 Add config options for Rotation Plugin and Dodging Plugin (Fixed bug when multiple solvers present at once)
@@ -1699,6 +1705,7 @@ function TeleportTo(aetheryteName)
     end
     yield("/wait 1")
     LastTeleportTimeStamp = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
+    HasFlownUpYet = false
     return true
 end
 
@@ -1870,6 +1877,30 @@ function FlyBackToAetheryte()
         Mount()
         return
     end
+end
+
+HasFlownUpYet = false
+function MoveToRandomNearbySpot(minDist, maxDist)
+    local playerPos = Svc.ClientState.LocalPlayer.Position
+    local angle = math.random() * 2 * math.pi
+    local distance = minDist + math.random() * (maxDist - minDist)
+    local dx = math.cos(angle) * distance
+    local dz = math.sin(angle) * distance
+    local yOffset = 0
+    if not HasFlownUpYet then
+        -- Always fly upward significantly the first time
+        yOffset = 25 + math.random() * 15  -- +25 to +40
+        HasFlownUpYet = true
+    else
+        yOffset = (math.random() * 30) - 15  -- -15 to +15
+    end
+    local targetPos = Vector3(playerPos.X + dx, playerPos.Y + yOffset, playerPos.Z + dz)
+    if not Svc.Condition[CharacterCondition.mounted] then
+        Mount()
+        yield("/wait 2")
+    end
+    IPC.vnavmesh.PathfindAndMoveTo(targetPos, true)
+    Engines.Run("/echo  [FATE] Moving to a random location while waiting...")
 end
 
 function Mount()
@@ -2796,11 +2827,13 @@ function Ready()
             Dalamud.Log("[FATE] State Change: FlyBackToAetheryte")
             return
         end
-        if not Svc.Condition[CharacterCondition.mounted] then
-            Mount()
+        if MoveToRandomSpot then
+            MoveToRandomNearbySpot(50, 75)
+            yield("/wait 10")
         end
-        return
+        return        
     end
+
 
     if NextFate == nil and shouldWaitForBonusBuff and DownTimeWaitAtNearestAetheryte then
         if Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" or GetDistanceToTarget() > 20 then
@@ -2827,6 +2860,7 @@ function Ready()
     end
 
     CurrentFate = NextFate
+    HasFlownUpYet = false
     SetMapFlag(SelectedZone.zoneId, CurrentFate.position)
     State = CharacterState.moveToFate
     Dalamud.Log("[FATE] State Change: MovingtoFate "..CurrentFate.fateName)
@@ -2869,6 +2903,7 @@ function HandleDeath()
         State = CharacterState.ready
         Dalamud.Log("[FATE] State Change: Ready")
         DeathAnnouncementLock = false
+        HasFlownUpYet = false
     end
 end
 
@@ -3344,6 +3379,7 @@ ReturnOnDeath = Config.Get("Return on death?")
 
 Echo = string.lower(Config.Get("Echo logs"))
 CompanionScriptMode                 = false         --Set to true if you are using the fate script with a companion script (such as the Atma Farmer)
+MoveToRandomSpot = Config.Get("Randomly Move if no eligible Fate?")
 
 -- Get user-configured plugin
 local dodgeConfig = string.lower(Config.Get("Dodging Plugin"))  -- Options: Any / BossModReborn / BossMod / None
