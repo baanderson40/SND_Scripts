@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
-author: pot0to
-version: 3.0.10
+author: pot0to || updated by baanderson40
+version: 3.0.10k
 description: >-
   Fate farming script with the following features:
 
@@ -3062,6 +3062,7 @@ function ExtractMateria()
     if Inventory.GetSpiritbondedItems().Count > 0 and Inventory.GetFreeInventorySlots() > 1 then
         if not Addons.GetAddon("Materialize").Ready then
             Engines.Run("/generalaction \"Materia Extraction\"")
+            yield("/wait .25")
             return
         end
 
@@ -3069,12 +3070,15 @@ function ExtractMateria()
             
         if Addons.GetAddon("MaterializeDialog").Ready then
             Engines.Run("/callback MaterializeDialog true 0")
+            yield("/wait .25")
         else
             Engines.Run("/callback Materialize true 2 0")
+            yield("/wait .25")
         end
     else
         if Addons.GetAddon("Materialize").Ready then
             Engines.Run("/callback Materialize true -1")
+            yield("/wait .25")
         else
             State = CharacterState.ready
             Dalamud.Log("[FATE] State Change: Ready")
