@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: pot0to || updated by baanderson40
-version: 3.0.10m
+version: 3.0.10n
 description: >-
   Fate farming script with the following features:
   - Can purchase Bicolor Gemstone Vouchers (both old and new) when your gemstones are almost capped
@@ -162,11 +162,11 @@ configs:
     required: true
 
   Change instances if no FATEs?:
-    default: false
+    default: true
     type: boolean
 
   Randomly Move if no eligible Fate?:
-    default: true
+    default: false
     description: Will automatically move after a fate if there are no eligible fates available.
     type: boolean
 
@@ -267,7 +267,6 @@ configs:
         - Turali Bicolor Gemstone Voucher
         - Ty'aitya Wingblade
 
-
 [[End Metadata]]
 --]=====]
 --[[
@@ -290,6 +289,7 @@ configs:
             k   Fixed Materia Extraction
             l   Updated Config settings for BMR/VMR rotations
             m   Added option to move to random location after fate if none are eligible.
+            n   Actually fixed WaitingForFateRewards & instance hopping.
     -> 3.0.9    By Allison.
                 Fix standing in place after fate finishes bug.
                 Add config options for Rotation Plugin and Dodging Plugin (Fixed bug when multiple solvers present at once)
@@ -1513,7 +1513,6 @@ function GetDistanceToTarget()
     end
 end
 
-
 function GetDistanceToTargetFlat()
     if Svc.Targets.Target ~= nil then
         return GetDistanceToPointFlat(Svc.Targets.Target.Position)
@@ -1531,7 +1530,6 @@ function DistanceBetweenFlat(pos1, pos2)
     local flat2 = Vector3(pos2.X, 0, pos2.Z)
     return Vector3.Distance(flat1, flat2)
 end
-
 
 function RandomAdjustCoordinates(position, maxDistance)
     local angle = math.random() * 2 * math.pi
@@ -1726,7 +1724,7 @@ function ChangeInstance()
         return
     end
 
-    Engines.Run("/target aetheryte") -- search for nearby aetheryte
+    yield("/target aetheryte") -- search for nearby aetheryte
     if Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" then -- if no aetheryte within targeting range, teleport to it
         Dalamud.Log("[FATE] Aetheryte not within targetable range")
         local closestAetheryte = nil
@@ -1754,9 +1752,9 @@ function ChangeInstance()
         Dalamud.Log("[FATE] Targeting aetheryte, but greater than 10 distance")
         if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
             if Svc.Condition[CharacterCondition.flying] and SelectedZone.flying then
-                Engines.Run("/vnav flytarget")
+                yield("/vnav flytarget")
             else
-                Engines.Run("/vnav movetarget")
+                yield("/vnav movetarget")
             end
         elseif GetDistanceToTarget() > 20 and not Svc.Condition[CharacterCondition.mounted] then
             State = CharacterState.mounting
@@ -1767,7 +1765,7 @@ function ChangeInstance()
 
     Dalamud.Log("[FATE] Within 10 distance")
     if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
-        Engines.Run("/vnav stop")
+        yield("/vnav stop")
         return
     end
 
@@ -1779,7 +1777,7 @@ function ChangeInstance()
 
     Dalamud.Log("[FATE] Transferring to next instance")
     local nextInstance = (GetZoneInstance() % 2) + 1
-    Engines.Run("/li "..nextInstance) -- start instance transfer
+    yield("/li "..nextInstance) -- start instance transfer
     yield("/wait 1") -- wait for instance transfer to register
     State = CharacterState.ready
     SuccessiveInstanceChanges = SuccessiveInstanceChanges + 1
@@ -2235,7 +2233,7 @@ function CollectionsFateTurnIn()
     GotCollectionsFullCredit = false
 end
 
---#endregion
+--#endregion movement
 
 --#region Combat Functions
 
@@ -2553,7 +2551,6 @@ function HandleUnexpectedCombat()
     end
     yield("/wait 1")
 end
-
 
 function DoFate()
     Dalamud.Log("[FATE] DoFate")
@@ -3259,6 +3256,8 @@ end
 
 --#endregion Misc Functions
 
+--#region Main
+
 CharacterState = {
     ready = Ready,
     dead = HandleDeath,
@@ -3283,9 +3282,6 @@ CharacterState = {
     autoBuyGysahlGreens = AutoBuyGysahlGreens
 }
 
---#region Main
-
-Dalamud.Log("[FATE] Starting fate farming script.")
 
 Food = Config.Get("Food")
 Potion = Config.Get("Potion")
@@ -3429,6 +3425,7 @@ end
 
 StopScript = false
 DidFate = false
+fateState = nil
 GemAnnouncementLock = false
 DeathAnnouncementLock = false
 MovingAnnouncementLock = false
@@ -3487,6 +3484,8 @@ if ShouldSummonChocobo and GetBuddyTimeRemaining() > 0 then
     Engines.Run('/cac "'..ChocoboStance..' stance"')
 end
 
+Dalamud.Log("[FATE] Starting fate farming script.")
+
 while not StopScript do
     local nearestFate = Fates.GetNearestFate()
     if not IPC.vnavmesh.IsReady() then
@@ -3516,26 +3515,34 @@ while not StopScript do
     
     BicolorGemCount = Inventory.GetItemCount(26807)
 
-    if not (Player.Entity.IsCasting or
-        Svc.Condition[CharacterCondition.betweenAreas] or
-        Svc.Condition[CharacterCondition.jumping48] or
-        Svc.Condition[CharacterCondition.jumping61] or
-        Svc.Condition[CharacterCondition.mounting57] or
-        Svc.Condition[CharacterCondition.mounting64] or
-        Svc.Condition[CharacterCondition.beingMoved] or
-        Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] or
-        IPC.Lifestream.IsBusy())
-    then
-        if WaitingForFateRewards ~= nil then
-            local state = WaitingForFateRewards.fateObject and WaitingForFateRewards.fateObject.State
-            if state ~= nil and state == FateState.Ended then
-                Dalamud.Log("[FATE] Fate complete, clearing WaitingForFateRewards: "..tostring(WaitingForFateRewards.fateId))
-                WaitingForFateRewards = nil
+    if WaitingForFateRewards ~= nil then
+        local state = WaitingForFateRewards.fateObject and WaitingForFateRewards.fateObject.State or nil
+        if WaitingForFateRewards.fateObject == nil
+            or state == nil
+            or state == FateState.Ended
+            or state == FateState.Failed
+        then
+            local msg = "[FATE] WaitingForFateRewards.fateObject is nil or fate state ("..tostring(state)..") indicates fate is finished for fateId: "..tostring(WaitingForFateRewards.fateId)..". Clearing it."
+            Dalamud.Log(msg)
+            if Echo == "all" then
+                Engines.Run("/echo  "..msg)
+            end
+            WaitingForFateRewards = nil
+        else
+            local msg = "[FATE] Not clearing WaitingForFateRewards: fateState="..tostring(state)..", expected one of [Ended: "..tostring(FateState.Ended)..", Failed: "..tostring(FateState.Failed).."] or nil."
+            Dalamud.Log(msg)
+            if Echo == "all" then
+                Engines.Run("/echo  "..msg)
             end
         end
-        State()
     end
-    yield("/wait 0.1")
+    if not (Svc.Condition[CharacterCondition.betweenAreas] 
+        or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] 
+        or IPC.Lifestream.IsBusy())
+        then
+            State()
+    end
+    yield("/wait 0.25")
 end
 Engines.Run("/vnav stop")
 
