@@ -2553,7 +2553,12 @@ function HandleUnexpectedCombat()
 end
 
 function DoFate()
-    Dalamud.Log("[FATE] DoFate")
+    local msg = "[FATE] DoFate"
+    if Echo == "all" then
+        Dalamud.Log(msg)
+        Engines.Run("/echo  "..msg)
+    end
+
     if WaitingForFateRewards == nil or WaitingForFateRewards.fateId ~= CurrentFate.fateId then
         WaitingForFateRewards = CurrentFate
         Dalamud.Log("[FATE] WaitingForFateRewards DoFate: "..tostring(WaitingForFateRewards.fateId))
@@ -2612,8 +2617,12 @@ function DoFate()
         end
     end
 
-    Dalamud.Log("[FATE] DoFate->Finished transition checks")
-
+    local msg = "[FATE] DoFate->Finished transition checks"
+    if Echo == "all" then
+        Dalamud.Log(msg)
+        Engines.Run("/echo  "..msg)
+    end
+                                    
     -- do not target fate npc during combat
     if CurrentFate.npcName ~=nil and GetTargetName() == CurrentFate.npcName then
         Dalamud.Log("[FATE] Attempting to clear target.")
@@ -3523,15 +3532,15 @@ while not StopScript do
             or state == FateState.Failed
         then
             local msg = "[FATE] WaitingForFateRewards.fateObject is nil or fate state ("..tostring(state)..") indicates fate is finished for fateId: "..tostring(WaitingForFateRewards.fateId)..". Clearing it."
-            Dalamud.Log(msg)
             if Echo == "all" then
+                Dalamud.Log(msg)
                 Engines.Run("/echo  "..msg)
             end
             WaitingForFateRewards = nil
         else
             local msg = "[FATE] Not clearing WaitingForFateRewards: fateState="..tostring(state)..", expected one of [Ended: "..tostring(FateState.Ended)..", Failed: "..tostring(FateState.Failed).."] or nil."
-            Dalamud.Log(msg)
             if Echo == "all" then
+                Dalamud.Log(msg)
                 Engines.Run("/echo  "..msg)
             end
         end
