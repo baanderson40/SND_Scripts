@@ -1,26 +1,28 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
-description: Farm MGP by playing Triple Triad NPCs and Saucy.
+version: 1.0.1
+description: | 
+  Support via https://ko-fi.com/baanderson40
+  Farm MGP by playing Triple Triad NPCs and Saucy.
 plugin_dependencies:
 - Saucy
 - vnavmesh
 configs:
   Klynthota:
-    default: 100
+    default: 125
     description: Number of games to play. Set to 0 to skip NPC.
     type: int
     min: 0
     required: true
   Vorsaile Heuloix:
-    default: 100
+    default: 125
     description: Number of games to play. Set to 0 to skip NPC.
     type: int
     min: 0
     required: true
   Hanagasa:
-    default: 100
+    default: 125
     description: Number of games to play. Set to 0 to skip NPC.
     type: int
     min: 0
@@ -28,6 +30,15 @@ configs:
 
 [[End Metadata]]
 --]=====]
+
+--[[
+********************************************************************************
+*                                  Changelog                                   *
+********************************************************************************
+    -> 1.0.1 Added Gold Saucer VIP Card support
+    -> 1.0.0 Initial Release
+
+]]
 
 --#region Data
 -- Imports Vector3 and related math utilities for position handling
@@ -91,6 +102,7 @@ CurrentNpc = nil
 NpcCount = 0
 CurrentNpcDone = false
 TriadRequested = false
+GoldSaucerVipCard = 14947
 --#endregion Global State Variables
 
 
@@ -151,6 +163,31 @@ function GetDistanceToPoint(vec3)
         return math.huge
     end
     return Vector3.Distance(lp.Position, vec3)
+end
+
+-- Checks if under Gold Saucer VIP Card Status
+function PlayerStatusCheck()
+    local targetId = 1079  -- change this to the statusId you’re looking for
+    local found = false
+
+    local list = Player.Status
+    if not list or not list.Count or list.Count == 0 then
+        return false
+    end
+
+    for i = 0, list.Count - 1 do  -- zero-based index
+        local s = list[i] or list:get_Item(i)
+        if s and s.StatusId == targetId then
+            found = true
+            break
+        end
+    end
+    return found
+end
+
+-- User Gold Saucer VIP Card
+function UseVIPCard()
+    Engines.Run("/item Gold Saucer VIP Card")
 end
 --#endregion Utility Functions
 
@@ -379,13 +416,19 @@ function Ready()
         Dalamud.Log("[TT Farm] Ready(): targeting nearby NPC")
         return CharacterState.targetnpc(CurrentNpc.npcName)
 
-    -- 7) In the correct zone but not near NPC, move toward them
+    -- 7) Use Gold Saucer VIP card if available.
+    elseif not PlayerStatusCheck() and Inventory.GetItemCount(GoldSaucerVipCard) > 0 then
+        UseVIPCard()
+        Sleep(5)
+        return
+
+    -- 8) In the correct zone but not near NPC, move toward them
     elseif Svc.ClientState.TerritoryType == CurrentNpc.territoryId
        and GetDistanceToPoint(CurrentNpc.npcPosition) > 10 then
         Dalamud.Log("[TT Farm] Ready(): moving toward NPC")
         return CharacterState.movetonpcpos(CurrentNpc.npcPosition, CurrentNpc.zoneFly)
 
-    -- 8) In wrong zone entirely, teleport
+    -- 9) In wrong zone entirely, teleport
     elseif Svc.ClientState.TerritoryType ~= CurrentNpc.territoryId then
         Dalamud.Log("[TT Farm] Ready(): teleporting to NPC zone")
         return CharacterState.teleportto(CurrentNpc.aetheryteId)
