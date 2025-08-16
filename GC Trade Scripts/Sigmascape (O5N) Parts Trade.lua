@@ -2,7 +2,8 @@
 [[SND Metadata]]
 author: baanderson40
 version: 1.0.0
-description: >-
+description: | 
+  Support via https://ko-fi.com/baanderson40
   Trade Omega 5 Normal (O5N) sigmascape parts in for GC seals.
 
   Dependencies:
@@ -337,15 +338,24 @@ function character_state.gc_turnin()
         Engines.Run("/callback SelectString true -1")
         sleep(.5)
     end
-    while Svc.Condition[CharacterCondition.betweenAreas] do
+    if IPC.Lifestream and IPC.Lifestream.ExecuteCommand then
+        IPC.Lifestream.ExecuteCommand("gc")
+        Dalamud.Log("[FATE] Executed Lifestream teleport to GC.")
+    else
+        yield("/echo [FATE] Lifestream IPC not available! Cannot teleport to GC.")
+        return
+    end
+    sleep(1)
+    while (IPC.Lifestream.IsBusy and IPC.Lifestream.IsBusy())
+        or (Svc.Condition[CharacterCondition.betweenAreas]) do
         sleep(1)
     end
-    Dalamud.LogDebug("[Omega Trade] Starting AutoRetainer delivery")
-    Engines.Run("/autoretainer deliver")
-    sleep(1) --Sleep for AR to start
-    while IPC.AutoRetainer.IsBusy() do
-        Dalamud.LogDebug("[Omega Trade] AutoRetainer is running.")
-        sleep(1)
+    Dalamud.Log("[FATE] Lifestream complete, standing at GC NPC.")
+    if IPC.AutoRetainer and IPC.AutoRetainer.EnqueueInitiation then
+        IPC.AutoRetainer.EnqueueInitiation()
+        Dalamud.Log("[FATE] Called AutoRetainer.EnqueueInitiation() for GC handin.")
+    else
+        yield("/echo [FATE] AutoRetainer IPC not available! Cannot process GC turnin.")
     end
     local trades = calc_trades()
     local parts_left = false
@@ -409,3 +419,4 @@ while not stop_script do
     state()
     sleep(1)
 end
+IPC.Lifestream.ExecuteCommand("inn")
