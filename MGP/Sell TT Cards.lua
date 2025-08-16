@@ -1,13 +1,23 @@
 --[=====[
 [[SND Metadata]]
-author: baanderson
-version: 1.0.0
+author: baanderson40
+version: 1.0.1
 description: |
+  Support via https://ko-fi.com/baanderson40
   Bare bones script to sell Triple Triad cards to Trader NPC. 
   Must be standing within targeting range of the NPC.
 
 [[End Metadata]]
 --]=====]
+
+--[[
+********************************************************************************
+*                                  Changelog                                   *
+********************************************************************************
+  -> 1.0.1 Resolved crashing after last card sell  
+  -> 1.0.0 Initial Release
+
+]]
 
 --Trader NPC Name
 NpcName = "Triple Triad Trader"
@@ -39,14 +49,24 @@ yield("/wait 1")
 
 --Cycle through cards to sell
 Dalamud.Log("[TT Sale] Starting to sell cards")
-CardQty = Addons.GetAddon("TripleTriadCoinExchange"):GetNode(1, 10, 5, 6).Text
-while not CardQty == nil do
-    Dalamud.Log("[TT Sale] Cards to sell")
-    yield("/callback TripleTriadCoinExchange true 0")
-    yield("/wait .35")
-    yield("/callback ShopCardDialog true 0 ".. tostring(CardQty))
-    CardQty = Addons.GetAddon("TripleTriadCoinExchange"):GetNode(1, 10, 5, 6).Text
-    yield("/wait .35")
+
+local function noCardsForSale()
+  local vis = Addons.GetAddon("TripleTriadCoinExchange"):GetNode(1,11).IsVisible
+return vis
+end
+
+local function readQty()
+  local txt = (Addons.GetAddon("TripleTriadCoinExchange"):GetNode(1,10,5,6).Text or "")
+  return tonumber(txt:match("%d+")) or 0
+end
+
+while not noCardsForSale() do
+  local qty = readQty()
+  Dalamud.Log("[TT Sale] Cards to sell: " .. qty)
+  yield("/callback TripleTriadCoinExchange true 0")
+  yield("/wait .35")
+  yield("/callback ShopCardDialog true 0 " .. qty)
+  yield("/wait .25")
 end
 
 --Close card sells window
