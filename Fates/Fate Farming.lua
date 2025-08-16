@@ -230,13 +230,14 @@ configs:
 
 [[End Metadata]]
 --]=====]
+
 --[[
 
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
 
-   -> 3.0.10   By baanderson40
+    -> 3.0.10   By baanderson40
             a   Max melee distance fix.
             b   WaitingForFateRewards fix.
             c   Removed HasPlugin and implemented IPC.IsInstalled from SND **reversed**.
@@ -299,22 +300,9 @@ This Plugins are Optional and not needed unless you have it enabled in the setti
 
 --[[
 ********************************************************************************
-*                            Advance Users Settings                            *
+*           Code: Dont touch this unless you know what youre doing           *
 ********************************************************************************
 ]]
-
-SndScriptName = "Fate Farming Testing"  --Set to the name of the script in SND exactly
-CompanionScriptMode = false             --Set to true if you are using the fate script with a companion script (such as the Multi Zone Farming)
-
-
---[[
-********************************************************************************
-*           Code: Dont touch this unless you know what youre doing             *
-********************************************************************************
-]]
-
-
-
 
 import("System.Numerics")
 
@@ -344,37 +332,37 @@ CharacterCondition = {
 
 ClassList =
 {
-    gla = { classId = 1, className = "Gladiator", isMelee = true, isTank = true },
-    pgl = { classId = 2, className = "Pugilist", isMelee = true, isTank = false },
-    mrd = { classId = 3, className = "Marauder", isMelee = true, isTank = true },
-    lnc = { classId = 4, className = "Lancer", isMelee = true, isTank = false },
-    arc = { classId = 5, className = "Archer", isMelee = false, isTank = false },
-    cnj = { classId = 6, className = "Conjurer", isMelee = false, isTank = false },
-    thm = { classId = 7, className = "Thaumaturge", isMelee = false, isTank = false },
-    pld = { classId = 19, className = "Paladin", isMelee = true, isTank = true },
-    mnk = { classId = 20, className = "Monk", isMelee = true, isTank = false },
-    war = { classId = 21, className = "Warrior", isMelee = true, isTank = true },
-    drg = { classId = 22, className = "Dragoon", isMelee = true, isTank = false },
-    brd = { classId = 23, className = "Bard", isMelee = false, isTank = false },
-    whm = { classId = 24, className = "White Mage", isMelee = false, isTank = false },
-    blm = { classId = 25, className = "Black Mage", isMelee = false, isTank = false },
-    acn = { classId = 26, className = "Arcanist", isMelee = false, isTank = false },
-    smn = { classId = 27, className = "Summoner", isMelee = false, isTank = false },
-    sch = { classId = 28, className = "Scholar", isMelee = false, isTank = false },
-    rog = { classId = 29, className = "Rogue", isMelee = false, isTank = false },
-    nin = { classId = 30, className = "Ninja", isMelee = true, isTank = false },
-    mch = { classId = 31, className = "Machinist", isMelee = false, isTank = false },
-    drk = { classId = 32, className = "Dark Knight", isMelee = true, isTank = true },
-    ast = { classId = 33, className = "Astrologian", isMelee = false, isTank = false },
-    sam = { classId = 34, className = "Samurai", isMelee = true, isTank = false },
-    rdm = { classId = 35, className = "Red Mage", isMelee = false, isTank = false },
-    blu = { classId = 36, className = "Blue Mage", isMelee = false, isTank = false },
-    gnb = { classId = 37, className = "Gunbreaker", isMelee = true, isTank = true },
-    dnc = { classId = 38, className = "Dancer", isMelee = false, isTank = false },
-    rpr = { classId = 39, className = "Reaper", isMelee = true, isTank = false },
-    sge = { classId = 40, className = "Sage", isMelee = false, isTank = false },
-    vpr = { classId = 41, className = "Viper", isMelee = true, isTank = false },
-    pct = { classId = 42, className = "Pictomancer", isMelee = false, isTank = false }
+    gla = { classId=1, className="Gladiator", isMelee=true, isTank=true },
+    pgl = { classId=2, className="Pugilist", isMelee=true, isTank=false },
+    mrd = { classId=3, className="Marauder", isMelee=true, isTank=true },
+    lnc = { classId=4, className="Lancer", isMelee=true, isTank=false },
+    arc = { classId=5, className="Archer", isMelee=false, isTank=false },
+    cnj = { classId=6, className="Conjurer", isMelee=false, isTank=false },
+    thm = { classId=7, className="Thaumaturge", isMelee=false, isTank=false },
+    pld = { classId=19, className="Paladin", isMelee=true, isTank=true },
+    mnk = { classId=20, className="Monk", isMelee=true, isTank=false },
+    war = { classId=21, className="Warrior", isMelee=true, isTank=true },
+    drg = { classId=22, className="Dragoon", isMelee=true, isTank=false },
+    brd = { classId=23, className="Bard", isMelee=false, isTank=false },
+    whm = { classId=24, className="White Mage", isMelee=false, isTank=false },
+    blm = { classId=25, className="Black Mage", isMelee=false, isTank=false },
+    acn = { classId=26, className="Arcanist", isMelee=false, isTank=false },
+    smn = { classId=27, className="Summoner", isMelee=false, isTank=false },
+    sch = { classId=28, className="Scholar", isMelee=false, isTank=false },
+    rog = { classId=29, className="Rogue", isMelee=false, isTank=false },
+    nin = { classId=30, className="Ninja", isMelee=true, isTank=false },
+    mch = { classId=31, className="Machinist", isMelee=false, isTank=false},
+    drk = { classId=32, className="Dark Knight", isMelee=true, isTank=true },
+    ast = { classId=33, className="Astrologian", isMelee=false, isTank=false },
+    sam = { classId=34, className="Samurai", isMelee=true, isTank=false },
+    rdm = { classId=35, className="Red Mage", isMelee=false, isTank=false },
+    blu = { classId=36, className="Blue Mage", isMelee=false, isTank=false },
+    gnb = { classId=37, className="Gunbreaker", isMelee=true, isTank=true },
+    dnc = { classId=38, className="Dancer", isMelee=false, isTank=false },
+    rpr = { classId=39, className="Reaper", isMelee=true, isTank=false },
+    sge = { classId=40, className="Sage", isMelee=false, isTank=false },
+    vpr = { classId=41, className="Viper", isMelee=true, isTank=false },
+    pct = { classId=42, className="Pictomancer", isMelee=false, isTank=false }
 }
 
 BicolorExchangeData =
@@ -387,25 +375,25 @@ BicolorExchangeData =
         position=Vector3(78, 5, -37),
         shopItems =
         {
-            { itemName = "Bicolor Gemstone Voucher", itemIndex = 8,  price = 100 },
-            { itemName = "Ovibos Milk",              itemIndex = 9,  price = 2 },
-            { itemName = "Hamsa Tenderloin",         itemIndex = 10, price = 2 },
-            { itemName = "Yakow Chuck",              itemIndex = 11, price = 2 },
-            { itemName = "Bird of Elpis Breast",     itemIndex = 12, price = 2 },
-            { itemName = "Egg of Elpis",             itemIndex = 13, price = 2 },
-            { itemName = "Amra",                     itemIndex = 14, price = 2 },
-            { itemName = "Dynamis Crystal",          itemIndex = 15, price = 2 },
-            { itemName = "Almasty Fur",              itemIndex = 16, price = 2 },
-            { itemName = "Gaja Hide",                itemIndex = 17, price = 2 },
-            { itemName = "Luncheon Toad Skin",       itemIndex = 18, price = 2 },
-            { itemName = "Saiga Hide",               itemIndex = 19, price = 2 },
-            { itemName = "Kumbhira Skin",            itemIndex = 20, price = 2 },
-            { itemName = "Ophiotauros Hide",         itemIndex = 21, price = 2 },
-            { itemName = "Berkanan Sap",             itemIndex = 22, price = 2 },
-            { itemName = "Dynamite Ash",             itemIndex = 23, price = 2 },
-            { itemName = "Lunatender Blossom",       itemIndex = 24, price = 2 },
-            { itemName = "Mousse Flesh",             itemIndex = 25, price = 2 },
-            { itemName = "Petalouda Scales",         itemIndex = 26, price = 2 },
+            { itemName = "Bicolor Gemstone Voucher", itemIndex = 8, price = 100 },
+            { itemName = "Ovibos Milk", itemIndex = 9, price = 2 },
+            { itemName = "Hamsa Tenderloin", itemIndex = 10, price = 2 },
+            { itemName = "Yakow Chuck", itemIndex = 11, price = 2 },
+            { itemName = "Bird of Elpis Breast", itemIndex = 12, price = 2 },
+            { itemName = "Egg of Elpis", itemIndex = 13, price = 2 },
+            { itemName = "Amra", itemIndex = 14, price = 2 },
+            { itemName = "Dynamis Crystal", itemIndex = 15, price = 2 },
+            { itemName = "Almasty Fur", itemIndex = 16, price = 2 },
+            { itemName = "Gaja Hide", itemIndex = 17, price = 2 },
+            { itemName = "Luncheon Toad Skin", itemIndex = 18, price = 2 },
+            { itemName = "Saiga Hide", itemIndex = 19, price = 2 },
+            { itemName = "Kumbhira Skin", itemIndex = 20, price = 2 },
+            { itemName = "Ophiotauros Hide", itemIndex = 21, price = 2 },
+            { itemName = "Berkanan Sap", itemIndex = 22, price = 2 },
+            { itemName = "Dynamite Ash", itemIndex = 23, price = 2 },
+            { itemName = "Lunatender Blossom", itemIndex = 24, price = 2 },
+            { itemName = "Mousse Flesh", itemIndex = 25, price = 2 },
+            { itemName = "Petalouda Scales", itemIndex = 26, price = 2 },
         }
     },
     {
@@ -420,24 +408,24 @@ BicolorExchangeData =
         },
         shopItems =
         {
-            { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 6,  price = 100 },
-            { itemName = "Alpaca Fillet",                   itemIndex = 7,  price = 3 },
-            { itemName = "Swampmonk Thigh",                 itemIndex = 8,  price = 3 },
-            { itemName = "Rroneek Chuck",                   itemIndex = 9,  price = 3 },
-            { itemName = "Megamaguey Pineapple",            itemIndex = 10, price = 3 },
-            { itemName = "Branchbearer Fruit",              itemIndex = 11, price = 3 },
-            { itemName = "Nopalitender Tuna",               itemIndex = 12, price = 3 },
-            { itemName = "Rroneek Fleece",                  itemIndex = 13, price = 3 },
-            { itemName = "Silver Lobo Hide",                itemIndex = 14, price = 3 },
-            { itemName = "Hammerhead Crocodile Skin",       itemIndex = 15, price = 3 },
-            { itemName = "Br'aax Hide",                     itemIndex = 16, price = 3 },
-            { itemName = "Gomphotherium Skin",              itemIndex = 17, price = 3 },
-            { itemName = "Gargantua Hide",                  itemIndex = 18, price = 3 },
-            { itemName = "Ty'aitya Wingblade",              itemIndex = 19, price = 3 },
-            { itemName = "Poison Frog Secretions",          itemIndex = 20, price = 3 },
-            { itemName = "Alexandrian Axe Beak Wing",       itemIndex = 21, price = 3 },
-            { itemName = "Lesser Apollyon Shell",           itemIndex = 22, price = 3 },
-            { itemName = "Tumbleclaw Weeds",                itemIndex = 23, price = 3 },
+            { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 6, price = 100 },
+            { itemName = "Alpaca Fillet", itemIndex = 7, price = 3 },
+            { itemName = "Swampmonk Thigh", itemIndex = 8, price = 3 },
+            { itemName = "Rroneek Chuck", itemIndex = 9, price = 3 },
+            { itemName = "Megamaguey Pineapple", itemIndex = 10, price = 3 },
+            { itemName = "Branchbearer Fruit", itemIndex = 11, price = 3 },
+            { itemName = "Nopalitender Tuna", itemIndex = 12, price = 3 },
+            { itemName = "Rroneek Fleece", itemIndex = 13, price = 3 },
+            { itemName = "Silver Lobo Hide", itemIndex = 14, price = 3 },
+            { itemName = "Hammerhead Crocodile Skin", itemIndex = 15, price = 3 },
+            { itemName = "Br'aax Hide", itemIndex = 16, price = 3 },
+            { itemName = "Gomphotherium Skin", itemIndex = 17, price = 3 },
+            { itemName = "Gargantua Hide", itemIndex = 18, price = 3 },
+            { itemName = "Ty'aitya Wingblade", itemIndex = 19, price = 3 },
+            { itemName = "Poison Frog Secretions", itemIndex = 20, price = 3 },
+            { itemName = "Alexandrian Axe Beak Wing", itemIndex = 21, price = 3 },
+            { itemName = "Lesser Apollyon Shell", itemIndex = 22, price = 3 },
+            { itemName = "Tumbleclaw Weeds", itemIndex = 23, price = 3 },
         }
     }
 }
@@ -1682,7 +1670,7 @@ function TeleportTo(aetheryteName)
 end
 
 function ChangeInstance()
-    --[[if SuccessiveInstanceChanges >= NumberOfInstances then
+    if SuccessiveInstanceChanges >= NumberOfInstances then
         if CompanionScriptMode then
             local shouldWaitForBonusBuff = WaitIfBonusBuff and (HasStatusId(1288) or HasStatusId(1289))
             if WaitingForFateRewards == nil and not shouldWaitForBonusBuff then
@@ -1696,7 +1684,7 @@ function ChangeInstance()
             SuccessiveInstanceChanges = 0
         end
         return
-    end]]
+    end
 
     yield("/target aetheryte") -- search for nearby aetheryte
     if Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" then -- if no aetheryte within targeting range, teleport to it
@@ -2486,6 +2474,14 @@ function HandleUnexpectedCombat()
         return
     end
 
+    -- if Svc.Condition[CharacterCondition.mounted] then
+    --     if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+    --         IPC.vnavmesh.PathfindAndMoveTo(Svc.ClientState.Location, true)
+    --     end
+    --     yield("/wait 10")
+    --     return
+    -- end
+
     -- targets whatever is trying to kill you
     if Svc.Targets.Target == nil then
         Engines.Run("/battletarget")
@@ -2778,8 +2774,7 @@ function Ready()
         end
         if CompanionScriptMode and not shouldWaitForBonusBuff then
             if WaitingForFateRewards == nil then
-                yield("/gaction Teleport")
-                yield("/snd stop " .. sndScriptName)
+                StopScript = true
                 Dalamud.Log("[FATE] StopScript: Ready")
             else
                 Dalamud.Log("[FATE] Waiting for fate rewards")
@@ -2795,8 +2790,9 @@ function Ready()
             MoveToRandomNearbySpot(50, 75)
             yield("/wait 10")
         end
-        return
+        return        
     end
+
 
     if NextFate == nil and shouldWaitForBonusBuff and DownTimeWaitAtNearestAetheryte then
         if Svc.Targets.Target == nil or GetTargetName() ~= "aetheryte" or GetDistanceToTarget() > 20 then
@@ -2808,7 +2804,7 @@ function Ready()
         return
     end
 
-    --[[if CompanionScriptMode and DidFate and not shouldWaitForBonusBuff then
+    if CompanionScriptMode and DidFate and not shouldWaitForBonusBuff then
         if WaitingForFateRewards == nil then
             StopScript = true
             Dalamud.Log("[FATE] StopScript: DidFate")
@@ -2816,7 +2812,7 @@ function Ready()
             Dalamud.Log("[FATE] Waiting for fate rewards")
         end
         return
-    end]]
+    end
 
     if not Player.Available then
         return
@@ -3225,75 +3221,59 @@ end
 --#region Main
 
 CharacterState = {
-    ready                   = Ready,
-    dead                    = HandleDeath,
-    unexpectedCombat        = HandleUnexpectedCombat,
-    mounting                = MountState,
-    npcDismount             = NpcDismount,
-    MiddleOfFateDismount    = MiddleOfFateDismount,
-    moveToFate              = MoveToFate,
-    interactWithNpc         = InteractWithFateNpc,
-    collectionsFateTurnIn   = CollectionsFateTurnIn,
-    doFate                  = DoFate,
-    waitForContinuation     = WaitForContinuation,
-    changingInstances       = ChangeInstance,
-    changeInstanceDismount  = ChangeInstanceDismount,
-    flyBackToAetheryte      = FlyBackToAetheryte,
-    extractMateria          = ExtractMateria,
-    repair                  = Repair,
-    exchangingVouchers      = ExecuteBicolorExchange,
-    processRetainers        = ProcessRetainers,
-    gcTurnIn                = GrandCompanyTurnIn,
-    summonChocobo           = SummonChocobo,
-    autoBuyGysahlGreens     = AutoBuyGysahlGreens
+    ready = Ready,
+    dead = HandleDeath,
+    unexpectedCombat = HandleUnexpectedCombat,
+    mounting = MountState,
+    npcDismount = NpcDismount,
+    MiddleOfFateDismount = MiddleOfFateDismount,
+    moveToFate = MoveToFate,
+    interactWithNpc = InteractWithFateNpc,
+    collectionsFateTurnIn = CollectionsFateTurnIn,
+    doFate = DoFate,
+    waitForContinuation = WaitForContinuation,
+    changingInstances = ChangeInstance,
+    changeInstanceDismount = ChangeInstanceDismount,
+    flyBackToAetheryte = FlyBackToAetheryte,
+    extractMateria = ExtractMateria,
+    repair = Repair,
+    exchangingVouchers = ExecuteBicolorExchange,
+    processRetainers = ProcessRetainers,
+    gcTurnIn = GrandCompanyTurnIn,
+    summonChocobo = SummonChocobo,
+    autoBuyGysahlGreens = AutoBuyGysahlGreens
 }
 
--- Settings Area
--- Buffs
-Food                            = Config.Get("Food")
-Potion                          = Config.Get("Potion")
 
--- Chocobo 
-ResummonChocoboTimeLeft            = 3 * 60        --Resummons chocobo if there's less than this many seconds left on the timer, so it doesn't disappear on you in the middle of a fate.
-ChocoboStance                   = Config.Get("Chocobo Companion Stance") -- Options: Follow, Free, Defender, Healer, Attacker, None. Do not summon if None.
-ShouldSummonChocobo =  ChocoboStance == "Follow"
-                    or ChocoboStance == "Free"
-                    or ChocoboStance == "Defender"
-                    or ChocoboStance == "Healer"
-                    or ChocoboStance == "Attacker"
-ShouldAutoBuyGysahlGreens       = Config.Get("Buy Gysahl Greens?")
-MountToUse                      = "mount roulette"       --The mount youd like to use when flying between fates
+Food = Config.Get("Food")
+Potion = Config.Get("Potion")
+ResummonChocoboTimeLeft         = 3 * 60        --Resummons chocobo if there's less than this many seconds left on the timer, so it doesn't disappear on you in the middle of a fate.
+ChocoboStance = Config.Get("Chocobo Companion Stance") -- Options: Follow, Free, Defender, Healer, Attacker, None. Do not summon if None.
+ShouldSummonChocobo = ChocoboStance == "Follow"
+    or ChocoboStance == "Free"
+    or ChocoboStance == "Defender"
+    or ChocoboStance == "Healer"
+    or ChocoboStance == "Attacker"
 
--- Retainer 
+ShouldAutoBuyGysahlGreens = Config.Get("Buy Gysahl Greens?")    --
+MountToUse                          = "mount roulette"       --The mount youd like to use when flying between fates
+FatePriority                        = {"DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance"}
 
-
-
-
---Fate Combat
-CompletionToIgnoreFate          = Config.Get("Ignore FATE if progress is over (%)")
-MinTimeLeftToIgnoreFate         = Config.Get("Ignore FATE if duration is less than (mins)") * 60
-CompletionToJoinBossFate        = Config.Get("Ignore boss FATEs until progress is at least (%)")
+--Fate Combat Settings
+CompletionToIgnoreFate = Config.Get("Ignore FATE if progress is over (%)")
+MinTimeLeftToIgnoreFate = Config.Get("Ignore FATE if duration is less than (mins)")*60
+CompletionToJoinBossFate = Config.Get("Ignore boss FATEs until progress is at least (%)")
 CompletionToJoinSpecialBossFates = Config.Get("Ignore Special FATEs until progress is at least (%)")
-JoinCollectionsFates            = Config.Get("Do collection FATEs?")
-BonusFatesOnly                  = Config.Get("Do only bonus FATEs?") --If true, will only do bonus fates and ignore everything else
-FatePriority                    = {"DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
-MeleeDist                       = Config.Get("Max melee distance")
-RangedDist                      = Config.Get("Max ranged distance")
---ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
+ClassForBossFates = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
+                                                        --for the class. Ex: "PLD"
+JoinCollectionsFates = Config.Get("Do collection FATEs?")
+BonusFatesOnly = Config.Get("Do only bonus FATEs?")         --If true, will only do bonus fates and ignore everything else
 
---Forlorns 
-IgnoreForlorns = false
-IgnoreBigForlornOnly = false
-Forlorns = string.lower(Config.Get("Forlorns"))
-if Forlorns == "none" then
-    IgnoreForlorns = true
-elseif Forlorns == "small" then
-    IgnoreBigForlornOnly = true
-end
+MeleeDist = Config.Get("Max melee distance")
+RangedDist = Config.Get("Max ranged distance")
 
--- Rotation plugin 
-local configRotationPlugin = string.lower(Config.Get("Rotation Plugin"))
-if configRotationPlugin == "any" then
+RotationPlugin = string.lower(Config.Get("Rotation Plugin"))
+if RotationPlugin == "any" then
     if HasPlugin("WrathCombo") then
         RotationPlugin = "Wrath"
     elseif HasPlugin("RotationSolver") then
@@ -3303,26 +3283,64 @@ if configRotationPlugin == "any" then
     elseif HasPlugin("BossMod") then
         RotationPlugin = "VBM"
     end
-elseif configRotationPlugin == "wrath" and HasPlugin("WrathCombo") then
+elseif RotationPlugin == "wrath" and HasPlugin("WrathCombo") then
     RotationPlugin = "Wrath"
-elseif configRotationPlugin == "rotationsolver" and HasPlugin("RotationSolver") then
+elseif RotationPlugin == "rotationsolver" and HasPlugin("RotationSolver") then
     RotationPlugin = "RSR"
-elseif configRotationPlugin == "bossmodreborn" and HasPlugin("BossModReborn") then
+elseif RotationPlugin == "bossmodreborn" and HasPlugin("BossModReborn") then
     RotationPlugin = "BMR"
-elseif configRotationPlugin == "bossmod" and HasPlugin("BossMod") then
+elseif RotationPlugin == "bossbod" and HasPlugin("BossMod") then
     RotationPlugin = "VBM"
 else
     StopScript = true
 end
-RSRAoeType                 = "Full"      --Options: Cleave/Full/Off
+    RSRAoeType                      = "Full"        --Options: Cleave/Full/Off
 
--- For BMR/VBM/Wrath rotation plugins
-RotationSingleTargetPreset      = Config.Get("Single Target Rotation") --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
-RotationAoePreset               = Config.Get("AoE Rotation")           --Preset with AOE + Buff strategies.
-RotationHoldBuffPreset          = Config.Get("Hold Buff Rotation")     --Preset to hold 2min burst when progress gets to seleted %
-PercentageToHoldBuff            = Config.Get("Percentage to Hold Buff")--Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
+    -- For BMR/VBM/Wrath
+    RotationSingleTargetPreset      = Config.Get("Single Target Rotation") --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
+    RotationAoePreset               = Config.Get("AoE Rotation")           --Preset with AOE + Buff strategies.
+    RotationHoldBuffPreset          = Config.Get("Hold Buff Rotation")     --Preset to hold 2min burst when progress gets to seleted %
+    PercentageToHoldBuff            = Config.Get("Percentage to Hold Buff")--Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
 
--- Dodge plugin
+IgnoreForlorns = false
+IgnoreBigForlornOnly = false
+Forlorns = string.lower(Config.Get("Forlorns"))
+if Forlorns == "none" then
+    IgnoreForlorns = true
+elseif Forlorns == "small" then
+    IgnoreBigForlornOnly = true
+end
+
+--Post Fate Settings
+MinWait                             = 3             --Min number of seconds it should wait until mounting up for next fate.
+MaxWait                             = 10            --Max number of seconds it should wait until mounting up for next fate.
+                                                        --Actual wait time will be a randomly generated number between MinWait and MaxWait.
+DownTimeWaitAtNearestAetheryte      = false         --When waiting for fates to pop, should you fly to the nearest Aetheryte and wait there?
+MoveToRandomSpot               = false      --Randomly fly to spot while waiting on fate.
+EnableChangeInstance = Config.Get("Change instances if no FATEs?")
+WaitIfBonusBuff = true          --Dont change instances if you have the Twist of Fate bonus buff
+NumberOfInstances = 2
+ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
+ItemToPurchase = Config.Get("Exchange bicolor gemstones for")
+ShouldExchangeBicolorGemstones = true
+if ItemToPurchase == "" or ItemToPurchase == nil then
+    ShouldExchangeBicolorGemstones = false
+end
+SelfRepair = Config.Get("Self repair?")
+RemainingDurabilityToRepair     = 10            --the amount it needs to drop before Repairing (set it to 0 if you don't want it to repair)
+ShouldAutoBuyDarkMatter         = true          --Automatically buys a 99 stack of Grade 8 Dark Matter from the Limsa gil vendor if you're out
+ShouldExtractMateria                = true          --should it Extract Materia
+Retainers = Config.Get("Pause for retainers?")
+ShouldGrandCompanyTurnIn = Config.Get("Dump extra gear at GC?")         --should it do Turn ins at the GC (requires Deliveroo)
+    InventorySlotsLeft              = 5             --how much inventory space before turning in
+
+ReturnOnDeath = Config.Get("Return on death?")
+
+Echo = string.lower(Config.Get("Echo logs"))
+CompanionScriptMode                 = false         --Set to true if you are using the fate script with a companion script (such as the Atma Farmer)
+--MoveToRandomSpot = Config.Get("Randomly Move if no eligible Fate?")
+
+-- Get user-configured plugin
 local dodgeConfig = string.lower(Config.Get("Dodging Plugin"))  -- Options: Any / BossModReborn / BossMod / None
 
 -- Resolve "any" or specific plugin if available
@@ -3351,37 +3369,9 @@ end
 
 -- Final warning if no dodging plugin is active
 if DodgingPlugin == "None" then
-    Engines.Run(
-    "/echo  [FATE] Warning: you do not have an AI dodging plugin configured, so your character will stand in AOEs. Please install either Veyn's BossMod or BossMod Reborn")
+    Engines.Run("/echo  [FATE] Warning: you do not have an AI dodging plugin configured, so your character will stand in AOEs. Please install either Veyn's BossMod or BossMod Reborn")
 end
 
---Post Fate Settings
-MinWait                        = 3          --Min number of seconds it should wait until mounting up for next fate.
-MaxWait                        = 10         --Max number of seconds it should wait until mounting up for next fate.
-    --Actual wait time will be a randomly generated number between MinWait and MaxWait.
-DownTimeWaitAtNearestAetheryte = false      --When waiting for fates to pop, should you fly to the nearest Aetheryte and wait there?
-MoveToRandomSpot               = false      --Randomly fly to spot while waiting on fate.
-InventorySlotsLeft             = 5          --how much inventory space before turning in
-WaitIfBonusBuff                = true       --Dont change instances if you have the Twist of Fate bonus buff
-NumberOfInstances              = 2
-RemainingDurabilityToRepair    = 10         --the amount it needs to drop before Repairing (set it to 0 if you don't want it to repair)
-ShouldAutoBuyDarkMatter        = true       --Automatically buys a 99 stack of Grade 8 Dark Matter from the Limsa gil vendor if you're out
-ShouldExtractMateria           = true       --should it Extract Materia
-
--- Config settings
-EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
-ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
-ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
-if ItemToPurchase == "" or ItemToPurchase == nil then
-    ShouldExchangeBicolorGemstones = false
-end
-ReturnOnDeath                   = Config.Get("Return on death?")
-SelfRepair                      = Config.Get("Self repair?")
-Retainers                       = Config.Get("Pause for retainers?")
-ShouldGrandCompanyTurnIn        = Config.Get("Dump extra gear at GC?")
-Echo                            = string.lower(Config.Get("Echo logs"))
-
--- Plugin warnings
 if Retainers and not HasPlugin("AutoRetainer") then
     Retainers = false
     Engines.Run("/echo  [FATE] Warning: you have enabled the feature to process retainers, but you do not have AutoRetainer installed.")
@@ -3389,30 +3379,34 @@ end
 
 if ShouldGrandCompanyTurnIn and not HasPlugin("AutoRetainer") then
     ShouldGrandCompanyTurnIn = false
-    Engines.Run("/echo  [FATE] Warning: you have enabled the feature to process GC turn ins, but you do not have AutoRetainer installed.")
+    Engines.Run("/echo  [FATE] Warning: you have enabled the feature to process GC turn ins, but you do not have Deliveroo installed.")
 end
 
--- Variable initialzization
-StopScript                      = false
-DidFate                         = false
-GemAnnouncementLock             = false
-DeathAnnouncementLock           = false
-MovingAnnouncementLock          = false
-SuccessiveInstanceChanges       = 0
-LastInstanceChangeTimestamp     = 0
-LastTeleportTimeStamp           = 0
-GotCollectionsFullCredit        = false
-WaitingForFateRewards           = nil
-LastFateEndTime                 = os.clock()
-LastStuckCheckTime              = os.clock()
-LastStuckCheckPosition          = Player.Entity.Position
-MainClass                       = Player.Job
-BossFatesClass                  = nil
+if not CompanionScriptMode then
+    Engines.Run("/at y")
+end
+
+StopScript = false
+DidFate = false
+fateState = nil
+GemAnnouncementLock = false
+DeathAnnouncementLock = false
+MovingAnnouncementLock = false
+SuccessiveInstanceChanges = 0
+LastInstanceChangeTimestamp = 0
+LastTeleportTimeStamp = 0
+GotCollectionsFullCredit = false -- needs 7 items for  full
+-- variable to track collections fates that you have completed but are still active.
+-- will not leave area or change instance if value ~= 0
+WaitingForFateRewards = nil
+LastFateEndTime = os.clock()
+LastStuckCheckTime = os.clock()
+LastStuckCheckPosition = Player.Entity.Position
+MainClass = Player.Job
+BossFatesClass = nil
 if ClassForBossFates ~= "" then
-    BossFatesClass              = GetClassJobTableFromName(ClassForBossFates)
+    BossFatesClass = GetClassJobTableFromName(ClassForBossFates)
 end
-
--- Functions
 SetMaxDistance()
 
 SelectedZone = SelectNextZone()
@@ -3420,6 +3414,7 @@ if SelectedZone.zoneName ~= "" and Echo == "all" then
     Engines.Run("/echo  [FATE] Farming "..SelectedZone.zoneName)
 end
 Dalamud.Log("[FATE] Farming Start for "..SelectedZone.zoneName)
+
 
 if ShouldExchangeBicolorGemstones ~= false then
     for _, shop in ipairs(BicolorExchangeData) do
@@ -3442,6 +3437,8 @@ if ShouldExchangeBicolorGemstones ~= false then
     end
 end
 
+State = CharacterState.ready
+CurrentFate = nil
 if InActiveFate() then
     CurrentFate = BuildFateTable(Fates.GetNearestFate())
 end
@@ -3451,14 +3448,6 @@ if ShouldSummonChocobo and GetBuddyTimeRemaining() > 0 then
 end
 
 Dalamud.Log("[FATE] Starting fate farming script.")
-
-State = CharacterState.ready
-CurrentFate = nil
-
-if CompanionScriptMode == EnableChangeInstance then
-    yield("/echo The companion script will overwrite changing instances.")
-    EnableChangeInstance = false
-end
 
 while not StopScript do
     local nearestFate = Fates.GetNearestFate()
@@ -3486,7 +3475,7 @@ while not StopScript do
         State = CharacterState.unexpectedCombat
         Dalamud.Log("[FATE] State Change: UnexpectedCombat")
     end
-
+    
     BicolorGemCount = Inventory.GetItemCount(26807)
 
     if WaitingForFateRewards ~= nil then
@@ -3503,7 +3492,7 @@ while not StopScript do
             end
             WaitingForFateRewards = nil
         else
-            local msg = "[FATE] Not clearing WaitingForFateRewards: fate state="..tostring(state)..", expected one of [Ended: "..tostring(FateState.Ended)..", Failed: "..tostring(FateState.Failed).."] or nil."
+            local msg = "[FATE] Not clearing WaitingForFateRewards: fateState="..tostring(state)..", expected one of [Ended: "..tostring(FateState.Ended)..", Failed: "..tostring(FateState.Failed).."] or nil."
             Dalamud.Log(msg)
             if Echo == "all" then
                 Engines.Run("/echo  "..msg)
