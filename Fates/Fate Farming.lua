@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.11
+version: 3.0.12
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -235,6 +235,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.12   Fixed TextAdvance enabling 
     -> 3.0.11   Revision rollup
                 Fixed Gysahl Greens purchases
                 Blacklisted "Plumbers Don't Fear Slimes" due to script crashing
@@ -3409,6 +3410,9 @@ if ShouldGrandCompanyTurnIn and not HasPlugin("AutoRetainer") then
     ShouldGrandCompanyTurnIn = false
     Engines.Run("/echo  [FATE] Warning: you have enabled the feature to process GC turn ins, but you do not have AutoRetainer installed.")
 end
+
+-- Enable Auto Advance plugin
+Engines.Run("/at y")
 
 -- Functions
 --Set combat max distance
