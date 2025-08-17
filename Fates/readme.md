@@ -3,7 +3,7 @@
 FATE centered SND2 lua scripts. 
 
 ## Scripts
-- FATE Farm
+- FATE Farming
   - Farm FATEs in given area
   - Purchase Bicolor gemsrone items
   - Process Retainers when available 
