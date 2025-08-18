@@ -8,7 +8,7 @@ Collection of various SND scripts
 ## Scripts
 - FATE
 - Guild Company Seals
-- Triple Triad
+- Manderville Gold Saucer Point
 
 ## Installation
 - Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
