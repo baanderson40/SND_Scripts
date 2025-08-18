@@ -1,3 +1,6 @@
+### Support via [baanderson40's ko-fi](https://ko-fi.com/baanderson40)
+---
+
 # FATE scripts
 
 FATE centered SND2 lua scripts. 
