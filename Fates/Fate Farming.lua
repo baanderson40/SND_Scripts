@@ -53,7 +53,7 @@ configs:
     description: Preset to hold 2min burst when progress gets to select %
 
   Percentage to Hold Buff:
-    default: 65
+    default:
     type: int
     description: Ideally you want to make full use of your buffs, higher then 70% will still waste a few seconds if progress is too fast.
 
