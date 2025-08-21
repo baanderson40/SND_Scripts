@@ -23,7 +23,7 @@ Cosmic Exploration centered SND2 lua scripts.
 - Set stop at Lunar Credits if you want to gamba and match in the scripts config
   - Enable gamba in I.C.E. Settings
 - Set stop at Cosmic Score if you want to cycle jobs for class score
- <img width="187" height="172" alt="image" src="https://github.com/user-attachments/assets/f2454629-b158-4bd0-8500-86f69c9ef98b" />
+ <img width="215" height="198" alt="image" src="https://github.com/user-attachments/assets/f2454629-b158-4bd0-8500-86f69c9ef98b" />
  <img width="348" height="198" alt="image" src="https://github.com/user-attachments/assets/05fe9d03-8ef5-462f-b4f6-f93a85382d51" />
 
  
