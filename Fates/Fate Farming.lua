@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.13
+version: 3.0.14
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -53,7 +53,7 @@ configs:
     description: Preset to hold 2min burst when progress gets to select %
 
   Percentage to Hold Buff:
-    default:
+    default: 0
     type: int
     description: Ideally you want to make full use of your buffs, higher then 70% will still waste a few seconds if progress is too fast.
 
@@ -211,6 +211,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.14   Fixed setting issue with Percentage to hold buff.
     -> 3.0.13   Added list for settings
     -> 3.0.12   Fixed TextAdvance enabling 
     -> 3.0.11   Revision rollup
@@ -2412,14 +2413,12 @@ function TurnOffCombatMods()
                 Engines.Run("/bmrai followtarget off")
                 Engines.Run("/bmrai followcombat off")
                 Engines.Run("/bmrai followoutofcombat off")
-                Engines.Run("/bmrai followoutofcombat off")
             elseif DodgingPlugin == "VBM" then
                 Engines.Run("/vbm ar disable")
                 Engines.Run("/vbmai off")
                 Engines.Run("/vbmai followtarget off")
                 Engines.Run("/vbmai followcombat off")
                 Engines.Run("/vbmai followoutofcombat off")
-                Engines.Run("/bmrai followoutofcombat off")
                 if RotationPlugin ~= "VBM" then
                     Engines.Run("/vbmai ForbidActions off") --This Enables VBM AI Auto-Target
                 end
