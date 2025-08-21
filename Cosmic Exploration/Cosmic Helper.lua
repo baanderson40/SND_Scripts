@@ -1,8 +1,13 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
-description: Helper script for ICE and cosmic exploration.
+version: 1.0.1
+description: |
+  Support via https://ko-fi.com/baanderson40
+  Features:
+  Jump if stuck during movement
+  Cycle through jobs for class score
+  Spend Lunar Credits on Gamba
 plugin_dependencies:
 - ICE
 - SimpleTweaksPlugin
@@ -10,11 +15,18 @@ configs:
   Jump if stuck:
     default: true
     description: Will cause you to jump is stuck in position for too long.
-    type: bool
+    type: boolean
   Jobs:
-    description: Jobs to cycle through.
+    description: |
+      Jobs to cycle through.
+      Leave blank to disable.
     type: list
-
+  Lunar Credits Limit:
+    default: 9000
+    description: |
+      Set this to the same number as "Stop at Lunar Credits" in ICE. 
+      Leave blank to disable.
+    type: int
 [[End Metadata]]
 --]=====]
 
@@ -22,7 +34,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
-  -> 1.0.0 Initial Release
+    -> 1.0.1 Added Gamba support
+    -> 1.0.0 Initial Release
 
 ]]
 
@@ -33,6 +46,7 @@ import("System.Numerics")
 -- Config veriables
 JumpConfig = Config.Get("Jump if stuck")
 JobsConfig = Config.Get("Jobs")
+LimitConfig = Config.Get("Lunar Credits Limit")
 
 -- Veriables
 local loopDelay = .5 -- Script's speed/delay
@@ -43,20 +57,26 @@ local lastPos = nil
 local totalJobs = JobsConfig.Count
 local cycleCount = 0
 local jobCount = 0
+local lunarCredits = 0
+local lunarCycleCount = 0
 
 local CharacterCondition = {
     normalConditions                   = 1, -- moving or standing still
     mounted                            = 4, -- moving
-    crafting                           = 5, --
-    gathering                          = 6, --
-    occupiedMateriaExtractionAndRepair = 39, --
-    executingCraftingAction            = 40, --
-    preparingToCraft                   = 41, --
-    executingGatheringAction           = 42, --
+    crafting                           = 5,
+    gathering                          = 6,
+    casting                            = 27,
+    occupiedMateriaExtractionAndRepair = 39,
+    executingCraftingAction            = 40,
+    preparingToCraft                   = 41,
+    executingGatheringAction           = 42,
+    betweenAreas                       = 45,
     jumping48                          = 48, -- moving
     mounting57                         = 57, -- moving
     unknown85                          = 85, -- Part of gathering
 }
+
+CreditNpc = {name = "Orbitingway", position = Vector3(16.3421, 1.695, -16.394)}
 
 --Helper Funcitons
 --Sleep 
@@ -111,7 +131,7 @@ local function ShouldCycle()
     if cycleCount % 10 == 0 
         and Svc.Condition[CharacterCondition.normalConditions] 
         and not IsAddonReady("WKSMission") then
-            yield("/echo waiting " .. cycleCount .. "/" .. cycleLoops .. " ticks")
+            yield("/echo Job cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
     end
     if cycleCount > cycleLoops then
         if jobCount == totalJobs then
@@ -128,6 +148,63 @@ local function ShouldCycle()
     end
 end
 
+local function ShouldCredit()
+    lunarCredits = Addons.GetAddon("WKSHud"):GetNode(1, 15, 17, 3).Text:gsub("[^%d]", "")
+    if (tonumber(lunarCredits) > LimitConfig and Svc.Condition[CharacterCondition.normalConditions]) then
+        lunarCycleCount = lunarCycleCount + 1
+    else
+        lunarCycleCount = 0
+    end
+    if lunarCycleCount >= 10 then
+        yield("/echo Lunar credits: " .. lunarCredits "/" .. LimitConfig)
+        yield("/echo Going to Gamba")
+        lunarCycleCount = 0
+        yield('/gaction "Duty Action"')
+        sleep(2)
+        while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
+            sleep(1)
+        end
+        IPC.vnavmesh.PathfindAndMoveTo(CreditNpc.position, false)
+        sleep(1)
+        while IPC.vnavmesh.IsRunning() do
+            sleep(.5)
+            local curPos = Player.Entity.Position
+            if DistanctBetweenPositions(curPos, CreditNpc.position) < 3 then
+                IPC.vnavmesh.Stop()
+            end
+        end
+        local e = Entity.GetEntityByName(CreditNpc.name)
+        if e then
+            e:SetAsTarget()
+        end
+        if Entity.Target and Entity.Target.Name == CreditNpc.name then
+        Entity.Target:Interact()
+        sleep(.5)
+        end
+        while not IsAddonReady("SelectString") do
+            sleep(.5)
+        end
+        if IsAddonReady("SelectString") then
+            Engines.Run("/callback SelectString true 0")
+            sleep(.5)
+        end
+        while not IsAddonReady("SelectString") do
+            sleep(.5)
+        end
+        if IsAddonReady("SelectString") then
+            Engines.Run("/callback SelectString true 0")
+            sleep(.5)
+        end
+        while IsAddonReady("WKSLottery") do
+            sleep(2)
+        end
+        if not IsAddonReady("WKSLottery") then
+            yield("/ice start")
+        end
+    end
+end
+
+
 yield("/echo Cosmic Helper started!")
 --Main Loop
 while Run_script do
@@ -136,6 +213,9 @@ while Run_script do
   end
   if JobConfig ~= nil or JobConfig ~="" then
     ShouldCycle()
+  end
+  if LimitConfig ~= nil or LimitConfig ~="" then
+    ShouldCredit()
   end
   sleep(loopDelay)
 end
