@@ -6,6 +6,7 @@
 Collection of various SND scripts
 
 ## Scripts
+- Cosmic Exploration
 - FATE
 - Guild Company Seals
 - Manderville Gold Saucer Point
