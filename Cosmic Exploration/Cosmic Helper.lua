@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.1
+version: 1.0.2
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -10,10 +10,9 @@ description: |
   Spend Lunar Credits on Gamba
 plugin_dependencies:
 - ICE
-- SimpleTweaksPlugin
 configs:
   Jump if stuck:
-    default: true
+    default: false
     description: Will cause you to jump is stuck in position for too long.
     type: boolean
   Jobs:
@@ -22,11 +21,13 @@ configs:
       Leave blank to disable.
     type: list
   Lunar Credits Limit:
-    default: 9000
+    default: 0
     description: |
       Set this to the same number as "Stop at Lunar Credits" in ICE. 
-      Leave blank to disable.
+      Leave at 0 to disable.
     type: int
+    min: 0
+    max: 10000
 [[End Metadata]]
 --]=====]
 
@@ -34,6 +35,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.0.2 Improved stuck detection
     -> 1.0.1 Added Gamba support
     -> 1.0.0 Initial Release
 
@@ -76,6 +78,7 @@ local CharacterCondition = {
     unknown85                          = 85, -- Part of gathering
 }
 
+--NPC information
 CreditNpc = {name = "Orbitingway", position = Vector3(16.3421, 1.695, -16.394)}
 
 --Helper Funcitons
@@ -96,21 +99,25 @@ local function DistanctBetweenPositions(cur, last)
   return distance
 end
 
---Worker Funcitons
+-- Plugin detection and enabled
+function HasPlugin(name)
+    for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
+        if plugin.InternalName == name and plugin.IsLoaded then
+            return true
+        end
+    end
+    return false
+end
 
--- Jump if stuck
+--Worker Funcitons
 local function ShouldJump()
-    if (Svc.Condition[CharacterCondition.normalConditions] -- Checks if should be moving or not based on conditions and missions window being open.
-        or Svc.Condition[CharacterCondition.mounted]
-        or Svc.Condition[CharacterCondition.jumping48]
-        or Svc.Condition[CharacterCondition.mounting57])
-        and IsAddonReady("WKSMission") then
-            if lastPos == nil then -- Gets position and returns to main loop
+    if IPC.vnavmesh.IsRunning() then
+            if lastPos == nil then
                 lastPos = Player.Entity.Position
                 return
             end
-        local curPos = Player.Entity.Position -- Gets position again after first time to compare
-        if DistanctBetweenPositions(curPos, lastPos) < 3.25 then -- Compares difference between loops. 3.25 is enough for walking not to jump.
+        local curPos = Player.Entity.Position
+        if DistanctBetweenPositions(curPos, lastPos) < 3.25 then
             yield("/gaction jump")
             Dalamud.Log("[Cosmic Helper] Position hasn't changed jumping.")
             lastPos = nil
@@ -125,13 +132,14 @@ end
 local function ShouldCycle()
     if Svc.Condition[CharacterCondition.normalConditions] == false then
         cycleCount = 0
+        return
     elseif not IsAddonReady("WKSMission") then
         cycleCount = cycleCount + 1
     end
     if cycleCount % 10 == 0 
         and Svc.Condition[CharacterCondition.normalConditions] 
         and not IsAddonReady("WKSMission") then
-            yield("/echo Job cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
+            yield("/echo Job Cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
     end
     if cycleCount > cycleLoops then
         if jobCount == totalJobs then
@@ -150,19 +158,22 @@ end
 
 local function ShouldCredit()
     lunarCredits = Addons.GetAddon("WKSHud"):GetNode(1, 15, 17, 3).Text:gsub("[^%d]", "")
-    if (tonumber(lunarCredits) > LimitConfig and Svc.Condition[CharacterCondition.normalConditions]) then
+    if tonumber(lunarCredits) >= LimitConfig and Svc.Condition[CharacterCondition.normalConditions] then
         lunarCycleCount = lunarCycleCount + 1
     else
         lunarCycleCount = 0
+        return
+    end
+    if lunarCycleCount > 0 and lunarCycleCount % 5 == 0 then
+            yield("/echo Lunar Credit ticks: " .. lunarCycleCount .. "/ 10")
     end
     if lunarCycleCount >= 10 then
-        yield("/echo Lunar credits: " .. lunarCredits "/" .. LimitConfig)
-        yield("/echo Going to Gamba")
+        yield("/echo Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
         lunarCycleCount = 0
         yield('/gaction "Duty Action"')
-        sleep(2)
+        sleep(5)
         while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
-            sleep(1)
+            sleep(.5)
         end
         IPC.vnavmesh.PathfindAndMoveTo(CreditNpc.position, false)
         sleep(1)
@@ -179,24 +190,24 @@ local function ShouldCredit()
         end
         if Entity.Target and Entity.Target.Name == CreditNpc.name then
         Entity.Target:Interact()
-        sleep(.5)
+        sleep(1)
         end
         while not IsAddonReady("SelectString") do
-            sleep(.5)
+            sleep(1)
         end
         if IsAddonReady("SelectString") then
             Engines.Run("/callback SelectString true 0")
-            sleep(.5)
+            sleep(1)
         end
         while not IsAddonReady("SelectString") do
-            sleep(.5)
+            sleep(1)
         end
         if IsAddonReady("SelectString") then
             Engines.Run("/callback SelectString true 0")
-            sleep(.5)
+            sleep(1)
         end
         while IsAddonReady("WKSLottery") do
-            sleep(2)
+            sleep(5)
         end
         if not IsAddonReady("WKSLottery") then
             yield("/ice start")
@@ -204,17 +215,27 @@ local function ShouldCredit()
     end
 end
 
-
 yield("/echo Cosmic Helper started!")
+
+--Plugin Check
+if JobsConfig.Count > 0 and not HasPlugin("SimpleTweaksPlugin") then
+    yield("/echo [Cosmic Helper] Cycling jobs need SimpleTweaks plugin. Script will continue without playing Gamba.")
+    JobsConfig = nil
+end
+if LimitConfig > 0 and not HasPlugin("TextAdvance") then
+    yield("/echo [Cosmic Helper] Lunar Credit spending for Gamba needs TextAdvance plugin. Script will continue without playing Gamba.")
+    LimitConfig = 0
+end
+
 --Main Loop
 while Run_script do
   if JumpConfig then
     ShouldJump()
   end
-  if JobConfig ~= nil or JobConfig ~="" then
+  if JobsConfig ~= nil then
     ShouldCycle()
   end
-  if LimitConfig ~= nil or LimitConfig ~="" then
+  if LimitConfig > 0 then
     ShouldCredit()
   end
   sleep(loopDelay)
