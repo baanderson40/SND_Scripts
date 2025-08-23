@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.14
+version: 3.0.15
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -128,6 +128,7 @@ configs:
     is_choice: true
     description: Leave blank if you dont want to spend your bicolors.
     choices: ["",
+        "None",
         "Alexandrian Axe Beak Wing",
         "Alpaca Fillet",
         "Almasty Fur",
@@ -211,7 +212,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
-    -> 3.0.14   Fixed setting issue with Percentage to hold buff.
+    -> 3.0.15   Added none as a purchase option to disable purchases
+    -> 3.0.14   Fixed setting issue with Percentage to hold buff
     -> 3.0.13   Added list for settings
     -> 3.0.12   Fixed TextAdvance enabling 
     -> 3.0.11   Revision rollup
@@ -3367,7 +3369,7 @@ ShouldExtractMateria           = true       --should it Extract Materia
 EnableChangeInstance           = Config.Get("Change instances if no FATEs?")
 ShouldExchangeBicolorGemstones = Config.Get("Exchange bicolor gemstones?")
 ItemToPurchase                 = Config.Get("Exchange bicolor gemstones for")
-if ItemToPurchase == "" or ItemToPurchase == nil then
+if ItemToPurchase == "None" then
     ShouldExchangeBicolorGemstones = false
 end
 ReturnOnDeath                   = Config.Get("Return on death?")
