@@ -9,7 +9,11 @@ FATE centered SND2 lua scripts.
 - FATE Farming
   - Farm FATEs in given area
   - Purchase Bicolor gemsrone items
-  - Process Retainers when available 
+  - Process Retainers when available
+
+## Known Issues
+- FATE Farming
+  - Will not path to mob if not using BossModReborn as dodging plugin. Will just use range attacks instead of moving up. 
 
 ## Installation
 - Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
