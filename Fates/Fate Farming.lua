@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.15
+version: 3.0.16
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -30,7 +30,7 @@ configs:
     type: list
     description: What dodging plugin to use. If your Rotation plugin is BMR or VBM, this will be overriden.
     is_choice: true
-    choices: ["Any", "BossMod", "BossModRebord", "None"]
+    choices: ["Any", "BossMod", "BossModReborn", "None"]
 
   BMR/VBM Specific settings:
     default: false
@@ -212,6 +212,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.16.  Corrected Bossmod Reborn spelling for dodging plugin
     -> 3.0.15   Added none as a purchase option to disable purchases
     -> 3.0.14   Fixed setting issue with Percentage to hold buff
     -> 3.0.13   Added list for settings
