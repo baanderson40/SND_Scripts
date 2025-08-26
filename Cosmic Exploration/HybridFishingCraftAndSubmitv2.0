@@ -1,0 +1,422 @@
+********************************************************************************
+*                      Hosting for SND2 GitHub Function                        *
+********************************************************************************
+
+--[[
+    Name: HybridFishingCraftAndSubmitv2.0
+    Author: SubaruYashiro
+    Modified: Hitoooooo & Minnu
+    Version: 2.0.0
+
+    IMPORTANT NOTES: Most likely need ICE v0.0.33 if you want stability, not tested on latest ICE version
+
+    Requirements:
+    -> SomethingNeedDoing v12.38
+    -> Autohook
+    -> Artisan
+    -> Navmesh
+    -> Lifestream
+    -> (Optional) ChatCoordinates
+    -> (Optional) Ice's Cosmic Exploration | Run with this to auto grab missions
+
+    Make sure you're on Latest SomethingNeedDoing Edition, version should be around v12.38 and above.
+
+
+    Autohook preset:
+    Normal:
+        Moon Gel: AH4_H4sIAAAAAAAACu1YS2/jNhD+KwbPYkFRoh6+ed1sNoCTDeIUPQQ9jCTKJiJTXoraJg383wvqEUuK7TjZdLEpcrOHnG8e+maG5AOalDqfQqGLabpA4wd0IiHK+CTL0FirklvoisdQ6IkUK9Ail1OQMX9cvC6VnOZZxmP9NU1b6XRZrvYoGFMzIbkxdbaQueLneR4v0TiFrOBWYz5pt58laEyD0EKXSuRK6Hs0ti10VpzcxVmZ8GQrNvs3NX6D+ICqH7QyZXC8wEKn6+ul4sUyzxI0tgnpIR+GrjBCv6dBnnXG5KL1wLWJO3DBGbjQatU57Sja3W30ebO5SgRk2y/aS6lNPa+XVLdR+yyK5ck9LzqG2cBjxnoee23S4ZbPlyLVn0BUfhtB0QrmGuLbAo1Zk0YveIrbRQ0b1EvQgsuYd/zxhnpeP4O0VVXiHz4FXVOhtTrUDoK+ttNoXy8hE3BbfIbvuTIAPUEbjmP15Vc8zr9zhca2SdIuLnuBoUDHYJu/T2JxCqsq0IlcZFwVrRHzsQ1TfOIOvac9qGCzsdDJnVbQ1LLJ/HU+/xvWZ1KXwlTjKQjZ5gPbFpqVip/zooAFR2OELHRROYEucsmRVSPcrzkam8TswJvlhX413qXiBd/tIcJoz3ptsVrf+jNf81gryKalUlzqN4pygPpmse709knEO61Xu2qCzHW+NvUq5GKu+brqjFvfGxJN1Nu43IWrfPhDim8lN7goDlhA3Ihg4oYOdmMe4iCkNrZZ6gURI4nv+WhjoZko9NfU2CjQ+Kampwng0cEw3O/hJMtGterQzYtcrSD7kue3BqjtGH9yqP4becH1Yy325kyzaAJsq7QR1fCu7ZtO1GLOtcplZ0ruUD+HOyO9Fqu6DfxGnkASpwM54wsuE1D3r/W1sjToNOdCdp2gxgkzh3btNfL+fm+fz7/nZZQ9l9ieIvXCR71t8l6qeUyOBnl/EkKNd63E+oUR+Iw6j5ovjKGne0wUP+uDtp6ZFjJJNVdTKBdLPRMrM7tpvdDvLYS6zemtVPX5wPzoDMId087xWTg88JjBuPfsYk5ZbZ9vC/qKfyuF4slcgy7NEcIc435Olf8g6tsW+nuqxndaekfWh72rPg4Xx75qOHiB2PSmbBj64CReiH0vdbHrMoIBQoLBZ55jEzuxfYI2f7VjtrkE3XTO/02kT8buS88FRw3c40rr6FJ5nvpHcPw4Mj/L2qPoeSwPfzHC/VD7/fjm7/Kbd5pMwHjoRW6EKQeGXcITHEYswT51nITYKTiMd5pM3UZuHlC3n7gspAdaynmey0zo0RTUutda7EO5OEu41CKGzCTAWKo3TFZ5KXvbKvvDe7LTf7MIjKVSpRDzeWam7M5HEpeFwzcK2sex2cZCv8xr0/bu9+rObpSNZGqyWiW0ewdsbn7mZy3ebttF1e4NMYk9xweKbR4E2KWM4iDhIeZRBD71XTuMI7SxnvDIPnAhnJUS1OgKBKygfyn8INL/lkiMxSQCl2KHERe7KfFwGIKPUzsNgQUhc9NwF5Eo3R/Al3y9FnIxmpVykRq1Z7jUftqDl6dq4aoTW0uH/5Z9++g2YMwH3eQ+ulX33O6x24kT5iQ+ZhD42CUkxhAlBKdJHPleApACrSZiDd2+VmE6Hl3xVEiejMzEG53yrP9q5qSO7/hxgGOPRNglkY8BKMd+5MUssM1Rn6HNv4W/9r6hGQAA
+        Metals: AH4_H4sIAAAAAAAACs1XTW/bOBD9KwbPUqEPivq4ud40DeCkQexiD8EeaGlkE5FFh6TSZAP/94KSaEuyXbtFsNibMuS8eTOZGT6/o3Gl+IRKJSf5EiXv6KqkiwLGRYESJSqw0AOkVKpxydZUMV5OaJnC7nBeiXLCiwJS9S3PjXWyqtYnHHSoKSthHyozRzcZSrwottD1Zr4SIFe8yFASOo6F7gXjgqk3lLgWupFXr2lRZZDtzRph26Dfcp6uNHz94emvGplEA2R3gPxr6BojDnsezlkyuhKGAXYdPKAQDygYr6aiHUe3e807H5aLjNHiRJFdj5C4C4hbty9Mrq7eQHYCBwPGQdBjTEzR6RPMVixXnymreWuDNIaZoumTREnQlpFEh7hd1LhFvaeKQZlChw8Z+pF+BT3jKti/MKGqaQUTdejtDervt97zFS0YfZJf6AsXGqBnMOn4Vt/+ACl/AYESVxfpWHeTSLdAJ6Cp32e2vKbrOtFxuSxASBNE/7MzlPihgw/Y96Ci7dZCV69K0HaSdeXnfPaDbm5KVTE9i9eUlaYetmuhaSXgFqSkS0AJQha6q0mgO14CshqEtw2gRBfmCN6US/XHePcCJBxniGx04ryJWJ/v+cw2kCpBi0klBJTqg7IcoH5YrkfZHmR8NHp9q2mQmeIbPa+sXM4UbOrNuOfeNtFYfAzlLlzN4XvJnivQuCjFDoQ4JTbJFrGN/dS3aUY9O/cXEEWE4hAo2lpoyqT6lusYEiWPTXvqBHYE4/g0w3FRjBrXIc07Lta0+Mr5kwYyG+NvoPXf2i5B7WYxp4UEM5vtoU7QTGlrauCxG+pNZDBnSvBy+QGojt9BncISyoyKt48C/otXi+JcAXqOHol3fmeTPOl5SSJHnL9LmAu2adLbyYra8ls5hIGns288fzOLnu9BHnO2BjHY5res3B3pd+OT06ieY3e1vX8//BSdoKCnepwrEBNaLVdqytb6OXWbg+G411qqEs17rT86D1PzZgTxUHFE+sU7qR60zjGb1ozUAzxXTEA2U1RV+hHXQurEnF02NxfPwfm+vqCBL+vU7q2j3XdRm13UT//9P/2XQnXb2+ZxnhFMSGbjRZjbGLBnxyTy7ICkxHEX1HXyEG3/Meu8FduPO0Oz0R/fUXe14yB2w9PL/SvQl7fRWNFXpmDU2/DuYXnMWJ2oGu6cPOgXbMKrcud0k0GpWEoLXUZNr3Eer/WlfeFb0kPB5ffFb6TJVSKnKcwKvZR32QZndGawtdD/5nfKXjX8sVaY/aAbbWlrXf9a2auHVjPoz8a8v3bY4Y6H+w3pRymQPLQDb5Hb2Is8exH7gY1zCN0oDFwc+HVDNtBGL9heMroXPAUpIRuNnyuqWDq6BUULrSE6AbLQJzSE0E4dN7IxdgObQgi2F/gZCZwsdHwPbX8C2O1o0SkPAAA=
+
+    Moon:
+        AH4_H4sIAAAAAAAACu1YS2/jNhD+KwuepUKUKFnUzetmswGcB2IXOQQ90OLIJkKLXorKJg383wvqYUuObBdpCvSwN3k4882DH2cGfkPj0qgJK0wxyZYoeUMXOVtIGEuJEqNLcNA9pKww41ysmREqn7A8hd3hvNT5REkJqbnNslY6WZXrIwbW1VTksHfF26MrjhI/pg6600JpYV5Rgh10VVy8pLLkwPdiq7+tsa6VSlcWrPrw7VeFE8UOutzMVxqKlZIcJdjzesinoSsMOupZeGeDsXm3ERDskTMhtFZ1/Y5UhGAPd63881EozQWTR/CwH0W9GpPG7JsoVhevUHQSCA8SCMNeAlF7B+wJZiuRma9MVGlYQdEKZoalTwVKwqaqUfwet4tKG9Q7ZgTkKXTiiQ7ton5B/dZUi79gwkzNjNbrobV/cB1BYz1fMSnYU/GNPSttAXqCNp3A6cvvIVXPoFGCbZGGqB3FlhEdh239vorlJVtXiY7zpQRdtE7sZXOUBCOPvIu+BxVvtw66eDGaNc/YVn6uZj/Z5io3pbAP8ZKJvK2Hix00LTVcQ1GwJaAEIQfdVEGgG5UDcmqE1w2gxBZmAG+qCvNhvDsNBQxHiFx05Lz2WJ3v45ltIDWayUmpNeTmk7I8QP20XAejfZfxoPdKqybIzKiNfa8iX84MbKpGuY+9IdFYf07IXbgqhj9y8aMEi4siBiPqB5FLA8xdwihxaRowlzCfjbI08kjM0dZBU1GY28z6KFDyWNPTJrALkNLjEY6l/FKbHoZ5o/Saye9KPVmgtmM8AKt+W3kBZvcWMyYLaN9mc2gTbF9pI6rhCR7ZTtRizoxWeWdADpjf5vL1YQX5jTLj1IhnmMmj2F7QwZ7CEnLO9OtJeCuaizXog95yLfLdkZ0xv3nD3n5X5UIe1qbW8CO6U9gnelSlF++A1lyLzTFPo9APdirHfPWUTnhr9OxrGGcG9ISVy5WZirUdQ7g+OHwm1QJS6nrO2Y9OQx/o2sEopO/n+IkZbJeHtl+1xLyHH6XQwGeGmdKOQrudHGHrGfb9Yx79osCHKPDRO+/0xJRnKY9I5gKwzCUYwI0xJi7lUeRFMSMhy9D2z7YpNhvs405Q98XHN9RtkCSkwYkm/sBeipTJfiPHpwpzxSE3ImXSVsN6qRXGa1XmPbXK9+H2EfQ3wdh6KnXG0qbpDa+yIQ3P7GDh1kH/m5V+P1E/PEetsZVMbFWrgnYnazNP7Wct3qsN8bbLMX/kZZTHbjiy05Zy7tI4DV0fAyc+9YD6gLbOew6R4wl8V1Kqn18uQJ5jUXupw+TyOwf3naxaIvy3vPtFtPxfEs3zSY9rLAOOAzZyFzgGl2Rk5MYeoW7EYiA+4diLcNXPauh2aXODxHLpy331L4Dd3TqYCxZwD3vghiygLvEWmbuII+qCn/EIU+z7QYy2fwN+agEEnhAAAA==
+
+    Umbral:
+        ...
+
+	Changes:
+    Minnu
+    - Updated for latest SND
+    - Added re-instancing every 15 crafts to avoid Fish sense
+    - Auto-start Cosmic Exploration
+    - Plugin + timeout checks
+
+    Hitoooooo
+	- Added Navmesh only have A-2: Refined Moon Gel setup
+	- Added Auto Repair for Fishing (DoH repair from Artisan)
+	- Repair every 5 success mission instead
+
+]]
+
+---------------------------------- Import ---------------------------------
+
+import("System.Numerics")
+
+---------------------------------------------------------------------------
+
+-- Plugin Checks
+
+RequiredPlugins = {
+    "AutoHook",
+    "Artisan",
+    "vnavmesh",
+    "Lifestream"
+}
+
+-- Settings
+WeatherSelection = "Normal" -- All, Normal, Moon, Umbral
+
+-- Variables, editable
+FisherNormalMissionName   = "A-2: Refined Moon Gel"
+FisherNormalCoords        = "/coord 15.8 19.4"
+FisherNormalPreset        = "A-2: Refined Moon Gel"
+FisherNormalItem          = 45922
+FisherNormalAmount        = 2
+
+--FisherNormalMissionName   = "A-2: Processed Aquatic Metals" -- Probably not worth it, need a lot of GP (need to try refined moon gel)
+--FisherNormalCoords        = "/coord 25.3 25.4"
+--FisherNormalItem          = 45917
+--FisherNormalAmount        = 14
+
+FisherMoonMissionName     = "A-3: Eel Rations"
+FisherMoonCoords          = "/coord 7.0 9.4"
+FisherMoonPreset          = ""
+FisherMoonItem            = 45934
+FisherMoonAmount          = 2
+
+FisherUmbralMissionName   = ""
+FisherUmbralCoords        = ""
+FisherUmbralPreset        = ""
+FisherUmbralItem          = 0
+FisherUmbralAmount        = 0
+
+local missionName         = ""
+local SuccessCount        = 0
+local coords              = ""
+local preset              = ""
+local itemId              = 0
+local itemAmount          = 0
+local classId             = Player.Job.Id
+local weatherId           = Instances.EnvManager.ActiveWeather
+local previousWeatherType = ""
+
+-- Functions
+
+function HasPlugin(name)
+    for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
+        if plugin.InternalName == name and IPC.IsInstalled(name) then
+            return true
+        end
+    end
+    return false
+end
+
+function Plugins()
+    local missingPlugins = {}
+
+    for _, plugin in ipairs(RequiredPlugins) do
+        if not HasPlugin(plugin) then
+            table.insert(missingPlugins, plugin)
+        end
+    end
+
+    if #missingPlugins > 0 then
+        for _, plugin in ipairs(missingPlugins) do
+            yield(string.format("/echo [HybridFishing] Missing required plugin: %s", plugin))
+            Dalamud.Log(string.format("[HybridFishing] Missing required plugin: %s", plugin))
+        end
+        yield("/echo [HybridFishing] Stopping the script due to missing plugins.")
+        Dalamud.Log("[HybridFishing] Stopping the script due to missing plugins.")
+        yield("/snd stop all")
+    end
+end
+
+local function init()
+    if classId == 18 then
+        Class = Player.Gearset.Name
+
+        local weatherData = {
+            Normal = {
+                missionName = FisherNormalMissionName,
+                coords = FisherNormalCoords,
+                preset = FisherNormalPreset,
+                itemId = FisherNormalItem,
+                itemAmount = FisherNormalAmount
+            },
+            Moon = {
+                missionName = FisherMoonMissionName,
+                coords = FisherMoonCoords,
+                preset = FisherMoonPreset,
+                itemId = FisherMoonItem,
+                itemAmount = FisherMoonAmount
+            },
+            Umbral = {
+                missionName = FisherUmbralMissionName,
+                coords = FisherUmbralCoords,
+                preset = FisherUmbralPreset,
+                itemId = FisherUmbralItem,
+                itemAmount = FisherUmbralAmount
+            }
+        }
+
+        local selectedType = WeatherSelection == "All" and previousWeatherType or WeatherSelection
+        local data = weatherData[selectedType]
+
+        if data then
+            missionName = data.missionName
+            coords = data.coords
+            preset = data.preset
+            itemId = data.itemId
+            itemAmount = data.itemAmount
+        end
+    else
+        yield("/echo [HybridFishing] Wrong Class!!!")
+        return false
+    end
+    return true
+end
+
+local function getWeatherType(weatherId)
+    if weatherId == 148 then
+        return "Moon"
+    elseif weatherId == 49 then
+        return "Umbral"
+    else
+        return "Normal"
+    end
+end
+
+function WaitForPlayer()
+    Dalamud.Log("[HybridFishing] Waiting For Player...")
+    while not Player.Available or Player.IsBusy do
+        yield("/wait 0.1")
+    end
+    yield("/wait 1")
+end
+
+function WaitForZoneChange()
+    repeat
+        yield("/wait 0.1")
+    until Svc.Condition[45]
+    yield("/wait 1")
+    repeat
+        yield("/wait 0.1")
+    until not Svc.Condition[45]
+    yield("/wait 1")
+end
+
+function WaitForVnavMesh()
+    repeat
+        yield("/wait 0.1")
+    until not IPC.vnavmesh.PathfindInProgress() and not IPC.vnavmesh.IsRunning()
+    yield("/wait 0.1")
+end
+
+function MoveToSpot()
+    IPC.Lifestream.ExecuteCommand("Cosmic")
+    repeat
+        yield("/wait 0.1")
+    until not IPC.Lifestream.IsBusy()
+    yield("/wait 0.1")
+    WaitForZoneChange()
+    yield("/wait 0.1")
+    IPC.vnavmesh.PathfindAndMoveTo(Vector3(-89.203, -3.337, -27.259), false)
+    WaitForVnavMesh()
+    yield("/ice start")
+end
+
+local function WaitForFishingItem(maxWaitSeconds)
+    local waitElapsed = 0
+    local retryCount = 0
+    local maxRetries = 3
+
+    IPC.AutoHook.SetPreset(preset)
+    IPC.AutoHook.SetPluginState(true)
+    yield("/wait 1")
+
+    while not Svc.Condition[43] and retryCount < maxRetries do
+        Dalamud.Log("[HybridFishing] Attempting to start fishing (retry "..retryCount..")")
+        yield("/ahstart")
+        yield("/wait 5")
+        retryCount = retryCount + 1
+    end
+
+    if not Svc.Condition[43] then
+        yield("/echo [HybridFishing] Failed to start fishing after retries.")
+        Dalamud.Log("[HybridFishing] Fishing did not start after retries.")
+        return false
+    end
+
+    Dalamud.Log("[HybridFishing] Waiting to obtain item ID "..itemId.." x"..itemAmount)
+    while Inventory.GetItemCount(itemId) < itemAmount and waitElapsed < maxWaitSeconds do
+        yield("/wait 1")
+        waitElapsed = waitElapsed + 1
+    end
+
+    if Inventory.GetItemCount(itemId) < itemAmount then
+        IPC.AutoHook.SetPluginState(false)
+        yield("/wait 1")
+        while Svc.Condition[6] do
+            yield("/ac Quit")
+            yield("/wait 0.1")
+        end
+        yield("/echo [HybridFishing] Timeout waiting for item ID "..itemId)
+        Dalamud.Log("[HybridFishing] Timeout acquiring item ID "..itemId)
+        return false
+    end
+
+    if Svc.Condition[43] then
+        Dalamud.Log("[HybridFishing] Still in fishing mode, waiting to exit.")
+        yield("/wait 1")
+        while Svc.Condition[43] do
+            yield("/wait 0.1")
+        end
+    end
+
+    Dalamud.Log("[HybridFishing] Successfully acquired required items.")
+    return true
+end
+
+local function startCrafting()
+    if not Addons.GetAddon("WKSRecipeNotebook").Ready then
+        if not Addons.GetAddon("WKSMissionInfomation").Ready then
+            yield("/callback WKSHud true 11")
+            yield("/wait 0.2")
+        end
+
+        if not Addons.GetAddon("WKSRecipeNotebook").Ready then
+            yield("/callback WKSMissionInfomation true 14 1")
+        end
+    end
+
+    yield("/wait 0.5")
+    Dalamud.Log("[HybridFishing] Crafting..")
+    IPC.Artisan.SetEnduranceStatus(true)
+    yield("/wait 10")
+
+    while IPC.Artisan.GetEnduranceStatus() == true do
+        yield("/wait 0.5")
+    end
+
+    Dalamud.Log("[HybridFishing] Crafting completed successfully.")
+    yield("/wait 1")
+end
+
+local function submitReport()
+    Dalamud.Log("[HybridFishing] Reporting the Mission..")
+    if not Addons.GetAddon("WKSMissionInfomation").Ready then
+        yield("/callback WKSHud true 11")
+        yield("/wait 0.2")
+    end
+
+    if Addons.GetAddon("WKSRecipeNotebook").Ready then
+        yield("/callback WKSMissionInfomation true 14 1")
+    end
+
+    while Svc.Condition[5] do
+        yield("/wait 0.1")
+    end
+
+    yield("/wait 1")
+    Dalamud.Log("[HybridFishing] Changing Gearset to "..Class)
+    yield("/gs change "..Class)
+    yield("/wait 1")
+    yield("/callback WKSMissionInfomation true 11 1")
+    yield("/wait 1")
+end
+
+local function RepairIfNeeded(RepairCount)
+    if SuccessCount == 0 or SuccessCount % RepairCount ~= 0 then
+        return
+    end
+
+    yield("/wait 2")
+    Dalamud.Log("[HybridFishing] Attempting to repair gear...")
+
+    while not Addons.GetAddon("Repair").Ready do
+        yield("/generalaction repair")
+        yield("/wait 0.5")
+    end
+
+    yield("/callback Repair true 0")
+    yield("/wait 0.1")
+
+    if Addons.GetAddon("SelectYesno").Ready then
+        yield("/callback SelectYesno true 0")
+        yield("/wait 0.1")
+    end
+
+    while Svc.Condition[39] do
+        yield("/wait 1")
+    end
+
+    yield("/wait 1")
+    yield("/callback Repair true -1")
+    yield("/wait 2")
+    Dalamud.Log("[HybridFishing] Repair complete.")
+end
+
+-- End of Functions
+
+previousWeatherType = getWeatherType(weatherId)
+if init() then
+    Plugins()
+    Dalamud.Log("[HybridFishing] MissionName: "..missionName)
+    Dalamud.Log("[HybridFishing] MissionCoords: "..coords)
+    Dalamud.Log("[HybridFishing] MissionPreset: "..preset)
+else
+    return
+end
+
+while true do
+    if SuccessCount == 0 then
+        MoveToSpot()
+        IPC.vnavmesh.PathfindAndMoveTo(Vector3(-264.005, 22.156, -94.770), false)
+        WaitForVnavMesh()
+    elseif SuccessCount == 5 then
+        IPC.vnavmesh.PathfindAndMoveTo(Vector3(-259.450, 22.337, -75.942), false)
+        WaitForVnavMesh()
+    elseif SuccessCount == 10 then
+        IPC.vnavmesh.PathfindAndMoveTo(Vector3(-297.165, 22.075, -91.238), false)
+        WaitForVnavMesh()
+    end
+
+    local currentWeatherType = getWeatherType(Instances.EnvManager.ActiveWeather)
+    local currentMissionName = ""
+
+    if WeatherSelection == "All" then
+        if (currentWeatherType ~= previousWeatherType) then
+            return
+        end
+    end
+
+    while (currentMissionName ~= missionName) do
+        yield("/wait 0.5")
+        if Addons.GetAddon("WKSMissionInfomation").Ready then
+            currentMissionName = Addons.GetAddon("WKSMissionInfomation"):GetNode(1,3).Text
+        end
+    end
+
+    yield("/wait 1")
+    if not WaitForFishingItem(500) then
+        Dalamud.Log("[HybridFishing] Fishing step failed or timed out.")
+        yield("/echo [HybridFishing] Fishing failed. Proceeding to submit report only.")
+        WaitForPlayer()
+        submitReport()
+        SuccessCount = 0
+    elseif Inventory.GetItemCount(itemId) >= itemAmount then
+        Dalamud.Log("[HybridFishing] Sufficient items available, starting crafting.")
+        WaitForPlayer()
+        startCrafting()
+        submitReport()
+        SuccessCount = SuccessCount + 1
+        yield("/echo [HybridFishing] SuccessCount: "..SuccessCount)
+        Dalamud.Log("[HybridFishing] SuccessCount: "..SuccessCount)
+    end
+
+    WaitForPlayer()
+    RepairIfNeeded(15)
+
+    if SuccessCount == 15 then
+        SuccessCount = 0
+    end
+end
