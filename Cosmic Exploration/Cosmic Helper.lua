@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.3
+version: 1.0.4
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -46,8 +46,9 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.0.4 Improved Job cycling logic
     -> 1.0.3 Added random locations to move between with delay timer
-    -> 1.0.2 Imporoved stuck detection
+    -> 1.0.2 Improved stuck detection
     -> 1.0.1 Added Gamba support
     -> 1.0.0 Initial Release
 
@@ -64,7 +65,7 @@ import("System.Numerics") -- leave this alone....
 
 
 local loopDelay = .5            -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
-local cycleLoops = 15           -- How many loop iterations to run before cycling to the next job
+local cycleLoops = 20           -- How many loop iterations to run before cycling to the next job
 local moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
 local spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
 
@@ -90,10 +91,10 @@ SpotPos = { -- Random positions for crafting
 
 -- Definitions
 -- Config veriables
-JumpConfig = Config.Get("Jump if stuck")
-JobsConfig = Config.Get("Jobs")
+JumpConfig  = Config.Get("Jump if stuck")
+JobsConfig  = Config.Get("Jobs")
 LimitConfig = Config.Get("Lunar Credits Limit")
-MoveConfig = Config.Get("Delay Moving Spots")
+MoveConfig  = Config.Get("Delay Moving Spots")
 
 -- Veriables
 local Run_script = true
@@ -245,11 +246,12 @@ end
 
 local function ShouldCycle()
     if Svc.Condition[CharacterCondition.normalConditions] then
-        if (IsAddonReady("WKSMissionInfomation")
-        or IsAddonReady("WKSMission")
-        or IsAddonReady("WKSReward")
-        or Player.IsMoving) then
+        if (IsAddonExists("WKSMission")
+        or IsAddonExists("WKSMissionInfomation")
+        or IsAddonExists("WKSReward")
+        or Player.IsBusy) then
             cycleCount = 0
+            Dalamud.Log("[Cosmic Helper] Cosmic window opened or Player is busy.")
             return
         else
             cycleCount = cycleCount + 1
@@ -259,7 +261,7 @@ local function ShouldCycle()
     if cycleCount > 0 and cycleCount % 5 == 0 then
             yield("/echo [Cosmic Helper] Job Cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
     end
-    if cycleCount > cycleLoops then
+    if cycleCount >= cycleLoops then
         if jobCount == totalJobs then
             Dalamud.Log("[Cosmic Helper] End of job list reached. Exiting script.")
             yield("/echo [Cosmic Helper] End of job list reached. Exiting script.")
