@@ -22,6 +22,7 @@ configs:
       Leave blank to disable job cycling.
     is_choice: false
     choices: []
+    type: list
   Lunar Credits Limit:
     default: 0
     description: |
