@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.4
+version: 1.0.5
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -15,20 +15,19 @@ configs:
   Jump if stuck:
     default: false
     description: Makes the character jump if it has been stuck in the same spot for too long.
-    type: boolean
   Jobs:
     description: |
       A list of jobs to cycle through when EXP or class score thresholds are reached, 
       depending on the settings configured in ICE. 
       Leave blank to disable job cycling.
-    type: list
+    is_choice: false
+    choices: []
   Lunar Credits Limit:
     default: 0
     description: |
       Maximum number of Lunar Credits before missions will pause for Gamba. 
       Match this with "Stop at Lunar Credits" in ICE to synchronize behavior. 
       Set to 0 to disable the limit.
-    type: int
     min: 0
     max: 10000
   Delay Moving Spots:
@@ -36,7 +35,6 @@ configs:
     description: |
       Number of minutes to remain at one spot before moving randomly to another. 
       Use 0 to disable automatic spot movement.
-    type: int
     min: 0
     max: 1440
 [[End Metadata]]
@@ -46,6 +44,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.0.5 Removed types from config settings
     -> 1.0.4 Improved Job cycling logic
     -> 1.0.3 Added random locations to move between with delay timer
     -> 1.0.2 Improved stuck detection
@@ -332,7 +331,7 @@ end
 
 local function ShouldCredit()
     lunarCredits = Addons.GetAddon("WKSHud"):GetNode(1, 15, 17, 3).Text:gsub("[^%d]", "")
-    if tonumber(lunarCredits) >= LimitConfig and Svc.Condition[CharacterCondition.normalConditions] then
+    if tonumber(lunarCredits) >= LimitConfig and Svc.Condition[CharacterCondition.normalConditions] and not Player.IsBusy then
         lunarCycleCount = lunarCycleCount + 1
         Dalamud.Log("[Cosmic Helper] Lunar Credit ticks: " .. lunarCycleCount)
     else
