@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.17
+version: 3.0.18
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -184,8 +184,9 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.18   Fixed Mender and Darkmatter npcs' positions
     -> 3.0.17   Removed types from config settings
-    -> 3.0.16.  Corrected Bossmod Reborn spelling for dodging plugin
+    -> 3.0.16   Corrected Bossmod Reborn spelling for dodging plugin
     -> 3.0.15   Added none as a purchase option to disable purchases
     -> 3.0.14   Fixed setting issue with Percentage to hold buff
     -> 3.0.13   Added list for settings
@@ -2984,7 +2985,7 @@ function Repair()
         return
     end
 
-    local hawkersAlleyAethernetShard = { x=-213.95, y=15.99, z=49.35 }
+    local hawkersAlleyAethernetShard = {position = Vector3(-213.95, 15.99, 49.35)}
     if SelfRepair then
         if Inventory.GetItemCount(33916) > 0 then
             if Addons.GetAddon("Shop").Ready then
@@ -3021,7 +3022,7 @@ function Repair()
                 return
             end
 
-            local darkMatterVendor = { npcName="Unsynrael", x=-257.71, y=16.19, z=50.11, wait=0.08 }
+            local darkMatterVendor = {npcName="Unsynrael", position = Vector3(-257.71, 16.19, 50.11), wait=0.08}
             if GetDistanceToPoint(darkMatterVendor.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, darkMatterVendor.position) + 10) then
                 Engines.Run("/li Hawkers' Alley")
                 yield("/wait 1") -- give it a moment to register
@@ -3055,7 +3056,7 @@ function Repair()
                 return
             end
             
-            local mender = { npcName="Alistair", x=-246.87, y=16.19, z=49.83 }
+            local mender = { npcName="Alistair", position = Vector3(-246.87, 16.19, 49.83)}
             if GetDistanceToPoint(mender.position) > (DistanceBetween(hawkersAlleyAethernetShard.position, mender.position) + 10) then
                 Engines.Run("/li Hawkers' Alley")
                 yield("/wait 1") -- give it a moment to register
