@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.18b
+version: 3.0.19
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -153,6 +153,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.19   Fixed random pathing to mob target
     -> 3.0.18   Fixed Mender and Darkmatter npc positions
     -> 3.0.17   Removed types from config settings
     -> 3.0.16   Corrected Bossmod Reborn spelling for dodging plugin
@@ -1028,37 +1029,29 @@ function AttemptToTargetClosestFateEnemy()
     end
 end
 
--- Calculates a point on the line from 'start' to 'end',
--- stopping 'd' units before reaching 'end'
+function Normalize(v)
+    local len = v:Length()
+    if len == 0 then return v end
+    return v / len
+end
+
 function MoveToTargetHitbox()
+    Dalamud.Log("/echo Move to Target Hit Box")
     if Svc.Targets.Target == nil then
         return
     end
-
-    -- Vector from start to end
+    local playerPos = Svc.ClientState.LocalPlayer.Position
+    local targetPos = Svc.Targets.Target.Position
     local distance = GetDistanceToTarget()
-
-    -- Distance between start and end
-    if distance == 0 then
-        return
-    end
-
-    -- Scale direction vector to (distance - d)
-    local newDistance = distance - GetTargetHitboxRadius()
-    if newDistance <= 0 then
-        return
-    end
-
-    -- Calculate normalized direction vector
-    local norm = (Svc.Targets.Target.Position - Svc.ClientState.LocalPlayer.Position) / distance
-    local edgeOfHitbox = (norm*newDistance) + Svc.ClientState.LocalPlayer.Position
-    local newPos = nil
-    local halfExt = 10
-    while newPos == nil do
-        newPos = IPC.vnavmesh.PointOnFloor(edgeOfHitbox, false, halfExt)
-        halfExt = halfExt + 10
-    end
-    Engines.Run("/vnav moveto "..newPos.X.." "..newPos.Y.." "..newPos.Z)
+    if distance == 0 then return end
+    local desiredRange = math.max(0.1, GetTargetHitboxRadius() + GetPlayerHitboxRadius() + MaxDistance)
+    local STOP_EPS = 0.15
+    if distance <= (desiredRange + STOP_EPS) then return end
+    local dir = Normalize(playerPos - targetPos)
+    if dir:Length() == 0 then return end
+    local ideal = targetPos + (dir * desiredRange)
+    local newPos = IPC.vnavmesh.PointOnFloor(ideal, false, 1.5) or ideal
+    IPC.vnavmesh.PathfindAndMoveTo(newPos, false)
 end
 
 function HasPlugin(name)
@@ -3200,6 +3193,7 @@ BonusFatesOnly                  = Config.Get("Do only bonus FATEs?") --If true, 
 FatePriority                    = {"DistanceTeleport", "Progress", "Bonus", "TimeLeft", "Distance" }
 MeleeDist                       = Config.Get("Max melee distance")
 RangedDist                      = Config.Get("Max ranged distance")
+HitboxBuffer                    = 0.5
 --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
 -- Variable initialzization
