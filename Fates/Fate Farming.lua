@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.18a
+version: 3.0.18b
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -23,86 +23,68 @@ configs:
     description: What roation plugin to use
     is_choice: true
     choices: ["Any", "Wrath", "RotationSolver","BossMod", "BossModReborn"]
-
   Dodging Plugin:
     default: "Any"
     description: What dodging plugin to use. If your Rotation plugin is BMR or VBM, this will be overriden.
     is_choice: true
     choices: ["Any", "BossMod", "BossModReborn", "None"]
-
   BMR/VBM Specific settings:
     default: false
     description: "--- BMR/VBM Specific settings if you are using one of them as your rotation plugin ---"    
-    
   Single Target Rotation:
     default: ""
     description: Preset name with single strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET   
-
   AoE Rotation:
     default: ""
     description: Preset with AoE and Buff Strategies.
-    
   Hold Buff Rotation:
     default: ""
     description: Preset to hold 2min burst when progress gets to select %
-
   Food:
     default: ""
     description: Leave blank if you dont want to use any food. If its HQ include <hq> next to the name "Baked Eggplant <hq>"
-
   Potion:
     default: ""
     description: Leave blank if you dont want to use any potions. If its HQ include <hq> next to the name "Superior Spiritbond Potion <hq>"
-
   Max melee distance:
     default: 2.5
     min: 0
     max: 30
-
   Max ranged distance:
     default: 20
     min: 0
     max: 30
-
   Ignore FATE if progress is over (%):
     default: 80
     min: 0
     max: 100
-
   Ignore FATE if duration is less than (mins):
     default: 3
     min: 0
     max: 100
-
   Ignore boss FATEs until progress is at least (%):
     default: 0
     min: 0
     max: 100
-
   Ignore Special FATEs until progress is at least (%):
     default: 20
     min: 0
     max: 100
-
   Do collection FATEs?:
     default: true
-
   Do only bonus FATEs?:
     default: false
-
   Forlorns:
     default: All
     description: Forlorns to attack.
     is_choice: true
     choices: ["All", "Small", "None"]
-
   Change instances if no FATEs?:
     default: false
-
   Exchange bicolor gemstones for:
     default: Turali Bicolor Gemstone Voucher
     is_choice: true
-    description: Leave blank if you dont want to spend your bicolors.
+    description: Choose none if you dont want to spend your bicolors.
     choices: ["None",
         "Alexandrian Axe Beak Wing",
         "Alpaca Fillet",
@@ -139,40 +121,31 @@ configs:
         "Swampmonk Thigh",
         "Tumbleclaw Weeds",
         "Turali Bicolor Gemstone Voucher",
-        "Ty'aitya Wingblade"
-        ]
-
+        "Ty'aitya Wingblade"]
   Chocobo Companion Stance:
     default: "Healer"
     description: Will not summon chocobo if set to "None"
     is_choice: true
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
-
   Buy Gysahl Greens?:
     default: true
     description: Automatically buys a 99 stack of Gysahl Greens from the Limsa gil vendor if none in inventory.
-
   Self repair?:
     default: true
     description: If checked, will attempt to repair your gear. If not checked, will go to Limsa mender.
-
   Pause for retainers?:
     default: true
-
   Dump extra gear at GC?:
     default: true
     description: Used with retainers, in case they come back with too much stuff and clog your inventory.
-
   Return on death?:
     default: true
     description: Auto accept the box to return to home aetheryte when you die.
-
   Echo logs:
     default: Gems
     is_choice: true
     choices: ["All", "Gems", "None"]
     description: Debug level of logs. 
-
 [[End Metadata]]
 --]=====]
 --[[
