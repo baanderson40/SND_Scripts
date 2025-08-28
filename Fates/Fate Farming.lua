@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.19
+version: 3.0.20
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -153,6 +153,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.20   Fixed unexptected combat while moving
     -> 3.0.19   Fixed random pathing to mob target
     -> 3.0.18   Fixed Mender and Darkmatter npc positions
     -> 3.0.17   Removed types from config settings
@@ -1036,7 +1037,7 @@ function Normalize(v)
 end
 
 function MoveToTargetHitbox()
-    Dalamud.Log("/echo Move to Target Hit Box")
+    --Dalamud.Log("[FATE] Move to Target Hit Box")
     if Svc.Targets.Target == nil then
         return
     end
@@ -3392,7 +3393,8 @@ while not StopScript do
     if State ~= CharacterState.dead and Svc.Condition[CharacterCondition.dead] then
         State = CharacterState.dead
         Dalamud.Log("[FATE] State Change: Dead")
-    elseif State ~= CharacterState.unexpectedCombat
+    elseif not Player.IsMoving then
+        if State ~= CharacterState.unexpectedCombat
         and State ~= CharacterState.doFate
         and State ~= CharacterState.waitForContinuation
         and State ~= CharacterState.collectionsFateTurnIn
@@ -3400,11 +3402,11 @@ while not StopScript do
         and (
             not InActiveFate()
             or (InActiveFate() and IsCollectionsFate(nearestFate.Name) and nearestFate.Progress == 100)
-            or State == CharacterState.moveToFate   -- <-- this is new!
-        )
-    then
-        State = CharacterState.unexpectedCombat
-        Dalamud.Log("[FATE] State Change: UnexpectedCombat")
+            )
+        then
+            State = CharacterState.unexpectedCombat
+            Dalamud.Log("[FATE] State Change: UnexpectedCombat")
+        end
     end
 
     BicolorGemCount = Inventory.GetItemCount(26807)
