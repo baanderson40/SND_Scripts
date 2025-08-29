@@ -7,9 +7,11 @@ Cosmic Exploration centered SND2 lua scripts.
 
 ## Scripts
 - Cosmic Helper
-  - Jumps if stuck
-  - Cycle through jobs for class score
-  - Spend lunar credits on gamba
+  - Automatically jump if you get stuck while moving.
+  - Switch between jobs when EXP or class score goals are met (based on ICE settings).
+  - Pause missions once the Lunar Credits limit is reached and spend them on Gamba.
+  - Optionally wait at random spot for a set time before moving.
+  - Pause Cosmic missions when retainers’ ventures are ready.
 
 ## Installation
 - Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
