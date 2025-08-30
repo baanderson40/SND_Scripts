@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.6
+version: 1.0.7
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -19,6 +19,7 @@ configs:
     description: |
       A list of jobs to cycle through when EXP or class score thresholds are reached,
       depending on the settings configured in ICE.
+      -- Enable equip job command in Simple Tweaks and leave it as the default. --
       Leave blank to disable job cycling.
     default: []
   Lunar Credits Limit:
@@ -26,7 +27,7 @@ configs:
     description: |
       Maximum number of Lunar Credits before missions will pause for Gamba.
       Match this with "Stop at Lunar Credits" in ICE to synchronize behavior.
-      Enable Gamba under Gamble Wheel in ICE settings.
+      -- Enable Gamba under Gamble Wheel in ICE settings. --
       Set to 0 to disable the limit.
     min: 0
     max: 10000
@@ -51,6 +52,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.0.7 Fixed a typo for Moongate Hub in retainer processing
     -> 1.0.6 Added Retainer ventrues processing
     -> 1.0.5 Removed types from config settings
     -> 1.0.4 Improved Job cycling logic
@@ -58,7 +60,6 @@ configs:
     -> 1.0.2 Improved stuck detection
     -> 1.0.1 Added Gamba support
     -> 1.0.0 Initial Release
-
 ]]
 
 -- Imports
@@ -139,7 +140,7 @@ local CharacterCondition = {
 GateHub = Vector3(0,0,0)
 SummoningBell = {
     {zone = "Inn", aethernet = "Inn", position = nil},
-    {zone = "Cosmic", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
+    {zone = "Moongate Hub", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
     {zone = "Gridania", aethernet = "Leatherworkers' guild", position = Vector3(169.103, 15.500, -100.497)},
     {zone = "Limsa Lominsa", aethernet = "Limsa Lominsa", position = Vector3(-124.285, 18.000, 20.033)},
     {zone = "Ul'Dah", aethernet = "Sapphire Avenue Exchange", position = Vector3(148.241, 4.000, -41.936)},
