@@ -71,7 +71,7 @@ import("System.Numerics") -- leave this alone....
 ]]
 
 
-local loopDelay = .5            -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
+local loopDelay  = .5            -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
 local cycleLoops = 20           -- How many loop iterations to run before cycling to the next job
 local moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
 local spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
@@ -357,6 +357,12 @@ local function ShouldRetainer()
             sleep(.5)
         end
         if Svc.ClientState.TerritoryType == 1237 then
+            Dalamud.Log("[Cosmic Helper] Stellar Return")
+            yield('/gaction "Duty Action"')
+            sleep(5)
+            while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
+                sleep(.5)
+            end
             Dalamud.Log("[Cosmic Helper] Start ICE")
             yield("/ice start")
             sleep(2)
