@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.0.20
+version: 3.0.21
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features: 
@@ -38,7 +38,7 @@ configs:
     description: Preset with AoE and Buff Strategies.
     default: ""
   Hold Buff Rotation:
-    description: Preset to hold 2min burst when progress gets to select %
+    description: Preset to hold 2min burst when progress gets to select percent
     default: 65
   Food:
     description: Leave blank if you dont want to use any food. If its HQ include <hq> next to the name "Baked Eggplant <hq>"
