@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.7
+version: 1.0.8
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -13,8 +13,8 @@ plugin_dependencies:
 - ICE
 configs:
   Jump if stuck:
-    default: false
     description: Makes the character jump if it has been stuck in the same spot for too long.
+    default: false
   Jobs:
     description: |
       A list of jobs to cycle through when EXP or class score thresholds are reached,
@@ -23,28 +23,28 @@ configs:
       Leave blank to disable job cycling.
     default: []
   Lunar Credits Limit:
-    default: 0
     description: |
       Maximum number of Lunar Credits before missions will pause for Gamba.
       Match this with "Stop at Lunar Credits" in ICE to synchronize behavior.
       -- Enable Gamba under Gamble Wheel in ICE settings. --
       Set to 0 to disable the limit.
+    default: 0
     min: 0
     max: 10000
   Delay Moving Spots:
-    default: 0
     description: |
       Number of minutes to remain at one spot before moving randomly to another.
       Use 0 to disable automatic spot movement.
+    default: 0
     min: 0
     max: 1440
   Process Retainers Ventures:
     description: |
       Pause Cosmic Missions when retainers’ ventures are ready.
       Set to N/A to disable.
+    default: "N/A"
     is_choice: true
     choices: ["N/A", "Moongate Hub", "Inn", "Gridania", "Limsa Lominsa", "Ul'Dah"]
-    default: "N/A"
 [[End Metadata]]
 --]=====]
 
@@ -52,6 +52,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.0.8 Fixed meta data config settings
     -> 1.0.7 Fixed a typo for Moongate Hub in retainer processing
     -> 1.0.6 Added Retainer ventrues processing
     -> 1.0.5 Removed types from config settings
@@ -72,7 +73,7 @@ import("System.Numerics") -- leave this alone....
 ]]
 
 
-local loopDelay  = .5            -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
+local loopDelay  = .5           -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
 local cycleLoops = 20           -- How many loop iterations to run before cycling to the next job
 local moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
 local spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
@@ -125,6 +126,7 @@ local CharacterCondition = {
     gathering                          = 6,
     casting                            = 27,
     occupiedInQuestEvent               = 32,
+    occupied33                         = 33,
     occupiedMateriaExtractionAndRepair = 39,
     executingCraftingAction            = 40,
     preparingToCraft                   = 41,
@@ -358,6 +360,11 @@ local function ShouldRetainer()
             sleep(.5)
         end
         if Svc.ClientState.TerritoryType == 1237 then
+            while Svc.Condition[CharacterCondition.betweenAreas]
+               or Svc.Condition[CharacterCondition.casting]
+               or Svc.Condition[CharacterCondition.occupied33] do
+                sleep(.5)
+            end
             Dalamud.Log("[Cosmic Helper] Stellar Return")
             yield('/gaction "Duty Action"')
             sleep(5)
