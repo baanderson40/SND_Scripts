@@ -19,33 +19,33 @@ plugin_dependencies:
 - TextAdvance
 configs:
   Rotation Plugin:
+    description: What roation plugin to use?
     default: "Any"
-    description: What roation plugin to use
     is_choice: true
     choices: ["Any", "Wrath", "RotationSolver","BossMod", "BossModReborn"]
   Dodging Plugin:
-    default: "Any"
     description: What dodging plugin to use. If your Rotation plugin is BMR or VBM, this will be overriden.
+    default: "Any"
     is_choice: true
     choices: ["Any", "BossMod", "BossModReborn", "None"]
   BMR/VBM Specific settings:
-    default: false
-    description: "--- BMR/VBM Specific settings if you are using one of them as your rotation plugin ---"    
+    description: "--- BMR/VBM Specific settings if you are using one of them as your rotation plugin ---"
+    default: false  
   Single Target Rotation:
+    description: Preset name with single strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
     default: ""
-    description: Preset name with single strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET   
   AoE Rotation:
-    default: ""
     description: Preset with AoE and Buff Strategies.
+    default: ""
   Hold Buff Rotation:
-    default: ""
     description: Preset to hold 2min burst when progress gets to select %
+    default: 65
   Food:
-    default: ""
     description: Leave blank if you dont want to use any food. If its HQ include <hq> next to the name "Baked Eggplant <hq>"
-  Potion:
     default: ""
+  Potion:
     description: Leave blank if you dont want to use any potions. If its HQ include <hq> next to the name "Superior Spiritbond Potion <hq>"
+    default: ""
   Max melee distance:
     default: 2.5
     min: 0
@@ -75,16 +75,16 @@ configs:
   Do only bonus FATEs?:
     default: false
   Forlorns:
-    default: All
     description: Forlorns to attack.
+    default: "All"
     is_choice: true
     choices: ["All", "Small", "None"]
   Change instances if no FATEs?:
     default: false
   Exchange bicolor gemstones for:
-    default: Turali Bicolor Gemstone Voucher
-    is_choice: true
     description: Choose none if you dont want to spend your bicolors.
+    default: "Turali Bicolor Gemstone Voucher"
+    is_choice: true
     choices: ["None",
         "Alexandrian Axe Beak Wing",
         "Alpaca Fillet",
@@ -123,29 +123,29 @@ configs:
         "Turali Bicolor Gemstone Voucher",
         "Ty'aitya Wingblade"]
   Chocobo Companion Stance:
-    default: "Healer"
     description: Will not summon chocobo if set to "None"
+    default: "Healer"
     is_choice: true
     choices: ["Follow", "Free", "Defender", "Healer", "Attacker", "None"]
   Buy Gysahl Greens?:
-    default: true
     description: Automatically buys a 99 stack of Gysahl Greens from the Limsa gil vendor if none in inventory.
-  Self repair?:
     default: true
+  Self repair?:
     description: If checked, will attempt to repair your gear. If not checked, will go to Limsa mender.
+    default: true
   Pause for retainers?:
     default: true
   Dump extra gear at GC?:
-    default: true
     description: Used with retainers, in case they come back with too much stuff and clog your inventory.
-  Return on death?:
     default: true
+  Return on death?:
     description: Auto accept the box to return to home aetheryte when you die.
+    default: true
   Echo logs:
-    default: Gems
+    description: Debug level of logs. 
+    default: "Gems"
     is_choice: true
     choices: ["All", "Gems", "None"]
-    description: Debug level of logs. 
 [[End Metadata]]
 --]=====]
 --[[
@@ -153,6 +153,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.0.21   Updated meta data config settings
     -> 3.0.20   Fixed unexptected combat while moving
     -> 3.0.19   Fixed random pathing to mob target
     -> 3.0.18   Fixed Mender and Darkmatter npc positions
