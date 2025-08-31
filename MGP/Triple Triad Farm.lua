@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.1
+version: 1.0.2
 description: | 
   Support via https://ko-fi.com/baanderson40
   Farm MGP by playing Triple Triad NPCs and Saucy.
@@ -10,24 +10,20 @@ plugin_dependencies:
 - vnavmesh
 configs:
   Klynthota:
-    default: 125
     description: Number of games to play. Set to 0 to skip NPC.
-    type: int
+    default: 125
     min: 0
-    required: true
+    max: 1000
   Vorsaile Heuloix:
-    default: 125
     description: Number of games to play. Set to 0 to skip NPC.
-    type: int
+    default: 125
     min: 0
-    required: true
+    max: 1000
   Hanagasa:
-    default: 125
     description: Number of games to play. Set to 0 to skip NPC.
-    type: int
+    default: 125
     min: 0
-    required: true
-
+    max: 1000
 [[End Metadata]]
 --]=====]
 
@@ -35,6 +31,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.0.2 Updated meta data config settings
     -> 1.0.1 Added Gold Saucer VIP Card support
     -> 1.0.0 Initial Release
 
