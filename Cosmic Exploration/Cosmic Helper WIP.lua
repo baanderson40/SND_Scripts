@@ -49,6 +49,7 @@ configs:
   Research Turnin:
     description: |
       Enable to automatically turn in research for relic.
+      -- Enable "Auto-Pick For Relic XP" along with a random class mission in ICE. --
     default: false
 [[End Metadata]]
 --]=====]
