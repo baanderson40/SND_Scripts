@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.0
+version: 1.1.1
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -49,7 +49,6 @@ configs:
   Research Turnin:
     description: |
       Enable to automatically turn in research for relic.
-      -- Enable "Auto-Pick For Relic XP" along with a random class mission in ICE. --
     default: false
 [[End Metadata]]
 --]=====]
@@ -58,6 +57,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.1.1 Added additonal addon for relic excahnge and cycling research UI window
     -> 1.1.0 Added ability to turn in research for relic
     -> 1.0.8 Fixed meta data config settings
     -> 1.0.7 Fixed a typo for Moongate Hub in retainer processing
@@ -265,13 +265,17 @@ local function toNumber(s)
 end
 
 function RetrieveRelicResearch()
-    while not IsAddonExists("WKSToolCustomize") do
+    if Svc.Condition[CharacterCondition.crafting] or Svc.Condition[CharacterCondition.gathering] then
+        if IsAddonExists("WKSToolCustomize") then
+            Engines.Run("/callback WKSToolCustomize -1")
+        end
+        return false
+    elseif not IsAddonExists("WKSToolCustomize") then
         Engines.Run("/callback WKSHud true 15")
-        yield("/wait .5")
+        sleep(.5)
     end
     local ToolAddon = Addons.GetAddon("WKSToolCustomize")
     local researchRows = {4, 41001, 41002, 41003, 41004, 41005, 41006, 41007}
-    local checked = 0
     for _, row in ipairs(researchRows) do
         local currentNode  = ToolAddon:GetNode(1, 55, 68, row, 4, 5)
         local requiredNode = ToolAddon:GetNode(1, 55, 68, row, 4, 7)
@@ -282,7 +286,6 @@ function RetrieveRelicResearch()
         if current < required then
             return false
         end
-        checked = checked + 1
     end
     return true
 end
@@ -370,6 +373,12 @@ local function ShouldRelic()
         if IsAddonReady("SelectIconString") then
             StringId = Player.Job.Id - 8
             Engines.Run("/callback SelectIconString true " .. StringId)
+        end
+        while not IsAddonReady("SelectYesNo") do
+            sleep(1)
+        end
+        if IsAddonReady("SelectYesNo") then
+            Engines.Run("/callback SelectYesNo true 0")
         end
         local job = Player.Job
         if job.IsCrafter then
