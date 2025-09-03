@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.2
+version: 1.1.2a
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -372,6 +372,9 @@ function ShouldRelic()
         Dalamud.Log("[Cosmic Helper] Starting ICE")
         Engines.Run("/ice start")
         jobCount = jobCount + 1
+        if IsAddonExists("WKSToolCustomize") then
+            Engines.Run("/callback WKSToolCustomize true -1")
+        end
         return
     elseif RetrieveRelicResearch() == 2 then
         if not IPC.TextAdvance.IsEnabled() then
