@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1
+version: 1.1.1a
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -41,6 +41,7 @@ configs:
     max: 1440
   Process Retainers Ventures:
     description: |
+      **Broken for 7.31**
       Pause cosmic missions when retainers’ ventures are ready.
       Set to N/A to disable.
     default: "N/A"
@@ -85,17 +86,26 @@ local cycleLoops = 20           -- How many loop iterations to run before cyclin
 local moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
 local spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
 
-
-SpotPos = { -- Random positions for crafting 
-    Vector3(9.521,1.705,14.300),            -- Summoning bell
-    Vector3(8.870, 1.642, -13.272),         -- Cosmic Fortunes
-    Vector3(-9.551, 1.705, -13.721),        -- Starward Standings
-    Vector3(-12.039, 1.612, 16.360),        -- Cosmic Research
-    Vector3(7.002, 1.674, -7.293),          -- Cosmic Fortunes inside loop
-    Vector3(5.471, 1.660, 5.257),           -- Inside loop Summoning bell
-    Vector3(-6.257, 1.660, 6.100),          -- Inside loop Cosmic Research
-    Vector3(-5.919, 1.660, -5.678),         -- Inside loop Starward Standings
+if Svc.ClientState.TerritoryType == 1237 then -- Sinus 
+    SpotPos = { -- Sinus random spots for crafting 
+        Vector3(9.521,1.705,14.300),            -- Summoning bell
+        Vector3(8.870, 1.642, -13.272),         -- Cosmic Fortunes
+        Vector3(-9.551, 1.705, -13.721),        -- Starward Standings
+        Vector3(-12.039, 1.612, 16.360),        -- Cosmic Research
+        Vector3(7.002, 1.674, -7.293),          -- Cosmic Fortunes inside loop
+        Vector3(5.471, 1.660, 5.257),           -- Inside loop Summoning bell
+        Vector3(-6.257, 1.660, 6.100),          -- Inside loop Cosmic Research
+        Vector3(-5.919, 1.660, -5.678),         -- Inside loop Starward Standings
 }
+elseif Svc.ClientState.TerritoryType == 1291 then
+    SpotPos = {
+        Vector3(355.522, 52.625, -409.623), -- Summoning bell
+        Vector3(353.649, 52.625, -403.039), -- Credit Exchange
+        Vector3(356.086, 52.625, -434.961), -- Cosmic Fortunes
+        Vector3(330.380, 52.625, -436.684), -- Starward Standings
+        Vector3(319.037, 52.625, -417.655), -- Mech Ops
+    }
+end
 
 
 --[[
@@ -109,7 +119,7 @@ JumpConfig      = Config.Get("Jump if stuck")
 JobsConfig      = Config.Get("Jobs")
 LimitConfig     = Config.Get("Lunar Credits Limit")
 MoveConfig      = Config.Get("Delay Moving Spots")
-RetainerConfig  = Config.Get("Process Retainers Ventures")
+--RetainerConfig  = Config.Get("Process Retainers Ventures")
 ResearchConfig  = Config.Get("Research Turnin")
 
 -- Veriables
@@ -147,7 +157,9 @@ local CharacterCondition = {
 }
 
 --Position Information
-GateHub = Vector3(0,0,0)
+SinusGateHub = Vector3(0,0,0)
+PhaennaGateHub = Vector3(340.721, 52.864, -418.183)
+
 SummoningBell = {
     {zone = "Inn", aethernet = "Inn", position = nil},
     {zone = "Moongate Hub", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
@@ -165,9 +177,15 @@ if RetainerConfig ~= "N/A" then
     end
 end
 
+--TerritoryType
+SinusTerritory = 1237
+PhaennaTerritory = 1291
+
 --NPC information
-CreditNpc = {name = "Orbitingway", position = Vector3(16.3421, 1.695, -16.394)}
-ResearchNpc = {name = "Researchingway", position = Vector3(-16.214, 1.695, 16.275)}
+SinusCreditNpc = {name = "Orbitingway", position = Vector3(18.845, 2.243, -18.906)}
+SinusResearchNpc = {name = "Researchingway", position = Vector3(-18.906, 2.151, 18.845)}
+PhaennaCreditNpc = {name = "Orbitingway", position = Vector3(358.816, 53.193, -438.865)}
+PhaennaResearchNpc = {name = "Researchingway", position = Vector3(321.218, 53.193, -401.236)}
 
 --Helper Funcitons
 local function sleep(seconds)
@@ -184,8 +202,8 @@ local function IsAddonExists(name)
     return a and a.Exists
 end
 
-local function DistanctBetweenPositions(cur, last)
-  local distance = Vector3.Distance(cur, last)
+local function DistanctBetweenPositions(pos1, pos2)
+  local distance = Vector3.Distance(pos1, pos2)
   return distance
 end
 
@@ -223,7 +241,7 @@ function RetrieveClassScore()
     local classScoreAll = {}
     if not IsAddonExists("WKSScoreList") then
         Engines.Run("/callback WKSHud true 18")
-        yield("/wait .5")
+        sleep(.5)
     end
     local scoreAddon = Addons.GetAddon("WKSScoreList")
     local dohRows = {2, 21001, 21002, 21003, 21004, 21005, 21006, 21007}
@@ -265,9 +283,12 @@ local function toNumber(s)
 end
 
 function RetrieveRelicResearch()
-    if Svc.Condition[CharacterCondition.crafting] or Svc.Condition[CharacterCondition.gathering] then
+    if Svc.Condition[CharacterCondition.crafting]
+       or Svc.Condition[CharacterCondition.gathering]
+       or IsAddonExists("WKSMissionInfomation") then
         if IsAddonExists("WKSToolCustomize") then
-            Engines.Run("/callback WKSToolCustomize -1")
+            yield('/echo closeing toolcustomize')
+            Engines.Run("/callback WKSToolCustomize true -1")
         end
         return false
     elseif not IsAddonExists("WKSToolCustomize") then
@@ -294,12 +315,12 @@ end
 local function ShouldJump()
     if Player.IsMoving then
         if lastPos == nil then
-            lastPos = Player.Entity.Position
+            lastPos = Svc.ClientState.LocalPlayer.Position
             return
         end
-        local curPos = Player.Entity.Position
+        local curPos = Svc.ClientState.LocalPlayer.Position
         if DistanctBetweenPositions(curPos, lastPos) < 3 then
-            yield("/gaction jump")
+            Engines.Run("/gaction jump")
             Dalamud.Log("[Cosmic Helper] Position hasn't changed jumping")
             lastPos = nil
         else
@@ -313,50 +334,74 @@ end
 local function ShouldRelic()
     if RetrieveRelicResearch() then
         if not IPC.TextAdvance.IsEnabled() then
-            yield("/at enable")
+            Engines.Run("/at enable")
             local EnabledAutoText = true
         end
         Dalamud.Log("[Cosmic Helper] Research level met!")
-        yield("/echo [Cosmic Helper] Research level met!")
+        Engines.Run("/echo [Cosmic Helper] Research level met!")
         local waitcount = 0
         while IsAddonReady("WKSMissionInfomation") do
             sleep(.1)
             waitcount = waitcount + 1
             Dalamud.Log("[Cosmic Helper] Waiting for mission to move")
             if waitcount >= 20 then
-                yield("/echo [Cosmic Helper] Waiting for mission to move.")
+                Engines.Run("/echo [Cosmic Helper] Waiting for mission to move.")
                 waitcount = 0
             end
         end
         Dalamud.Log("[Cosmic Helper] Stopping ICE")
-        yield("/ice stop")
-        local curPos = Player.Entity.Position
-        if DistanctBetweenPositions(curPos, GateHub) > 75 then
-            Dalamud.Log("[Cosmic Helper] Stellar Return")
-            yield('/gaction "Duty Action"')
-            sleep(5)
-        end
-        while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
-            sleep(.5)
-        end
-        IPC.vnavmesh.PathfindAndMoveTo(ResearchNpc.position, false)
-        Dalamud.Log("[Cosmic Helper] Moving to Research bunny")
-        sleep(1)
-        while IPC.vnavmesh.IsRunning() do
-            sleep(.5)
-            local curPos = Player.Entity.Position
-            if DistanctBetweenPositions(curPos, ResearchNpc.position) < 3 then
-                Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
-                IPC.vnavmesh.Stop()
+        Engines.Run("/ice stop")
+        local curPos = Svc.ClientState.LocalPlayer.Position
+        if Svc.ClientState.TerritoryType == SinusTerritory then
+            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+                Dalamud.Log("[Cosmic Helper] Stellar Return")
+                Engines.Run('/gaction "Duty Action"')
+                sleep(5)
+            end
+            while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
+                sleep(.5)
+            end
+            IPC.vnavmesh.PathfindAndMoveTo(SinusResearchNpc.position, false)
+            Dalamud.Log("[Cosmic Helper] Moving to Research bunny")
+            sleep(1)
+            while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
+                sleep(.01)
+                local curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanctBetweenPositions(curPos, SinusResearchNpc.position) < 4 then
+                    Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
+                    IPC.vnavmesh.Stop()
+                    break
+                end
+            end
+        elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
+            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+                Dalamud.Log("[Cosmic Helper] Stellar Return")
+                Engines.Run('/gaction "Duty Action"')
+                sleep(5)
+            end
+            while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
+                sleep(.5)
+            end
+            IPC.vnavmesh.PathfindAndMoveTo(PhaennaResearchNpc.position, false)
+            Dalamud.Log("[Cosmic Helper] Moving to Research bunny")
+            sleep(1)
+            while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
+                sleep(.01)
+                local curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanctBetweenPositions(curPos, PhaennaResearchNpc.position) < 5 then
+                    Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
+                    IPC.vnavmesh.Stop()
+                    break
+                end
             end
         end
-        local e = Entity.GetEntityByName(ResearchNpc.name)
+        local e = Entity.GetEntityByName(SinusResearchNpc.name)
         if e then
-            Dalamud.Log("[Cosmic Helper] Targetting: " .. ResearchNpc.name)
+            Dalamud.Log("[Cosmic Helper] Targetting: " .. SinusResearchNpc.name)
             e:SetAsTarget()
         end
-        if Entity.Target and Entity.Target.Name == ResearchNpc.name then
-            Dalamud.Log("[Cosmic Helper] Interacting: " .. ResearchNpc.name)
+        if Entity.Target and Entity.Target.Name == SinusResearchNpc.name then
+            Dalamud.Log("[Cosmic Helper] Interacting: " .. SinusResearchNpc.name)
             Entity.Target:Interact()
             sleep(1)
         end
@@ -374,11 +419,11 @@ local function ShouldRelic()
             StringId = Player.Job.Id - 8
             Engines.Run("/callback SelectIconString true " .. StringId)
         end
-        while not IsAddonReady("SelectYesNo") do
+        while not IsAddonReady("SelectYesno") do
             sleep(1)
         end
-        if IsAddonReady("SelectYesNo") then
-            Engines.Run("/callback SelectYesNo true 0")
+        if IsAddonReady("SelectYesno") then
+            Engines.Run("/callback SelectYesno true 0")
         end
         local job = Player.Job
         if job.IsCrafter then
@@ -389,35 +434,35 @@ local function ShouldRelic()
             sleep(2)
         end
         if EnabledAutoText then
-            yield("/at disable")
+            Engines.Run("/at disable")
             EnabledAutoText = false
         end
         Dalamud.Log("[Cosmic Helper] Starting ICE")
-        yield("/ice start")
+        Engines.Run("/ice start")
         sleep(2)
-        yield("/ice start")
+        Engines.Run("/ice start")
     end
 end
 
 local function ShouldRetainer()
     if IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara() then
         local waitcount = 0
-        while IsAddonReady("WKSMissionInfomation") do
+        while IsAddonExists("WKSMissionInfomation") do
             sleep(.2)
             waitcount = waitcount + 1
             Dalamud.Log("[Cosmic Helper] Waiting for mission to process retainers")
             if waitcount >= 10 then
-                yield("/echo [Cosmic Helper] Waiting for mission to process retainers")
+                Engines.Run("/echo [Cosmic Helper] Waiting for mission to process retainers")
                 waitcount = 0
             end
         end
         Dalamud.Log("[Cosmic Helper] Stopping ICE")
-        yield("/ice stop")
+        Engines.Run("/ice stop")
         if SelectedBell.zone == "Moongate Hub" then
-            local curPos = Player.Entity.Position
-            if DistanctBetweenPositions(curPos, GateHub) > 75 then
+            local curPos = Svc.ClientState.LocalPlayer.Position
+            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
-                yield('/gaction "Duty Action"')
+                Engines.Run('/gaction "Duty Action"')
                 sleep(5)
             end
         else
@@ -439,7 +484,7 @@ local function ShouldRetainer()
         end
         while IPC.vnavmesh.IsRunning() do
             sleep(.5)
-            if DistanctBetweenPositions(Player.Entity.Position, SelectedBell.position) < 2 then
+            if DistanctBetweenPositions(Svc.ClientState.LocalPlayer.Position, SelectedBell.position) < 2 then
                 Dalamud.Log("[Cosmic Helper] Close enough to summoning bell")
                 IPC.vnavmesh.Stop()
                 break
@@ -470,19 +515,19 @@ local function ShouldRetainer()
             Engines.Run("/callback RetainerList true -1")
             sleep(1)
         end
-        if Svc.ClientState.TerritoryType ~= 1237 then
+        if Svc.ClientState.TerritoryType ~= SinusTerritory then
             Dalamud.Log("[Cosmic Helper] Teleport to Cosmic")
-            yield("/li Cosmic")
+            Engines.Run("/li Cosmic")
             sleep(3)
         end
         local cosmicCount = 0
-        while Svc.ClientState.TerritoryType ~= 1237 do
-            if Svc.ClientState.TerritoryType ~= 1237 then
+        while Svc.ClientState.TerritoryType ~= SinusTerritory do
+            if Svc.ClientState.TerritoryType ~= SinusTerritory then
                 cosmicCount = cosmicCount + 1
                 if cosmicCount >=  70 then
                     Dalamud.Log("[Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
-                    yield("/echo [Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
-                    yield("/li Cosmic")
+                    Engines.Run("/echo [Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
+                    Engines.Run("/li Cosmic")
                     cosmicCount = 0
                 end
             else
@@ -490,22 +535,22 @@ local function ShouldRetainer()
             end
             sleep(.5)
         end
-        if Svc.ClientState.TerritoryType == 1237 then
+        if Svc.ClientState.TerritoryType == SinusTerritory then
             while Svc.Condition[CharacterCondition.betweenAreas]
                or Svc.Condition[CharacterCondition.casting]
                or Svc.Condition[CharacterCondition.occupied33] do
                 sleep(.5)
             end
             Dalamud.Log("[Cosmic Helper] Stellar Return")
-            yield('/gaction "Duty Action"')
+            Engines.Run('/gaction "Duty Action"')
             sleep(5)
             while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
                 sleep(.5)
             end
             Dalamud.Log("[Cosmic Helper] Start ICE")
-            yield("/ice start")
+            Engines.Run("/ice start")
             sleep(2)
-            yield("/ice start")
+            Engines.Run("/ice start")
         end
     end
 end
@@ -513,38 +558,61 @@ end
 local function ShouldCredit()
     if lunarCredits >= LimitConfig and Svc.Condition[CharacterCondition.normalConditions] and not Player.IsBusy then
         if not IPC.TextAdvance.IsEnabled() then
-            yield("/at enable")
+            Engines.Run("/at enable")
             local EnabledAutoText = true
         end
         Dalamud.Log("[Cosmic Helper] Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
-        yield("/echo Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
-        local curPos = Player.Entity.Position
-        if DistanctBetweenPositions(curPos, GateHub) > 75 then
+        Engines.Run("/echo Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
+        local curPos = Svc.ClientState.LocalPlayer.Position
+        if Svc.ClientState.TerritoryType == SinusTerritory then
+        if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
             Dalamud.Log("[Cosmic Helper] Stellar Return")
-            yield('/gaction "Duty Action"')
+            Engines.Run('/gaction "Duty Action"')
             sleep(5)
         end
         while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
             sleep(.5)
         end
-        IPC.vnavmesh.PathfindAndMoveTo(CreditNpc.position, false)
+        IPC.vnavmesh.PathfindAndMoveTo(SinusCreditNpc.position, false)
         Dalamud.Log("[Cosmic Helper] Moving to Gamba bunny")
         sleep(1)
-        while IPC.vnavmesh.IsRunning() do
-            sleep(.5)
-            local curPos = Player.Entity.Position
-            if DistanctBetweenPositions(curPos, CreditNpc.position) < 3 then
+        while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
+            sleep(.01)
+            local curPos = Svc.ClientState.LocalPlayer.Position
+            if DistanctBetweenPositions(curPos, SinusCreditNpc.position) < 5 then
                 Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
                 IPC.vnavmesh.Stop()
             end
         end
-        local e = Entity.GetEntityByName(CreditNpc.name)
+        elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
+            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+                Dalamud.Log("[Cosmic Helper] Stellar Return")
+                Engines.Run('/gaction "Duty Action"')
+                sleep(5)
+            end
+            while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
+                sleep(.5)
+            end
+            IPC.vnavmesh.PathfindAndMoveTo(PhaennaCreditNpc.position, false)
+            Dalamud.Log("[Cosmic Helper] Moving to Gamba bunny")
+            sleep(1)
+            while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
+                sleep(.01)
+                local curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanctBetweenPositions(curPos, PhaennaCreditNpc.position) < 4 then
+                    Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
+                    IPC.vnavmesh.Stop()
+                    break
+                end
+            end
+        end
+        local e = Entity.GetEntityByName(SinusCreditNpc.name)
         if e then
-            Dalamud.Log("[Cosmic Helper] Targetting: " .. CreditNpc.name)
+            Dalamud.Log("[Cosmic Helper] Targetting: " .. SinusCreditNpc.name)
             e:SetAsTarget()
         end
-        if Entity.Target and Entity.Target.Name == CreditNpc.name then
-            Dalamud.Log("[Cosmic Helper] Interacting: " .. CreditNpc.name)
+        if Entity.Target and Entity.Target.Name == SinusCreditNpc.name then
+            Dalamud.Log("[Cosmic Helper] Interacting: " .. SinusCreditNpc.name)
             Entity.Target:Interact()
             sleep(1)
         end
@@ -576,13 +644,13 @@ local function ShouldCredit()
                 sleep(2)
             end
             if EnabledAutoText then
-                yield("/at disable")
+                Engines.Run("/at disable")
                 EnabledAutoText = false
             end
             Dalamud.Log("[Cosmic Helper] Starting ICE")
-            yield("/ice start")
+            Engines.Run("/ice start")
             sleep(2)
-            yield("/ice start")
+            Engines.Run("/ice start")
         end
     end
 end
@@ -601,22 +669,30 @@ local function ShouldMove()
     local interval = math.max(1, MoveConfig + offSet)
     if os.time() - lastMoveTime >= interval * 60 then
         local waitcount = 0
-        while IsAddonReady("WKSMissionInfomation") do
+        while IsAddonExists("WKSMissionInfomation") do
             sleep(.1)
             waitcount = waitcount + 1
             Dalamud.Log("[Cosmic Helper] Waiting for mission to move")
             if waitcount >= 10 then
-                yield("/echo [Cosmic Helper] Waiting for mission to move.")
+                Engines.Run("/echo [Cosmic Helper] Waiting for mission to move.")
                 waitcount = 0
             end
         end
         Dalamud.Log("[Cosmic Helper] Stopping ICE")
-        yield("/ice stop")
-        local curPos = Player.Entity.Position
-        if DistanctBetweenPositions(curPos, GateHub) > 75 then
-            Dalamud.Log("[Cosmic Helper] Stellar Return")
-            yield('/gaction "Duty Action"')
-            sleep(5)
+        Engines.Run("/ice stop")        
+        local curPos = Svc.ClientState.LocalPlayer.Position
+        if Svc.ClientState.TerritoryType == SinusTerritory then
+            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+                Dalamud.Log("[Cosmic Helper] Stellar Return")
+                Engines.Run('/gaction "Duty Action"')
+                sleep(5)
+            end
+        elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
+            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+                Dalamud.Log("[Cosmic Helper] Stellar Return")
+                Engines.Run('/gaction "Duty Action"')
+                sleep(5)
+            end
         end
         while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
             sleep(.5)
@@ -626,7 +702,7 @@ local function ShouldMove()
         Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
         sleep(2)
         while IPC.vnavmesh.IsRunning do
-            local curPos = Player.Entity.Position
+            local curPos = Svc.ClientState.LocalPlayer.Position
             if DistanctBetweenPositions(curPos, aroundSpot) < 2 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
@@ -634,7 +710,7 @@ local function ShouldMove()
             end
             sleep(1)
         end
-        yield("/ice start")
+        Engines.Run("/ice start")
         Dalamud.Log("[Cosmic Helper] Starting ICE")
         lastMoveTime = os.time()
         offSet = nil
@@ -658,50 +734,53 @@ local function ShouldCycle()
         end
     end
     if cycleCount > 0 and cycleCount % 5 == 0 then
-            yield("/echo [Cosmic Helper] Job Cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
+            Engines.Run("/echo [Cosmic Helper] Job Cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
     end
     if cycleCount >= cycleLoops then
         if jobCount == totalJobs then
             Dalamud.Log("[Cosmic Helper] End of job list reached. Exiting script.")
-            yield("/echo [Cosmic Helper] End of job list reached. Exiting script.")
+            Engines.Run("/echo [Cosmic Helper] End of job list reached. Exiting script.")
             Run_script = false
             return
         end
         Dalamud.Log("[Cosmic Helper] Swapping to -> " .. JobsConfig[jobCount])
-        yield("/echo [Cosmic Helper] Swapping to -> " .. JobsConfig[jobCount])
-        yield("/equipjob " .. JobsConfig[jobCount])
-        yield("/wait 2")
+        Engines.Run("/echo [Cosmic Helper] Swapping to -> " .. JobsConfig[jobCount])
+        Engines.Run("/equipjob " .. JobsConfig[jobCount])
+        sleep(2)
         Dalamud.Log("[Cosmic Helper] Starting ICE")
-        yield("/ice start")
+        Engines.Run("/ice start")
         jobCount = jobCount + 1
         cycleCount = 0
     end
 end
 
-yield("/echo Cosmic Helper started!")
+Engines.Run("/echo Cosmic Helper started!")
 
 --Plugin Check
 if JobsConfig.Count > 0 and not HasPlugin("SimpleTweaksPlugin") then
-    yield("/echo [Cosmic Helper] Cycling jobs requires SimpleTweaks plugin. Script will continue without changing jobs.")
+    Engines.Run("/echo [Cosmic Helper] Cycling jobs requires SimpleTweaks plugin. Script will continue without changing jobs.")
     JobsConfig = nil
 end
 if LimitConfig > 0 and not HasPlugin("TextAdvance") then
-    yield("/echo [Cosmic Helper] Lunar Credit spending for Gamba requires TextAdvance plugin. Script will continue without playing Gamba.")
+    Engines.Run("/echo [Cosmic Helper] Lunar Credit spending for Gamba requires TextAdvance plugin. Script will continue without playing Gamba.")
     LimitConfig = 0
 end
-if RetainerConfig and not HasPlugin("TextAdvance") then
-    yield("/echo [Cosmic Helper] Research turnin requires TextAdvance plugin. Script will continue without turning in research for relics.")
-    LimitConfig = 0
+if ResearchConfig and not HasPlugin("TextAdvance") then
+    Engines.Run("/echo [Cosmic Helper] Research turnin requires TextAdvance plugin. Script will continue without turning in research for relics.")
+    ResearchConfig = 0
 end
 if RetainerConfig ~= "N/A" and not HasPlugin("AutoRetainer") then
-    yield("/echo [Cosmic Helper] Retainer processing requires TextAdvance plugin. Script will continue without processing retainers.")
+    Engines.Run("/echo [Cosmic Helper] Retainer processing requires TextAdvance plugin. Script will continue without processing retainers.")
     RetainerConfig = "N/A"
 end
 local job = Player.Job
 if not job.IsCrafter and MoveConfig > 0 then
-    yield("/echo [Cosmic Helper] Only crafters should move. Script will continue.")
+    Engines.Run("/echo [Cosmic Helper] Only crafters should move. Script will continue.")
     MoveConfig = 0
 end
+
+--Enable plugin options
+Engines.Run("/tweaks enable EquipJobCommand true")
 
 --Main Loop
 while Run_script do
