@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1c
+version: 1.1.1d
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -41,12 +41,12 @@ configs:
     max: 1440
   Process Retainers Ventures:
     description: |
-      **Broken for 7.31**
+      **Only moon locations function**
       Pause cosmic missions when retainers’ ventures are ready.
       Set to N/A to disable.
     default: "N/A"
     is_choice: true
-    choices: ["N/A", "Moongate Hub", "Inn", "Gridania", "Limsa Lominsa", "Ul'Dah"]
+    choices: ["N/A","Glassblowers' Beacon (Pharnna)", "Moongate Hub (Sinus)", "Inn", "Gridania", "Limsa Lominsa", "Ul'Dah"]
   Research Turnin:
     description: |
       Enable to automatically turn in research for relic.
@@ -161,12 +161,13 @@ SinusGateHub = Vector3(0,0,0)
 PhaennaGateHub = Vector3(340.721, 52.864, -418.183)
 
 SummoningBell = {
-    {zone = "Inn", aethernet = "Inn", position = nil},
-    {zone = "Moongate Hub", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
-    {zone = "Gridania", aethernet = "Leatherworkers' guild", position = Vector3(169.103, 15.500, -100.497)},
+  --  {zone = "Inn", aethernet = "Inn", position = nil},
+    {zone = "Glassblowers' Beacon (Pharnna)", aethernet = nil, position = Vector3(356.396, 52.625, -409.360)},
+    {zone = "Moongate Hub (Sinus)", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
+    }--[[{zone = "Gridania", aethernet = "Leatherworkers' guild", position = Vector3(169.103, 15.500, -100.497)},
     {zone = "Limsa Lominsa", aethernet = "Limsa Lominsa", position = Vector3(-124.285, 18.000, 20.033)},
     {zone = "Ul'Dah", aethernet = "Sapphire Avenue Exchange", position = Vector3(148.241, 4.000, -41.936)},
-}
+}]]
 
 if RetainerConfig ~= "N/A" then
     for _, bell in ipairs(SummoningBell) do
