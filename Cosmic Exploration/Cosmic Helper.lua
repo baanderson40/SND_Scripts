@@ -88,10 +88,10 @@ import("System.Numerics") -- leave this alone....
 ]]
 
 
-local loopDelay  = .5           -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
-local cycleLoops = 20           -- How many loop iterations to run before cycling to the next job
-local moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
-local spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
+loopDelay  = .5           -- Controls how fast the script runs; lower = faster, higher = slower (in seconds per loop)
+cycleLoops = 20           -- How many loop iterations to run before cycling to the next job
+moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
+spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
 
 if Svc.ClientState.TerritoryType == 1237 then -- Sinus 
     SpotPos = {
@@ -131,22 +131,22 @@ ResearchConfig  = Config.Get("Research Turnin")
 RelicJobsConfig = Config.Get("Relic Jobs")
 
 -- Veriables
-local Run_script        = true
-local lastPos           = nil
-local totalJobs         = JobsConfig.Count
-local totalRelicJobs    = RelicJobsConfig.Count
-local cycleCount        = 0
-local jobCount          = 0
-local lunarCredits      = 0
-local lunarCycleCount   = 0
-local lastSpotIndex     = nil
-local lastMoveTime      = nil
-local offSet            = nil
-local minRadius         = .5
-local SelectedBell      = nil
-local ClassScoreAll     = {}
+Run_script        = true
+lastPos           = nil
+totalJobs         = JobsConfig.Count
+totalRelicJobs    = RelicJobsConfig.Count
+cycleCount        = 0
+jobCount          = 0
+lunarCredits      = 0
+lunarCycleCount   = 0
+lastSpotIndex     = nil
+lastMoveTime      = nil
+offSet            = nil
+minRadius         = .5
+SelectedBell      = nil
+ClassScoreAll     = {}
 
-local CharacterCondition = {
+ CharacterCondition = {
     normalConditions                   = 1, -- moving or standing still
     mounted                            = 4, -- moving
     crafting                           = 5,
@@ -248,7 +248,7 @@ function GetRandomSpotAround(radius, minDist)
 end
 
 function RetrieveClassScore()
-    local classScoreAll = {}
+    classScoreAll = {}
     if not IsAddonExists("WKSScoreList") then
         Engines.Run("/callback WKSHud true 18")
         sleep(.5)
@@ -293,7 +293,7 @@ function toNumber(s)
 end
 
 function RetrieveRelicResearch()
-    local ResearchStatus = 0
+    ResearchStatus = 0
     if Svc.Condition[CharacterCondition.crafting]
        or Svc.Condition[CharacterCondition.gathering]
        or IsAddonExists("WKSMissionInfomation") then
@@ -376,7 +376,7 @@ function ShouldRelic()
     elseif RetrieveRelicResearch() == 2 then
         if not IPC.TextAdvance.IsEnabled() then
             Engines.Run("/at enable")
-            local EnabledAutoText = true
+            EnabledAutoText = true
         end
         Dalamud.Log("[Cosmic Helper] Research level met!")
         Engines.Run("/echo [Cosmic Helper] Research level met!")
@@ -392,7 +392,7 @@ function ShouldRelic()
         end
         Dalamud.Log("[Cosmic Helper] Stopping ICE")
         Engines.Run("/ice stop")
-        local curPos = Svc.ClientState.LocalPlayer.Position
+        curPos = Svc.ClientState.LocalPlayer.Position
         if Svc.ClientState.TerritoryType == SinusTerritory then
             if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
@@ -407,8 +407,8 @@ function ShouldRelic()
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
-                local curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, SinusResearchNpc.position) < 4 then
+                curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanctBetweenPositions(curPos, SinusResearchNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
                     break
@@ -428,7 +428,7 @@ function ShouldRelic()
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
-                local curPos = Svc.ClientState.LocalPlayer.Position
+                curPos = Svc.ClientState.LocalPlayer.Position
                 if DistanctBetweenPositions(curPos, PhaennaResearchNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
@@ -468,14 +468,14 @@ function ShouldRelic()
         end
         local job = Player.Job
         if job.IsCrafter then
-            local aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
+            aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
             IPC.vnavmesh.PathfindAndMoveTo(aroundSpot, false)
             Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
             lastMoveTime = os.time()
             sleep(2)
         end
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
-            local curPos = Svc.ClientState.LocalPlayer.Position
+            curPos = Svc.ClientState.LocalPlayer.Position
             if DistanctBetweenPositions(curPos, aroundSpot) < 3 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
@@ -509,14 +509,14 @@ function ShouldRetainer()
         Dalamud.Log("[Cosmic Helper] Stopping ICE")
         Engines.Run("/ice stop")
         if SelectedBell.zone == "Moongate Hub (Sinus)" then
-            local curPos = Svc.ClientState.LocalPlayer.Position
+            curPos = Svc.ClientState.LocalPlayer.Position
             if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 Engines.Run('/gaction "Duty Action"')
                 sleep(5)
             end
         elseif SelectedBell.zone == "Glassblowers' Beacon (Pharnna)" then
-            local curPos = Svc.ClientState.LocalPlayer.Position
+            curPos = Svc.ClientState.LocalPlayer.Position
             if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 Engines.Run('/gaction "Duty Action"')
@@ -573,12 +573,12 @@ function ShouldRetainer()
             sleep(1)
         end
         if Svc.ClientState.TerritoryType == SinusTerritory then
-            local aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
+            aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
             IPC.vnavmesh.PathfindAndMoveTo(aroundSpot, false)
             Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
-                local curPos = Svc.ClientState.LocalPlayer.Position
+                curPos = Svc.ClientState.LocalPlayer.Position
                 if DistanctBetweenPositions(curPos, aroundSpot) < 3 then
                     Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                     IPC.vnavmesh.Stop()
@@ -587,12 +587,12 @@ function ShouldRetainer()
                 sleep(.1)
             end
         elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
-            local aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
+            aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
             IPC.vnavmesh.PathfindAndMoveTo(aroundSpot, false)
             Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
-                local curPos = Svc.ClientState.LocalPlayer.Position
+                curPos = Svc.ClientState.LocalPlayer.Position
                 if DistanctBetweenPositions(curPos, aroundSpot) < 3 then
                     Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                     IPC.vnavmesh.Stop()
@@ -641,31 +641,31 @@ function ShouldCredit()
     if lunarCredits >= LimitConfig and Svc.Condition[CharacterCondition.normalConditions] and not Player.IsBusy then
         if not IPC.TextAdvance.IsEnabled() then
             Engines.Run("/at enable")
-            local EnabledAutoText = true
+            EnabledAutoText = true
         end
         Dalamud.Log("[Cosmic Helper] Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
         Engines.Run("/echo Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
-        local curPos = Svc.ClientState.LocalPlayer.Position
+        curPos = Svc.ClientState.LocalPlayer.Position
         if Svc.ClientState.TerritoryType == SinusTerritory then
-        if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
-            Dalamud.Log("[Cosmic Helper] Stellar Return")
-            Engines.Run('/gaction "Duty Action"')
-            sleep(5)
-        end
-        while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
-            sleep(.5)
-        end
-        IPC.vnavmesh.PathfindAndMoveTo(SinusCreditNpc.position, false)
-        Dalamud.Log("[Cosmic Helper] Moving to Gamba bunny")
-        sleep(1)
-        while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
-            sleep(.01)
-            local curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanctBetweenPositions(curPos, SinusCreditNpc.position) < 5 then
-                Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
-                IPC.vnavmesh.Stop()
+            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+                Dalamud.Log("[Cosmic Helper] Stellar Return")
+                Engines.Run('/gaction "Duty Action"')
+                sleep(5)
             end
-        end
+            while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
+                sleep(.5)
+            end
+            IPC.vnavmesh.PathfindAndMoveTo(SinusCreditNpc.position, false)
+            Dalamud.Log("[Cosmic Helper] Moving to Gamba bunny")
+            sleep(1)
+            while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
+                sleep(.01)
+                curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanctBetweenPositions(curPos, SinusCreditNpc.position) < 5 then
+                    Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
+                    IPC.vnavmesh.Stop()
+                end
+            end
         elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
             if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
@@ -680,8 +680,8 @@ function ShouldCredit()
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
-                local curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, PhaennaCreditNpc.position) < 4 then
+                curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanctBetweenPositions(curPos, PhaennaCreditNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
                     break
@@ -717,23 +717,23 @@ function ShouldCredit()
             Dalamud.Log("[Cosmic Helper] Waiting for Gamba to finish")
         end
         if not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
-            local job = Player.Job
+            job = Player.Job
             if job.IsCrafter then
-                local aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
+                aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
                 IPC.vnavmesh.PathfindAndMoveTo(aroundSpot, false)
                 Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
                 lastMoveTime = os.time()
                 sleep(1)
             end
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
-            local curPos = Svc.ClientState.LocalPlayer.Position
+            curPos = Svc.ClientState.LocalPlayer.Position
             if DistanctBetweenPositions(curPos, aroundSpot) < 3 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
                 break
             end
             sleep(.1)
-        end
+            end
             if EnabledAutoText then
                 Engines.Run("/at disable")
                 EnabledAutoText = false
@@ -771,7 +771,7 @@ function ShouldMove()
         end
         Dalamud.Log("[Cosmic Helper] Stopping ICE")
         Engines.Run("/ice stop")
-        local curPos = Svc.ClientState.LocalPlayer.Position
+        curPos = Svc.ClientState.LocalPlayer.Position
         if Svc.ClientState.TerritoryType == SinusTerritory then
             if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
@@ -788,12 +788,12 @@ function ShouldMove()
         while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
             sleep(.5)
         end
-        local aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
+        aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
         IPC.vnavmesh.PathfindAndMoveTo(aroundSpot, false)
         Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
         sleep(1)
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
-            local curPos = Svc.ClientState.LocalPlayer.Position
+            curPos = Svc.ClientState.LocalPlayer.Position
             if DistanctBetweenPositions(curPos, aroundSpot) < 3 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
