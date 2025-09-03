@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1b
+version: 1.1.1c
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -291,23 +291,29 @@ function RetrieveRelicResearch()
         end
         return false
     elseif not IsAddonExists("WKSToolCustomize") then
-        Engines.Run("/callback WKSHud true 15")
-        sleep(.5)
-    end
-    local ToolAddon = Addons.GetAddon("WKSToolCustomize")
-    local researchRows = {4, 41001, 41002, 41003, 41004, 41005, 41006, 41007}
-    for _, row in ipairs(researchRows) do
-        local currentNode  = ToolAddon:GetNode(1, 55, 68, row, 4, 5)
-        local requiredNode = ToolAddon:GetNode(1, 55, 68, row, 4, 7)
-        if not currentNode or not requiredNode then break end
-        local current  = toNumber(currentNode.Text)
-        local required = toNumber(requiredNode.Text)
-        if current == nil or required == nil then break end
-        if current < required then
-            return false
+        if IsAddonExists("WKSHud") then
+          Engines.Run("/callback WKSHud true 15")
+          sleep(.5)
         end
     end
-    return true
+    if IsAddonExists("WKSToolCustomize") then
+      local ToolAddon = Addons.GetAddon("WKSToolCustomize")
+      local researchRows = {4, 41001, 41002, 41003, 41004, 41005, 41006, 41007}
+      for _, row in ipairs(researchRows) do
+          local currentNode  = ToolAddon:GetNode(1, 55, 68, row, 4, 5)
+          local requiredNode = ToolAddon:GetNode(1, 55, 68, row, 4, 7)
+          if not currentNode or not requiredNode then break end
+          local current  = toNumber(currentNode.Text)
+          local required = toNumber(requiredNode.Text)
+          if current == nil or required == nil then break end
+          if current < required then
+              return false
+          end
+      end
+      return true
+    else
+      return false
+    end
 end
 
 --Worker Funcitons
