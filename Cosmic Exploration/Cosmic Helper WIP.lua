@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1a
+version: 1.1.1b
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -119,7 +119,7 @@ JumpConfig      = Config.Get("Jump if stuck")
 JobsConfig      = Config.Get("Jobs")
 LimitConfig     = Config.Get("Lunar Credits Limit")
 MoveConfig      = Config.Get("Delay Moving Spots")
---RetainerConfig  = Config.Get("Process Retainers Ventures")
+RetainerConfig  = Config.Get("Process Retainers Ventures")
 ResearchConfig  = Config.Get("Research Turnin")
 
 -- Veriables
@@ -792,7 +792,7 @@ while Run_script do
         ShouldRelic()
     end
     if RetainerConfig ~= "N/A" then
-        ShouldRetainer()
+        --ShouldRetainer()
     end
     if LimitConfig > 0 then
         ShouldCredit()
