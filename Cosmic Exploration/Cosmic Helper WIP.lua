@@ -287,7 +287,6 @@ function RetrieveRelicResearch()
        or Svc.Condition[CharacterCondition.gathering]
        or IsAddonExists("WKSMissionInfomation") then
         if IsAddonExists("WKSToolCustomize") then
-            yield('/echo closeing toolcustomize')
             Engines.Run("/callback WKSToolCustomize true -1")
         end
         return false
