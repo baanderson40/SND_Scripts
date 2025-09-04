@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.3
+version: 1.1.3a
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -176,13 +176,13 @@ SinusGateHub = Vector3(0,0,0)
 PhaennaGateHub = Vector3(340.721, 52.864, -418.183)
 
 SummoningBell = {
-  --  {zone = "Inn", aethernet = "Inn", position = nil},
-    {zone = "Glassblowers' Beacon (Pharnna)", aethernet = nil, position = Vector3(356.396, 52.625, -409.360)},
-    {zone = "Moongate Hub (Sinus)", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
-    }--[[{zone = "Gridania", aethernet = "Leatherworkers' guild", position = Vector3(169.103, 15.500, -100.497)},
+    {zone = "Inn", aethernet = "Inn", position = nil},
+    {zone = "Glassblowers' Beacon (Pharnna)", aethernet = nil, position = Vector3(358.380, 52.625, -409.429)},
+    --{zone = "Moongate Hub (Sinus)", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
+    {zone = "Gridania", aethernet = "Leatherworkers' guild", position = Vector3(169.103, 15.500, -100.497)},
     {zone = "Limsa Lominsa", aethernet = "Limsa Lominsa", position = Vector3(-124.285, 18.000, 20.033)},
     {zone = "Ul'Dah", aethernet = "Sapphire Avenue Exchange", position = Vector3(148.241, 4.000, -41.936)},
-}]]
+}
 
 if RetainerConfig ~= "N/A" then
     for _, bell in ipairs(SummoningBell) do
@@ -299,48 +299,36 @@ function toNumber(s)
 end
 
 function RetrieveRelicResearch()
-    ResearchStatus = 0
     if Svc.Condition[CharacterCondition.crafting]
        or Svc.Condition[CharacterCondition.gathering]
        or IsAddonExists("WKSMissionInfomation") then
         if IsAddonExists("WKSToolCustomize") then
             yield("/callback WKSToolCustomize true -1")
         end
-        ResearchStatus = 0 --Not ready
-        return ResearchStatus
-    elseif not IsAddonExists("WKSToolCustomize") then
-        if IsAddonExists("WKSHud") then
-          yield("/callback WKSHud true 15")
-          --sleep(.25)
-        end
+        return 0
     end
-    if IsAddonExists("WKSToolCustomize") then
+    if not IsAddonExists("WKSToolCustomize") and IsAddonExists("WKSHud") then
+        yield("/callback WKSHud true 15")
+        sleep(.25)
+    end
+    if not IsAddonExists("WKSToolCustomize") then
+        return 0
+    end
         local ToolAddon = Addons.GetAddon("WKSToolCustomize")
-        local researchRows = {4, 41001, 41002, 41003, 41004, 41005, 41006, 41007}
-            for _, row in ipairs(researchRows) do
-                local currentNode  = ToolAddon:GetNode(1, 55, 68, row, 4, 5)
-                local requiredNode = ToolAddon:GetNode(1, 55, 68, row, 4, 7)
-                if not currentNode or not requiredNode then
-                    return ResearchStatus
-                end
-                current  = toNumber(currentNode.Text)
-                required = toNumber(requiredNode.Text)
-                if current == nil or required == nil then
-                    return ResearchStatus
-                end
-                if current < required then
-                    ResearchStatus = 0 --Not ready
-                    return ResearchStatus
-                elseif required == 0 then
-                    ResearchStatus = 1 --Relic maxed
-                    return ResearchStatus
-                end
-            end
-        ResearchStatus = 2 --Phase complete
-        return ResearchStatus
-    else
-        return ResearchStatus
-    end
+        local rows = {4, 41001, 41002, 41003, 41004, 41005, 41006, 41007}
+        local checked = 0
+        for _, row in ipairs(rows) do
+            local currentNode = ToolAddon:GetNode(1, 55, 68, row, 4, 5)
+            local requiredNode = ToolAddon:GetNode(1, 55, 68, row, 4, 7)
+            if not currentNode or not requiredNode then break end
+            local current  = toNumber(currentNode.Text)
+            local required = toNumber(requiredNode.Text)
+            if current == nil or required == nil then break end
+            if required == 0 then return 1 end --Relic complete
+            if current < required then return 0 end --Phase not done
+            checked = checked + 1
+        end
+    return (checked > 0) and 2 or 0  -- 2 = phase complete
 end
 
 --Worker Funcitons
@@ -519,7 +507,7 @@ function ShouldRetainer()
             sleep(.2)
             waitcount = waitcount + 1
             Dalamud.Log("[Cosmic Helper] Waiting for mission to process retainers")
-            if waitcount >= 10 then
+            if waitcount >= 15 then
                 yield("/echo [Cosmic Helper] Waiting for mission to process retainers")
                 waitcount = 0
             end
@@ -559,7 +547,7 @@ function ShouldRetainer()
         end
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
             sleep(.5)
-            if DistanctBetweenPositions(Svc.ClientState.LocalPlayer.Position, SelectedBell.position) < 4 then
+            if DistanctBetweenPositions(Svc.ClientState.LocalPlayer.Position, SelectedBell.position) < 3 then
                 Dalamud.Log("[Cosmic Helper] Close enough to summoning bell")
                 IPC.vnavmesh.Stop()
                 break
@@ -618,24 +606,31 @@ function ShouldRetainer()
                 end
                 sleep(.1)
             end
-        else --will be other areas eventually
+        else
+            Dalamud.Log("[Cosmic Helper] Teleport to Cosmic")
+            yield("/li Cosmic")
+            sleep(3)
         end
-        --[[local cosmicCount = 0
-        while Svc.ClientState.TerritoryType ~= SinusTerritory do
-            if Svc.ClientState.TerritoryType ~= SinusTerritory then
-                cosmicCount = cosmicCount + 1
-                if cosmicCount >=  70 then
-                    Dalamud.Log("[Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
-                    yield("/echo [Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
-                    yield("/li Cosmic")
-                    cosmicCount = 0
-                end
-            else
-                break
+        local cosmicCount = 0
+        while not Svc.ClientState.TerritoryType == SinusTerritory
+            or Svc.ClientState.TerritoryType == PhaennaTerritory do
+            if (Svc.ClientState.TerritoryType == SinusTerritory
+                or Svc.ClientState.TerritoryType == PhaennaTerritory)
+                and not IPC.Lifestream.IsBusy() then
+                    cosmicCount = cosmicCount + 1
+                    if cosmicCount >=  500 then
+                        Dalamud.Log("[Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
+                        yield("/echo [Cosmic Helper] Failed to teleport to Cosmic. Trying agian.")
+                        yield("/li Cosmic")
+                        cosmicCount = 0
+                    end
+                else
+                    break
             end
             sleep(.5)
         end
-        if Svc.ClientState.TerritoryType == SinusTerritory then
+        if Svc.ClientState.TerritoryType == SinusTerritory
+            or Svc.ClientState.TerritoryType == PhaennaTerritory then
             while Svc.Condition[CharacterCondition.betweenAreas]
                or Svc.Condition[CharacterCondition.casting]
                or Svc.Condition[CharacterCondition.occupied33] do
@@ -646,12 +641,12 @@ function ShouldRetainer()
             sleep(5)
             while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
                 sleep(.5)
-            end]]
+            end
             Dalamud.Log("[Cosmic Helper] Start ICE")
             yield("/ice start")
             sleep(2)
             yield("/ice start")
-        --end
+        end
     end
 end
 
