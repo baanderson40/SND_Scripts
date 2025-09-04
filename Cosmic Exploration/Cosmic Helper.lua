@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.3a
+version: 1.1.3b
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -218,7 +218,7 @@ function IsAddonExists(name)
     return a and a.Exists
 end
 
-function DistanctBetweenPositions(pos1, pos2)
+function DistanceBetweenPositions(pos1, pos2)
   local distance = Vector3.Distance(pos1, pos2)
   return distance
 end
@@ -230,6 +230,10 @@ function HasPlugin(name)
         end
     end
     return false
+end
+
+local function JumpReset()
+  lastPos, jumpCount = nil, 0
 end
 
 function GetRandomSpotAround(radius, minDist)
@@ -333,22 +337,18 @@ end
 
 --Worker Funcitons
 function ShouldJump()
-    if Player.IsMoving then
-        if lastPos == nil then
-            lastPos = Svc.ClientState.LocalPlayer.Position
-            return
-        end
-        local curPos = Svc.ClientState.LocalPlayer.Position
-        if DistanctBetweenPositions(curPos, lastPos) < 3 then
-            yield("/gaction jump")
-            Dalamud.Log("[Cosmic Helper] Position hasn't changed jumping")
-            lastPos = nil
-        else
-            lastPos = nil
-        end
-    else
-        lastPos = nil
-    end
+  if not Player.IsMoving then JumpReset(); return end
+  local pos = Svc.ClientState.LocalPlayer.Position
+  if not lastPos then lastPos = pos; jumpCount = 0; return end
+  if DistanceBetweenPositions(pos, lastPos) >= 4 then
+    JumpReset(); return
+  end
+  jumpCount = (jumpCount or 0) + 1
+  if jumpCount >= 5 then
+    yield("/gaction jump")
+    Dalamud.Log("[Cosmic Helper] Position hasn't changed; jumping")
+    JumpReset()
+  end
 end
 
 function ShouldRelic()
@@ -397,7 +397,7 @@ function ShouldRelic()
         yield("/ice stop")
         curPos = Svc.ClientState.LocalPlayer.Position
         if Svc.ClientState.TerritoryType == SinusTerritory then
-            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
@@ -411,14 +411,14 @@ function ShouldRelic()
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
                 curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, SinusResearchNpc.position) < 5 then
+                if DistanceBetweenPositions(curPos, SinusResearchNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
                     break
                 end
             end
         elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
-            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, PhaennaGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
@@ -432,7 +432,7 @@ function ShouldRelic()
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
                 curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, PhaennaResearchNpc.position) < 5 then
+                if DistanceBetweenPositions(curPos, PhaennaResearchNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Research bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
                     break
@@ -482,7 +482,7 @@ function ShouldRelic()
         end
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
             curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanctBetweenPositions(curPos, aroundSpot) < 3 then
+            if DistanceBetweenPositions(curPos, aroundSpot) < 3 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
                 break
@@ -516,14 +516,14 @@ function ShouldRetainer()
         yield("/ice stop")
         if SelectedBell.zone == "Moongate Hub (Sinus)" then
             curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
             end
         elseif SelectedBell.zone == "Glassblowers' Beacon (Pharnna)" then
             curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, PhaennaGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
@@ -547,7 +547,7 @@ function ShouldRetainer()
         end
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
             sleep(.5)
-            if DistanctBetweenPositions(Svc.ClientState.LocalPlayer.Position, SelectedBell.position) < 3 then
+            if DistanceBetweenPositions(Svc.ClientState.LocalPlayer.Position, SelectedBell.position) < 3 then
                 Dalamud.Log("[Cosmic Helper] Close enough to summoning bell")
                 IPC.vnavmesh.Stop()
                 break
@@ -585,7 +585,7 @@ function ShouldRetainer()
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
                 curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, aroundSpot) < 2 then
+                if DistanceBetweenPositions(curPos, aroundSpot) < 2 then
                     Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                     IPC.vnavmesh.Stop()
                     break
@@ -599,7 +599,7 @@ function ShouldRetainer()
             sleep(1)
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
                 curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, aroundSpot) < 2 then
+                if DistanceBetweenPositions(curPos, aroundSpot) < 2 then
                     Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                     IPC.vnavmesh.Stop()
                     break
@@ -660,7 +660,7 @@ function ShouldCredit()
         yield("/echo Lunar credits: " .. tostring(lunarCredits) .. "/" .. LimitConfig .. " Going to Gamba!")
         curPos = Svc.ClientState.LocalPlayer.Position
         if Svc.ClientState.TerritoryType == SinusTerritory then
-            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
@@ -674,13 +674,13 @@ function ShouldCredit()
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
                 curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, SinusCreditNpc.position) < 5 then
+                if DistanceBetweenPositions(curPos, SinusCreditNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
                 end
             end
         elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
-            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, PhaennaGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
@@ -694,7 +694,7 @@ function ShouldCredit()
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
                 sleep(.01)
                 curPos = Svc.ClientState.LocalPlayer.Position
-                if DistanctBetweenPositions(curPos, PhaennaCreditNpc.position) < 5 then
+                if DistanceBetweenPositions(curPos, PhaennaCreditNpc.position) < 5 then
                     Dalamud.Log("[Cosmic Helper] Near Gamba bunny. Stopping vnavmesh.")
                     IPC.vnavmesh.Stop()
                     break
@@ -740,7 +740,7 @@ function ShouldCredit()
             end
             while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
             curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanctBetweenPositions(curPos, aroundSpot) < 2 then
+            if DistanceBetweenPositions(curPos, aroundSpot) < 2 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
                 break
@@ -786,13 +786,13 @@ function ShouldMove()
         yield("/ice stop")
         curPos = Svc.ClientState.LocalPlayer.Position
         if Svc.ClientState.TerritoryType == SinusTerritory then
-            if DistanctBetweenPositions(curPos, SinusGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, SinusGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
             end
         elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
-            if DistanctBetweenPositions(curPos, PhaennaGateHub) > 75 then
+            if DistanceBetweenPositions(curPos, PhaennaGateHub) > 75 then
                 Dalamud.Log("[Cosmic Helper] Stellar Return")
                 yield('/gaction "Duty Action"')
                 sleep(5)
@@ -807,7 +807,7 @@ function ShouldMove()
         sleep(1)
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
             curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanctBetweenPositions(curPos, aroundSpot) < 2 then
+            if DistanceBetweenPositions(curPos, aroundSpot) < 2 then
                 Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
                 IPC.vnavmesh.Stop()
                 break
