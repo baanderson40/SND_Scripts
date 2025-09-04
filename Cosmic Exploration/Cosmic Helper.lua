@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.3b
+version: 1.1.3c
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -479,15 +479,15 @@ function ShouldRelic()
             Dalamud.Log("[Cosmic Helper] Moving to random spot " .. tostring(aroundSpot))
             lastMoveTime = os.time()
             sleep(2)
-        end
-        while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
-            curPos = Svc.ClientState.LocalPlayer.Position
-            if DistanceBetweenPositions(curPos, aroundSpot) < 3 then
-                Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
-                IPC.vnavmesh.Stop()
-                break
+            while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning do
+                curPos = Svc.ClientState.LocalPlayer.Position
+                if DistanceBetweenPositions(curPos, aroundSpot) < 3 then
+                    Dalamud.Log("[Cosmic Helper] Near random spot. Stopping vnavmesh")
+                    IPC.vnavmesh.Stop()
+                    break
+                end
+                sleep(.1)
             end
-            sleep(.1)
         end
         if EnabledAutoText then
             yield("/at disable")
