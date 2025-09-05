@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.0
+version: 1.2.1
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -78,6 +78,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.2.1 Fixed EX+ time enabled automatically
     -> 1.2.0 Release job swapping support for EX+ timed missions for crafters
     -> 1.1.4 Added support for retainer processing off of the moon
     -> 1.1.3 Adjusted speed/timing for relic turn-in & added Alt job for turn-in
@@ -1001,9 +1002,8 @@ if RelicJobsConfig.Count > 0 and not HasPlugin("SimpleTweaksPlugin") then
     yield("/echo [Cosmic Helper] Cycling jobs requires SimpleTweaks plugin. Script will continue without changing jobs.")
     RelicJobsConfig = nil
 end
-if Ex4TimeConfig == Ex2TimeConfig then
+if Ex4TimeConfig and Ex2TimeConfig then
     yield("/echo [Cosmic Helper] Having both EX+ timed missions enabled is not supported. The script will continue with only doing the EX+ 4HR missions.")
-    Ex4TimeConfig = true
     Ex2TimeConfig = false
 end
 
