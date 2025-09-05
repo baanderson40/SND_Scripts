@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.4
+version: 1.1.4a
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
