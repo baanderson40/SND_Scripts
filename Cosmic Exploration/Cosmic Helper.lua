@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.4a
+version: 1.2.0
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -32,6 +32,16 @@ configs:
     default: 0
     min: 0
     max: 10000
+  EX+ 4hr Timed Missions:
+    description: |
+      Enable to swap crafting jobs to the current EX+ 4hr long timed mission job.
+      ARM -> GSM -> LTW -> WVR -> CRP -> BSM -> repeat
+    default: false
+  EX+ 2hr Timed Missions:
+    description: |
+      Enable to swap crafting jobs to the current EX+ 2hr long timed mission job.
+      LTW -> WVR -> ALC -> CUL -> ARM -> GSM -> repeat
+    default: false
   Delay Moving Spots:
     description: |
       Number of minutes to remain at one spot before moving randomly to another.
@@ -68,6 +78,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.2.0 Release job swapping support for EX+ timed missions for crafters
     -> 1.1.4 Added support for retainer processing off of the moon
     -> 1.1.3 Adjusted speed/timing for relic turn-in & added Alt job for turn-in
     -> 1.1.2 Updates related to relic turnin and retainer processing
@@ -131,6 +142,8 @@ end
 JumpConfig      = Config.Get("Jump if stuck")
 JobsConfig      = Config.Get("Jobs")
 LimitConfig     = Config.Get("Lunar Credits Limit")
+Ex4TimeConfig   = Config.Get("EX+ 4hr Timed Missions")
+Ex2TimeConfig   = Config.Get("EX+ 2hr Timed Missions")
 MoveConfig      = Config.Get("Delay Moving Spots")
 RetainerConfig  = Config.Get("Process Retainers Ventures")
 ResearchConfig  = Config.Get("Research Turnin")
@@ -203,6 +216,25 @@ SinusCreditNpc = {name = "Orbitingway", position = Vector3(18.845, 2.243, -18.90
 SinusResearchNpc = {name = "Researchingway", position = Vector3(-18.906, 2.151, 18.845)}
 PhaennaCreditNpc = {name = "Orbitingway", position = Vector3(358.816, 53.193, -438.865)}
 PhaennaResearchNpc = {name = "Researchingway", position = Vector3(321.218, 53.193, -401.236)}
+
+--Timed mission jobs
+exJobs4H = {
+  [0]  = {"ARM"},   -- 00:00–03:59
+  [4]  = {"GSM"},   -- 04:00–07:59
+  [8]  = {"LTW"},   -- 08:00–11:59
+  [12] = {"WVR"},   -- 12:00–15:59
+  [16] = {"CRP"},   -- 16:00–19:59
+  [20] = {"BSM"},   -- 20:00–23:59
+}
+
+exJobs2H = {
+  [0]  = {"LTW"},   --00:00-02:59
+  [4]  = {"WVR"},   --04:00-05:59
+  [8]  = {"ALC"},   --08:00-09:59
+  [12] = {"CUL"},   --12:00-13:59
+  [16] = {"ARM"},   --16:00-17:59
+  [20] = {"GSM"},   --20:00-21:59
+}
 
 --Helper Funcitons
 function sleep(seconds)
@@ -334,6 +366,25 @@ function RetrieveRelicResearch()
             checked = checked + 1
         end
     return (checked > 0) and 2 or 0  -- 2 = phase complete
+end
+
+function getEorzeaHour()
+  local et = os.time() * 1440 / 70
+  return math.floor((et % 86400) / 3600)
+end
+
+function currentexJobs4H()
+    local h = getEorzeaHour()
+    local slot = math.floor(h / 4) * 4
+    local jobs = exJobs4H[slot]
+    return jobs and jobs[1] or nil
+end
+
+function currentexJobs2H()
+    local h = getEorzeaHour()
+    local slot = math.floor(h / 2) * 2
+    local jobs = exJobs2H[slot]
+    return jobs and jobs[1] or nil
 end
 
 --Worker Funcitons
@@ -578,9 +629,9 @@ function ShouldRetainer()
         while IPC.AutoRetainer.IsBusy() do
             sleep(1)
         end
-        sleep(1)
+        sleep(2)
         if IsAddonExists("RetainerList") then
-            Dalamud.Log("[Cosmic Helper] Closeing RetainerList window")
+            Dalamud.Log("[Cosmic Helper] Closing RetainerList window")
             yield("/callback RetainerList true -1")
             sleep(1)
         end
@@ -773,6 +824,55 @@ function ShouldCredit()
     end
 end
 
+function ShouldExTime()
+    CurJob = Player.Job.Abbreviation
+    if Ex4TimeConfig then
+        Cur4ExJob = currentexJobs4H()
+        if Cur4ExJob and CurJob ~= Cur4ExJob then
+            local waitcount = 0
+            while IsAddonExists("WKSMissionInfomation") do
+                sleep(.1)
+                waitcount = waitcount + 1
+                if waitcount >= 50 then
+                    Dalamud.Log("[Cosmic Helper] Waiting for mission to end to swap to EX+ job.")
+                    yield("/echo [Cosmic Helper] Waiting for mission to end to swap to EX+ job.")
+                    waitcount = 0
+                end
+            end
+            Dalamud.Log("[Cosmic Helper] Stopping ICE")
+            yield("/ice stop")
+            sleep(1)
+            yield("/echo Current EX+ time: " .. getEorzeaHour() .. " swapping to " .. Cur4ExJob)
+            yield("/equipjob " .. Cur4ExJob)
+            sleep(1)
+            yield("/ice start")
+            Dalamud.Log("[Cosmic Helper] Starting ICE")
+        end
+    elseif Ex2TimeConfig then
+        Cur2ExJob = currentexJobs2H()
+        if Cur2ExJob and CurJob ~= Cur2ExJob then
+            local waitcount = 0
+            while IsAddonExists("WKSMissionInfomation") do
+                sleep(.1)
+                waitcount = waitcount + 1
+                if waitcount >= 50 then
+                    Dalamud.Log("[Cosmic Helper] Waiting for mission to end to swap to EX+ job.")
+                    yield("/echo [Cosmic Helper] Waiting for mission to end to swap to EX+ job.")
+                    waitcount = 0
+                end
+            end
+            Dalamud.Log("[Cosmic Helper] Stopping ICE")
+            yield("/ice stop")
+            sleep(1)
+            yield("/echo Current EX+ time: " .. getEorzeaHour() .. " swapping to " .. Cur2ExJob)
+            yield("/equipjob " .. Cur2ExJob)
+            sleep(1)
+            yield("/ice start")
+            Dalamud.Log("[Cosmic Helper] Starting ICE")
+        end
+    end
+end
+
 function ShouldMove()
     if LimitConfig > 0 and lunarCredits >= LimitConfig then
         return
@@ -851,7 +951,7 @@ function ShouldCycle()
             Dalamud.Log("[Cosmic Helper] Job Cycle ticks: " .. cycleCount)
         end
     end
-    if cycleCount > 0 and cycleCount % 5 == 0 then
+    if cycleCount > 0 and cycleCount % 20 == 0 then
             yield("/echo [Cosmic Helper] Job Cycle ticks: " .. cycleCount .. "/" .. cycleLoops)
     end
     if cycleCount >= cycleLoops then
@@ -901,6 +1001,11 @@ if RelicJobsConfig.Count > 0 and not HasPlugin("SimpleTweaksPlugin") then
     yield("/echo [Cosmic Helper] Cycling jobs requires SimpleTweaks plugin. Script will continue without changing jobs.")
     RelicJobsConfig = nil
 end
+if Ex4TimeConfig == Ex2TimeConfig then
+    yield("/echo [Cosmic Helper] Having both EX+ timed missions enabled is not supported. The script will continue with only doing the EX+ 4HR missions.")
+    Ex4TimeConfig = true
+    Ex2TimeConfig = false
+end
 
 --Enable plugin options
 yield("/tweaks enable EquipJobCommand true")
@@ -922,6 +1027,9 @@ while Run_script do
     end
     if LimitConfig > 0 then
         ShouldCredit()
+    end
+    if Ex2TimeConfig or Ex4TimeConfig then
+        ShouldExTime()
     end
     if MoveConfig > 0 then
         ShouldMove()
