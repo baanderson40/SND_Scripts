@@ -575,9 +575,10 @@ function ShouldRetainer()
                 sleep(1)
             end
         end
-        while IPC.AutoRetainer.IsBusy() or Svc.Condition[CharacterCondition.occupiedSummoningBell] do
+        while IPC.AutoRetainer.IsBusy() do
             sleep(1)
         end
+        sleep(1)
         if IsAddonExists("RetainerList") then
             Dalamud.Log("[Cosmic Helper] Closeing RetainerList window")
             yield("/callback RetainerList true -1")
