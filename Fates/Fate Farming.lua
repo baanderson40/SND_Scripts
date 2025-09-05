@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.0
+version: 3.1.1
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -157,6 +157,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.1    Reverted RSR auto to just 'on'
     -> 3.1.0    Updated to support companion scripts by Minnu
 
 ********************************************************************************
@@ -2248,8 +2249,8 @@ function TurnOnAoes()
     if not AoesOn then
         if RotationPlugin == "RSR" then
             yield("/rotation off")
-            yield("/rotation auto LowHp")
-            Dalamud.Log("[FATE] TurnOnAoes /rotation auto LowHP")
+            yield("/rotation auto on")
+            Dalamud.Log("[FATE] TurnOnAoes /rotation auto on")
 
             if RSRAoeType == "Off" then
                 Engines.Run("/rotation settings aoetype 0")
@@ -2315,8 +2316,8 @@ function TurnOnCombatMods(rotationMode)
                 Dalamud.Log("[FATE] TurnOnCombatMods /rotation manual")
             else
                 yield("/rotation off")
-                yield("/rotation auto LowHP")
-                Dalamud.Log("[FATE] TurnOnCombatMods /rotation auto LowHP")
+                yield("/rotation auto on")
+                Dalamud.Log("[FATE] TurnOnCombatMods /rotation auto on")
             end
         elseif RotationPlugin == "BMR" then
             Engines.Run("/bmrai setpresetname "..RotationAoePreset)
