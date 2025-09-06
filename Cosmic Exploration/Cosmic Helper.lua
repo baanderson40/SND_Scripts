@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.1
+version: 1.3.0
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -20,6 +20,7 @@ configs:
     description: |
       A list of jobs to cycle through when EXP or class score thresholds are reached,
       depending on the settings configured in ICE.
+      Enter short or full job name and press enter. One job per line.
       -- Enable equip job command in Simple Tweaks and leave it as the default. --
       Leave blank to disable job cycling.
     default: []
@@ -32,6 +33,10 @@ configs:
     default: 0
     min: 0
     max: 10000
+  Report Failed Missions:
+    description: |
+      Enable to report missions that failed to reach scoreing tier.
+    default: false
   EX+ 4hr Timed Missions:
     description: |
       Enable to swap crafting jobs to the current EX+ 4hr long timed mission job.
@@ -63,11 +68,13 @@ configs:
     default: false
   Use Alt Job:
     description: |
-      Enable to use WAR during turning in research for relic.
+      Enable to use WAR during turning in research for relic. 
+      Doesn't work if the tool is saved to the gear set. 
     default: false
   Relic Jobs:
     description: |
       A list of jobs to cycle through when relic tool is completed.
+      Enter short or full job name and press enter. One job per line.
       -- Enable equip job command in Simple Tweaks and leave it as the default. --
       Leave blank to disable job cycling.
     default: []
@@ -78,7 +85,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
-    -> 1.2.1 Fixed EX+ time enabled automatically
+    -> 1.3.0 Released failed mission reporting
+    -> 1.2.1 Fixed EX+ enabled automatically
     -> 1.2.0 Release job swapping support for EX+ timed missions for crafters
     -> 1.1.4 Added support for retainer processing off of the moon
     -> 1.1.3 Adjusted speed/timing for relic turn-in & added Alt job for turn-in
@@ -143,6 +151,7 @@ end
 JumpConfig      = Config.Get("Jump if stuck")
 JobsConfig      = Config.Get("Jobs")
 LimitConfig     = Config.Get("Lunar Credits Limit")
+FailedConfig    = Config.Get("Report Failed Missions")
 Ex4TimeConfig   = Config.Get("EX+ 4hr Timed Missions")
 Ex2TimeConfig   = Config.Get("EX+ 2hr Timed Missions")
 MoveConfig      = Config.Get("Delay Moving Spots")
@@ -156,6 +165,7 @@ Run_script        = true
 lastPos           = nil
 totalJobs         = JobsConfig.Count
 totalRelicJobs    = RelicJobsConfig.Count
+reportCount       = 0
 cycleCount        = 0
 jobCount          = 0
 lunarCredits      = 0
@@ -825,6 +835,27 @@ function ShouldCredit()
     end
 end
 
+function ShouldReport()
+    curJob = Player.Job
+    while IsAddonExists("WKSMissionInfomation") and curJob.IsCrafter do
+        while IsAddonExists("WKSRecipeNotebook") and Svc.Condition[CharacterCondition.normalConditions] do
+            reportCount = reportCount + 1
+            if reportCount >= 5 then
+                yield("/callback WKSMissionInfomation true 11")
+                Dalamud.Log("[Cosmic Helper] Reporting failed mission.")
+                yield("/echo [Cosmic Helper] Reporting failed mission.")
+                reportCount = 0
+            end
+            sleep(1)
+        end
+        reportCount = 0
+        sleep(.1)
+    end
+    if Ex4TimeConfig or Ex2TimeConfig then
+        ShouldExTime()
+    end
+end
+
 function ShouldExTime()
     CurJob = Player.Job.Abbreviation
     if Ex4TimeConfig then
@@ -990,7 +1021,7 @@ if ResearchConfig and not HasPlugin("TextAdvance") then
     ResearchConfig = 0
 end
 if RetainerConfig ~= "N/A" and not HasPlugin("AutoRetainer") then
-    yield("/echo [Cosmic Helper] Retainer processing requires TextAdvance plugin. Script will continue without processing retainers.")
+    yield("/echo [Cosmic Helper] Retainer processing requires AutoRetainer plugin. Script will continue without processing retainers.")
     RetainerConfig = "N/A"
 end
 local job = Player.Job
@@ -1027,6 +1058,9 @@ while Run_script do
     end
     if LimitConfig > 0 then
         ShouldCredit()
+    end
+    if FailedConfig then
+        ShouldReport()
     end
     if Ex2TimeConfig or Ex4TimeConfig then
         ShouldExTime()
