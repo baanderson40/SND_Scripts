@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.3.0a
+version: 1.3.1
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -86,6 +86,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.3.1 Adjustments for relic turn-in due to failed mission reporting
     -> 1.3.0 Released failed mission reporting
     -> 1.2.1 Fixed EX+ enabled automatically
     -> 1.2.0 Release job swapping support for EX+ timed missions for crafters
