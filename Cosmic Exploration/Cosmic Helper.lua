@@ -438,7 +438,7 @@ function ShouldRelic()
         yield("/equipjob " .. RelicJobsConfig[jobCount])
         sleep(1)
         jobCount = jobCount + 1
-        if RetrieveRelicResearch() == 2 then
+        if RetrieveRelicResearch() == 0 then
             Dalamud.Log("[Cosmic Helper] Starting ICE")
             yield("/ice start")
         end
@@ -563,10 +563,10 @@ function ShouldRelic()
             yield("/at disable")
             EnabledAutoText = false
         end
-        Dalamud.Log("[Cosmic Helper] Starting ICE")
-        yield("/ice start")
-        sleep(2)
-        yield("/ice start")
+        if RetrieveRelicResearch() == 0 then
+            Dalamud.Log("[Cosmic Helper] Starting ICE")
+            yield("/ice start")
+        end
     end
 end
 
