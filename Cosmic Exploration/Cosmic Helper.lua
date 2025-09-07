@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.3.0
+version: 1.3.0a
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -74,6 +74,7 @@ configs:
   Relic Jobs:
     description: |
       A list of jobs to cycle through when relic tool is completed.
+      Don't include the starting/current job. Start the list with the next intended job. 
       Enter short or full job name and press enter. One job per line.
       -- Enable equip job command in Simple Tweaks and leave it as the default. --
       Leave blank to disable job cycling.
@@ -435,9 +436,11 @@ function ShouldRelic()
         yield("/echo [Cosmic Helper] Swapping to -> " .. RelicJobsConfig[jobCount])
         yield("/equipjob " .. RelicJobsConfig[jobCount])
         sleep(1)
-        Dalamud.Log("[Cosmic Helper] Starting ICE")
-        yield("/ice start")
         jobCount = jobCount + 1
+        if RetrieveRelicResearch() == 2 then
+            Dalamud.Log("[Cosmic Helper] Starting ICE")
+            yield("/ice start")
+        end
         return
     elseif RetrieveRelicResearch() == 2 then
         if not IPC.TextAdvance.IsEnabled() then
@@ -839,14 +842,14 @@ function ShouldReport()
     curJob = Player.Job
     while IsAddonExists("WKSMissionInfomation") and curJob.IsCrafter do
         while IsAddonExists("WKSRecipeNotebook") and Svc.Condition[CharacterCondition.normalConditions] do
+            sleep(.1)
             reportCount = reportCount + 1
-            if reportCount >= 5 then
+            if reportCount >= 50 then
                 yield("/callback WKSMissionInfomation true 11")
                 Dalamud.Log("[Cosmic Helper] Reporting failed mission.")
                 yield("/echo [Cosmic Helper] Reporting failed mission.")
                 reportCount = 0
             end
-            sleep(1)
         end
         reportCount = 0
         sleep(.1)
