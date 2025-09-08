@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.1
+version: 3.1.2
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -39,6 +39,9 @@ configs:
     default: ""
   Hold Buff Rotation:
     description: Preset to hold 2min burst when progress gets to select percent
+    default: ""
+  Percentage to Hold Buff:
+    description: Ideally you want to make full use of your buffs, higher then 70% will still waste a few seconds if progress is too fast.
     default: 65
   Food:
     description: Leave blank if you dont want to use any food. If its HQ include <hq> next to the name "Baked Eggplant <hq>"
@@ -157,6 +160,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.2    Fix VBM/BMR hold buff rotation setting issue
     -> 3.1.1    Reverted RSR auto to just 'on'
     -> 3.1.0    Updated to support companion scripts by Minnu
 
@@ -3288,7 +3292,7 @@ RSRAoeType                 = "Full"      --Options: Cleave/Full/Off
 RotationSingleTargetPreset      = Config.Get("Single Target Rotation") --Preset name with single target strategies (for forlorns). TURN OFF AUTOMATIC TARGETING FOR THIS PRESET
 RotationAoePreset               = Config.Get("AoE Rotation")           --Preset with AOE + Buff strategies.
 RotationHoldBuffPreset          = Config.Get("Hold Buff Rotation")     --Preset to hold 2min burst when progress gets to seleted %
-PercentageToHoldBuff            = 65 --Config.Get("Percentage to Hold Buff")--Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
+PercentageToHoldBuff            = Config.Get("Percentage to Hold Buff")--Ideally youll want to make full use of your buffs, higher than 70% will still waste a few seconds if progress is too fast.
 
 -- Dodge plugin
 local dodgeConfig = string.lower(Config.Get("Dodging Plugin"))  -- Options: Any / BossModReborn / BossMod / None
