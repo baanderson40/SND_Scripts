@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: 'pot0to || Updated by: baanderson40'
-version: 2.0.0
+version: 2.0.1
 description: Zodiac Atma Farming - Companion script for Fate Farming
 plugin_dependencies:
 - Lifestream
@@ -22,16 +22,18 @@ configs:
 
 ********************************************************************************
 *                             Zodiac Atma Farming                              *
-*                                Version 2.0.0                                 *
+*                                Version 2.0.1                                 *
 ********************************************************************************
 
-Multi zone farming script meant to be used with `Fate Farming.lua`. This will go
-down the list of zones and farm fates until there are no eligible fates left,
-then teleport to the next zone and restart the fate farming script.
+Atma farming script meant to be used with `Fate Farming.lua`. This will go down
+the list of atma farming zones and farm fates until you have 12 of the required
+atmas in your inventory, then teleport to the next zone and restart the fate
+farming script.
 
 Created by: pot0to (https://ko-fi.com/pot0to)
 Updated by: baanderson40 (https://ko-fi.com/baanderson40)
 
+    -> 2.0.1    Updated CharacterCondition
     -> 2.0.0    Updated for Latest SnD
     -> 1.0.1    Added check for death and unexpected combat
                 First release
@@ -107,12 +109,12 @@ end
 function TeleportTo(aetheryteName)
     yield("/tp "..aetheryteName)
     yield("/wait 1") -- wait for casting to begin
-    while GetCharacterCondition(CharacterCondition.casting) do
+    while Svc.Condition[CharacterCondition.casting] do
         Dalamud.Log("[Atma Farm] Casting teleport...")
         yield("/wait 1")
     end
     yield("/wait 1") -- wait for that microsecond in between the cast finishing and the transition beginning
-    while GetCharacterCondition(CharacterCondition.betweenAreas) do
+    while Svc.Condition[CharacterCondition.betweenAreas] do
         Dalamud.Log("[Atma Farm] Teleporting...")
         yield("/wait 1")
     end
