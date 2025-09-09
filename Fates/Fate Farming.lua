@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.2
+version: 3.1.2a
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -151,7 +151,7 @@ configs:
     is_choice: true
     choices: ["All", "Gems", "None"]
   Companion Script Mode:
-    description: Currently only Multi Zone Farming.
+    description: Enable to use companison scripts with main Fate Farming script.
     default: false
 [[End Metadata]]
 --]=====]
