@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 version: 1.0.0
-description: >
+description: |
   This is a custom Lua macro script for SomethingNeedDoing. It is NOT supported by the
   plugin author(s) or by the official Dalamud / XIVLauncher / Puni.sh Discord communities.
   DO NOT ask for help with this script in Discord or support chats!
@@ -13,62 +13,68 @@ triggers:
 ]=====]--
 
 ------------------------------------------------------------
--- 1) Config
+--Config
 ------------------------------------------------------------
 local CFG = {
-  DEBUG = true,
+  DEBUG = true,               -- When true, enables debug logs via dbg()/Dalamud.Log (e.g., "OpenItem:", prices read, state transitions).
 
-  UNDERCUT = 1,
+  UNDERCUT = 1,               -- Amount subtracted from the current lowest market price when the lowest seller is not one of MY_RETAINERS.
+                              -- Used by DecideNewPrice(): new price = max(1, lowestPrice - UNDERCUT). If lowest seller is yours, price is kept.
 
   FAST = {
-    maxWaitSec      = 1.5,
-    refreshAfterSec = 0.6,
+    maxWaitSec      = 2,      -- Upper bound (seconds) for ReadLowestListing_Fast() to find and parse the first row’s price/seller.
+    refreshAfterSec = 1,      -- If the first row isn’t readable by this age (seconds), trigger one “Compare prices” refresh and try again.
   },
 
   OpenBell = {
-    maxAttempts = 50,
-    targetWait  = 0.5,
-    interactWait= 1.0,
+    maxAttempts = 50,         -- Maximum loop iterations to target and interact with the Summoning Bell until RetainerList is open/ready.
+    targetWait  = 0.5,        -- Delay (seconds) after “/target Summoning Bell” before attempting to interact.
+    interactWait= 1.0,        -- Delay (seconds) after “/pinteract” before checking if RetainerList appeared.
   },
 
   CloseBack = {
-    graceWaitSec = 0.8,
+    graceWaitSec = 0.5,       -- Small wait used by CloseBackToRetainerList() when returning from a retainer’s Sell List,
+                              -- allowing the intermediate “SelectString” window to appear before closing it.
   },
 
   -- AutoRetainer wait config
   AutoRetainer = {
-    enabled     = true,
-    maxWaitSec  = 60,
-    settleSec   = 1.2,
-    pollSec     = 0.2,
+    enabled     = true,       -- If true and AutoRetainer IPC is available, EnsureAutoRetainerIdle() waits for AutoRetainer to be not busy.
+    maxWaitSec  = 60,         -- Overall timeout (seconds) to wait for AutoRetainer to become idle before aborting an auto run.
+    settleSec   = 1.5,        -- Once AutoRetainer reports not busy, it must remain not busy for this many seconds to confirm “idle”.
+    pollSec     = 0.5,        -- Polling interval (seconds) while checking AutoRetainer busy/idle state.
   },
 
   -- Auto Bell polling loop
   Auto = {
-    enabled      = true,  -- master toggle for auto-run
-    debounceSec  = 3.0,   -- min seconds between runs
-    postDelaySec = 0.6,   -- small grace before starting (UI settle)
-    bellSettleSec= 0.5,   -- require bell occupied this long before arming
-    pollSec      = 0.10,  -- loop cadence
+    enabled      = true,      -- Master toggle for the auto-run loop that watches the Summoning Bell condition and triggers repricing.
+    debounceSec  = 3.0,       -- Minimum seconds between successive auto runs (prevents rapid re-triggering).
+    postDelaySec = 0.8,       -- Short delay (seconds) after deciding to fire but before starting, to let UI settle.
+    bellSettleSec= 0.5,       -- The Summoning Bell must be continuously “occupied” for at least this long before arming the run.
+    pollSec      = 0.5,       -- Cadence (seconds) of the auto loop’s polling cycle (both for bell state and between loop iterations).
   },
 }
 
--- Only reprice these retainers by name. Leave EMPTY to process **all purchased** retainers.
+-- Only reprice these retainers by name. Leave EMPTY to process **all** retainers.
 local TARGET_RETAINERS = {
   -- "Retainer1",
   -- "Retainer2",
   -- "Retainer3",
 }
+-- Used by: is_target_retainer() to decide which retainers to include during a run.
+-- Behavior per code: if this table has length 0, every retainer on the Retainer List is considered a target.
 
 -- Your own retainer names (used to avoid undercutting yourself on market listings)
 local MY_RETAINERS = {
-  "Retainer1'",
+  "Retainer1",
   "Retainer2",
   "Retainer3",
 }
+-- Used by: is_my_retainer() and DecideNewPrice(). If the current lowest seller matches any of these names,
+-- the script keeps the lowest price instead of undercutting it.
 
 ------------------------------------------------------------
--- 2) Node map (single source of truth)
+--Node map (single source of truth)
 ------------------------------------------------------------
 local N = {
   SellList = {
@@ -86,7 +92,7 @@ local N = {
 }
 
 ------------------------------------------------------------
--- 3) Addon utils
+--Addon utils
 ------------------------------------------------------------
 local function dbg(msg) if CFG.DEBUG then Dalamud.Log("[Repricer][DBG] "..tostring(msg)) end end
 
@@ -178,7 +184,7 @@ local function close_panels(list)
 end
 
 ------------------------------------------------------------
--- 4) Parsing & timing helpers
+--Parsing & timing helpers
 ------------------------------------------------------------
 local function parse_price(text)
   if not text or text=="" then return nil end
@@ -209,7 +215,7 @@ end
 local function now_s() return os.clock() end
 
 ------------------------------------------------------------
--- 5) AutoRetainer IPC helpers
+--AutoRetainer IPC helpers
 ------------------------------------------------------------
 local function AR_IsAvailable()
   return (IPC and IPC.AutoRetainer and IPC.AutoRetainer.IsBusy) and true or false
@@ -256,7 +262,7 @@ function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
 end
 
 ------------------------------------------------------------
--- 6) Open Summoning Bell -> RetainerList
+--Open Summoning Bell -> RetainerList
 ------------------------------------------------------------
 function EnsureRetainerListOpen()
   if exists("RetainerList") and ready("RetainerList") then return true end
@@ -280,7 +286,7 @@ function EnsureRetainerListOpen()
 end
 
 ------------------------------------------------------------
--- 7) Item open / search open / fast read / close panels
+--Item open / search open / fast read / close panels
 ------------------------------------------------------------
 function OpenItem(slot)
   dbg("OpenItem slot="..tostring(slot))
@@ -400,7 +406,7 @@ function CloseItemPanels()
 end
 
 ------------------------------------------------------------
--- 8) Pricing
+--Pricing
 ------------------------------------------------------------
 local function is_my_retainer(name)
   if not name or name=="" then return false end
@@ -441,7 +447,7 @@ function CloseItem()
 end
 
 ------------------------------------------------------------
--- 9) Per-retainer batch repricer (Sell List must be open)
+--Per-retainer batch repricer (Sell List must be open)
 ------------------------------------------------------------
 local function CountItems()
   local t = gettext("RetainerSellList", N.SellList.count)
@@ -490,7 +496,7 @@ function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlo
 end
 
 ------------------------------------------------------------
--- 10) Retainer list helpers + roundtrip
+--Retainer list helpers + roundtrip
 ------------------------------------------------------------
 local function is_target_retainer(name)
   if not name or name=="" then return false end
@@ -557,6 +563,31 @@ local function CloseBackToRetainerList(graceWaitSec)
   return true
 end
 
+local function CloseRetainerList()
+  dbg("CloseRetainerList: begin")
+
+  -- Defensive: make sure nothing upstream is left open
+  close_addon("RetainerSellList", 80, 0.05)
+  close_addon("SelectString",    80, 0.05)
+
+  -- Now close the Retainer List itself
+  local tries = 0
+  while exists("RetainerList") and tries < 80 do
+    pcall_addon("RetainerList", true, -1)
+    yield("/wait 0.05")
+    tries = tries + 1
+  end
+
+  if exists("RetainerList") then
+    dbg("CloseRetainerList: RetainerList still open after attempts.")
+    return false
+  end
+
+  dbg("CloseRetainerList: done (RetainerList closed).")
+  return true
+end
+
+
 function RepriceTargetsOnRetainerList()
   if not EnsureRetainerListOpen() then return end
 
@@ -577,12 +608,12 @@ function RepriceTargetsOnRetainerList()
     CloseBackToRetainerList()
     yield("/wait 0.1")
   end
-
+  CloseRetainerList()
   yield("/echo [Repricer] All target retainers processed.")
 end
 
 ------------------------------------------------------------
--- 11) Auto trigger via polling Svc.Condition[50]
+--Auto trigger via polling Svc.Condition[50]
 ------------------------------------------------------------
 local AUTO_ENABLED       = CFG.Auto.enabled
 local AUTO_DEBOUNCE_SEC  = CFG.Auto.debounceSec
@@ -636,7 +667,6 @@ if occupied then
         yield("/echo [Repricer] Auto: run finished.")
     end
 
-    -- prevent retriggering until you leave the bell
     repeat
         yield("/wait 0.20")
     until not IsBellOccupied()
