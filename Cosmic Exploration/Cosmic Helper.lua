@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.3.2
+version: 1.3.3
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -12,6 +12,7 @@ description: |
   - Automatically turn in research points for relic
 plugin_dependencies:
 - ICE
+- vnavmesh
 configs:
   Jump if stuck:
     description: Makes the character jump if it has been stuck in the same spot for too long.
@@ -86,7 +87,8 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
-    -> 1.3.2 Added localization support -- mostly 
+    -> 1.3.3 Fixed Summoning Bell position in Sinus
+    -> 1.3.2 Added localization support -- mostly
     -> 1.3.1 Adjustments for relic turn-in due to failed mission reporting
     -> 1.3.0 Released failed mission reporting
     -> 1.2.1 Fixed EX+ enabled automatically
@@ -120,6 +122,7 @@ loopDelay  = .1           -- Controls how fast the script runs; lower = faster, 
 cycleLoops = 100          -- How many loop iterations to run before cycling to the next job
 moveOffSet = 5            -- Adds a random offset to spot movement time, up to ±5 minutes.
 spotRadius = 3            -- Defines the movement radius; the player will move within this distance when selecting a new spot
+extraRetainerDelay = false
 
 if Svc.ClientState.TerritoryType == 1237 then -- Sinus 
     SpotPos = {
@@ -404,7 +407,7 @@ function ShouldCredit()
         end
         if Entity.Target and Entity.Target.Name == SinusCreditNpc.name then
             Dalamud.Log("[Cosmic Helper] Interacting: " .. SinusCreditNpc.name)
-            Entity.Target:Interact()
+            e:Interact()
             sleep(1)
         end
         while not IsAddonReady("SelectString") do
@@ -447,9 +450,8 @@ function ShouldCredit()
                 yield("/at disable")
                 EnabledAutoText = false
             end
-            Dalamud.Log("[Cosmic Helper] Starting ICE")
-            yield("/ice start")
-            sleep(2)
+            sleep(1)
+            Dalamud.Log("[Cosmic Helper] Start ICE")
             yield("/ice start")
         end
     end
@@ -873,6 +875,16 @@ function ShouldRetainer()
             yield("/callback RetainerList true -1")
             sleep(1)
         end
+        if extraRetainerDelay then
+            sleep(5) -- Sleep for script
+            while Svc.Condition[CharacterCondition.occupiedSummoningBell] do
+                sleep(.1)
+            end
+            sleep(2)
+            while Svc.Condition[CharacterCondition.occupiedSummoningBell] do
+                sleep(.1)
+            end
+        end
         if Svc.ClientState.TerritoryType == SinusTerritory then
             aroundSpot = GetRandomSpotAround(spotRadius, minRadius)
             IPC.vnavmesh.PathfindAndMoveTo(aroundSpot, false)
@@ -887,9 +899,8 @@ function ShouldRetainer()
                     break
                 end
             end
+            sleep(1)
             Dalamud.Log("[Cosmic Helper] Start ICE")
-            yield("/ice start")
-            sleep(2)
             yield("/ice start")
             return
         elseif Svc.ClientState.TerritoryType == PhaennaTerritory then
@@ -906,9 +917,8 @@ function ShouldRetainer()
                     break
                 end
             end
+            sleep(1)
             Dalamud.Log("[Cosmic Helper] Start ICE")
-            yield("/ice start")
-            sleep(2)
             yield("/ice start")
             return
         else
@@ -945,9 +955,8 @@ function ShouldRetainer()
             while Svc.Condition[CharacterCondition.betweenAreas] or Svc.Condition[CharacterCondition.casting] do
                 sleep(.5)
             end
+            sleep(1)
             Dalamud.Log("[Cosmic Helper] Start ICE")
-            yield("/ice start")
-            sleep(2)
             yield("/ice start")
         end
     end
@@ -1049,7 +1058,7 @@ PhaennaGateHub = Vector3(340.721, 52.864, -418.183)
 SummoningBell = {
     {zone = "Inn", aethernet = "Inn", position = nil},
     {zone = "Glassblowers' Beacon (Pharnna)", aethernet = nil, position = Vector3(358.380, 52.625, -409.429)},
-    {zone = "Moongate Hub (Sinus)", aethernet = nil, position = Vector3(9.870, 1.685, 14.865)},
+    {zone = "Moongate Hub (Sinus)", aethernet = nil, position = Vector3(10.531, 1.612, 17.287)},
     {zone = "Gridania", aethernet = "Leatherworkers' guild", position = Vector3(171.008, 15.488, -101.488)},
     {zone = "Limsa Lominsa", aethernet = "Limsa Lominsa", position = Vector3(-123.888, 17.990, 21.469)},
     {zone = "Ul'Dah", aethernet = "Sapphire Avenue Exchange", position = Vector3(148.913, 3.983, -44.205)},
@@ -1101,7 +1110,6 @@ exJobs2H = {
 
 
 yield("/echo Cosmic Helper started!")
-yield("/ice start")
 
 --Plugin Check
 if JobsConfig.Count > 0 and not HasPlugin("SimpleTweaksPlugin") then
