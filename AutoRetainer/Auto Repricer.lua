@@ -57,18 +57,18 @@ local CFG = {
 
 -- Only reprice these retainers by name. Leave EMPTY to process **all** retainers.
 local TARGET_RETAINERS = {
-  -- "Retainer1",
-  -- "Retainer2",
-  -- "Retainer3",
+   "Flowers'",
+   "Power",
+  -- "Stevie",
 }
 -- Used by: is_target_retainer() to decide which retainers to include during a run.
 -- Behavior per code: if this table has length 0, every retainer on the Retainer List is considered a target.
 
 -- Your own retainer names (used to avoid undercutting yourself on market listings)
 local MY_RETAINERS = {
-  "Retainer1",
-  "Retainer2",
-  "Retainer3",
+  "Flowers'",
+  "Power",
+  "Stevie",
 }
 -- Used by: is_my_retainer() and DecideNewPrice(). If the current lowest seller matches any of these names,
 -- the script keeps the lowest price instead of undercutting it.
@@ -181,6 +181,10 @@ end
 
 local function close_panels(list)
   for i=1,#list do close_addon(list[i]) end
+end
+
+function GetTargetName()
+    return (Entity and Entity.Target and Entity.Target.Name) or ""
 end
 
 ------------------------------------------------------------
@@ -647,8 +651,9 @@ function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigge
 yield("/echo [Repricer] AutoBell polling loop started.")
 while true do
 local occupied = IsBellOccupied()
+local SummoningBell = GetTargetName() == "Summoning Bell"
 
-if occupied then
+if occupied and SummoningBell then
     if _bell_since == 0 then _bell_since = now_s() end
 
     if _auto_can_fire() and (now_s() - _bell_since) >= BELL_SETTLE_SEC then
