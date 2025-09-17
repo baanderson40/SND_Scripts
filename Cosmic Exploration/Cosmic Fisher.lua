@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
+version: 0.0.2
 description: |
   Fisher script for Phaenna for relic
 
@@ -13,6 +13,8 @@ description: |
 -- =========================================================
 import("System.Numerics")
 echoLog = false
+MissionName = ""
+MissionPicked = false
 
 -- =========================================================
 -- Echo / Log Helpers
@@ -59,7 +61,7 @@ function IsAddonReady(name)
 end
 
 function AwaitAddonReady(name, timeoutSec)
-    log("awaiting ready: " .. tostring(name))
+    echo("awaiting ready: " .. tostring(name))
     local deadline = (timeoutSec or 10.0)
     local t = 0.0
     while t < deadline do
@@ -77,7 +79,7 @@ function IsAddonVisible(name)
 end
 
 function AwaitAddonVisible(name, timeoutSec)
-    log("awaiting visible: " .. tostring(name))
+    echo("awaiting visible: " .. tostring(name))
     local deadline = (timeoutSec or 10.0)
     local t = 0.0
     while t < deadline do
@@ -132,7 +134,7 @@ end
 -- mode: "equals" | "contains" | "pattern"  (default "equals")
 -- caseInsensitive: boolean (default true)
 function AwaitAddonNodeVisible(addonName, timeoutSec, path, expected, mode, caseInsensitive)
-    log("awaiting node visible: " .. tostring(addonName))
+    echo("awaiting node visible: " .. tostring(addonName))
     local deadline = tonumber(timeoutSec) or 10.0
     local t = 0.0
     mode = mode or "equals"
@@ -301,7 +303,7 @@ function SafeCallback(...)
         end
     end
 
-    log("calling: " .. call)
+    echo("calling: " .. call)
     if IsAddonReady(addon) and IsAddonVisible(addon) then
         yield(call)
     else
@@ -330,6 +332,15 @@ function GetPlugins()
     for _, p in ipairs(plugins) do
         Log(string.format("  %s | Enabled: %s", p.name, tostring(p.loaded)))
     end
+end
+
+function OnChatMessage()
+    local message = TriggerData.message
+    if message and message:find(MissionName) and message:find("underway") then
+        MissionPicked = true
+        return
+    end
+    MissionPicked = false
 end
 
 function StartICE(missionId)
@@ -364,11 +375,10 @@ end
 function StellarReturn()
     Log("[Cosmic Fisher] Stellar Return")
     yield('/gaction "Duty Action"')
-    sleep(5)
+    sleep(3)
     repeat
         sleep(.05)
-    until not GetCharacterCondition(CharacterCondition.casting)
-        or not GetCharacterCondition(CharacterCondition.betweenAreas)
+    until GetCharacterCondition(CharacterCondition.normalConditions)
     sleep(.05)
 end
 
@@ -468,11 +478,12 @@ end
 -- Returns a table of remaining needed per row.
 -- Keys = row IDs, Values = how many still needed (0 if complete).
 function RetrieveRelicResearch()
-    repeat    
-        if not IsAddonVisible("WKSToolCustomize") and IsAddonVisible("WKSHud") then
-            SafeCallback("WKSHud", 15)
-            sleep(0.25)
-        end
+    if not IsAddonVisible("WKSToolCustomize") and IsAddonVisible("WKSHud") then
+        SafeCallback("WKSHud", 15)
+        sleep(0.25)
+    end
+    repeat
+        sleep(.05)
     until AwaitAddonVisible("WKSToolCustomize")
     local ToolAddon = Addons.GetAddon("WKSToolCustomize")
 
@@ -511,14 +522,15 @@ function RetrieveRelicResearch()
             remainingByRow[row] = deficit
         end
     end
-    sleep(.5)
+    sleep(.05)
     if IsAddonVisible("WKSToolCustomize") then SafeCallback("WKSToolCustomize",-1) end
     return remainingByRow
 end
 
-function DoMission(position, preset, missionId, numberof)
+function DoMission(name, position, preset, missionId, numberof)
     numberof = tonumber(numberof) or 1
     if not position then log("[Cosmic Fisher] DoMission: missing position"); return end
+    MissionName = name
 
     log("[Cosmic Fisher] Moving to ".. tostring(position))
     MoveNearVnav(position, 2)
@@ -532,12 +544,17 @@ function DoMission(position, preset, missionId, numberof)
     log("[Cosmic Fisher] Setting AutoHook preset")
     SetAH(preset)
 
-    log("[Cosmic Fisher] Starting wait for mission")
     for i = 1, numberof do
-        -- Debounce: require window open continuously for 1.5s (12s timeout)
-        if not WaitAddonStable("WKSMissionInfomation", 1.5, 12.0, 0.05) then
-            log("[Cosmic Fisher] DoMission: WKSMissionInfomation did not stay open long enough (attempt "..i..")")
-            break
+        log("[Cosmic Fisher] Starting wait for mission")
+        repeat
+            sleep(.05)
+        until MissionPicked
+        sleep(1)
+        if not IsAddonVisible("WKSMissionInfomation") then
+            repeat
+                SafeCallback("WKSHud", 11)
+                sleep(2)
+            until IsAddonVisible("WKSMissionInfomation")
         end
         StartAH()
         sleep(5)
@@ -546,7 +563,7 @@ function DoMission(position, preset, missionId, numberof)
         repeat
             sleep(.05)
         until WaitConditionStable(CharacterCondition.fishing, false, 2, 10.0, 0.05)
-        if i >= numberof then StopICE() end
+        if i >= 3 then StopICE() end
         ReportMission()
     end
     UnSetAH()
@@ -595,7 +612,6 @@ PhaennaResearchNpc = {name = GetENpcResidentName(1052629), position = Vector3(32
 -- =========================================================
 -- Main Script 
 -- ========================================================= 
-echo("[Cosmic Fisher] Starting!")
 
 while true do
     if not GetCharacterCondition(CharacterCondition.mounted) then Mount() end
@@ -606,11 +622,11 @@ while true do
 
     if missionAtotal > missionBtotal and missionAtotal > 0 then
         local numberof = math.min(missionAtotal, 3)
-        DoMission(missionA.position, missionA.ahPreset, missionA.id, numberof)
+        DoMission(missionA.name, missionA.position, missionA.ahPreset, missionA.id, numberof)
         StellarReturn()
     elseif missionBtotal > 0 then
         local numberof = math.min(missionBtotal, 3)
-        DoMission(missionB.position, missionB.ahPreset, missionB.id, numberof)
+        DoMission(missionB.name, missionB.position, missionB.ahPreset, missionB.id, numberof)
         StellarReturn()
     elseif missionAtotal == 0 and missionBtotal == 0 then
         if not IPC.TextAdvance.IsEnabled() then
