@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.2
+version: 0.0.3
 description: |
   Fisher script for Phaenna for relic
 
