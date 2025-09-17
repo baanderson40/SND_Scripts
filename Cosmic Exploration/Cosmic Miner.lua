@@ -379,12 +379,12 @@ function StopICE()
 end
 
 function EnablePandora()
-    IPC.PandorasBox.SetFeatureEnabled("Auto-Interact with Gathering Nodes", true)
+    IPC.PandorasBox.SetFeatureEnabled("Auto-interact with Gathering Nodes", true)
     sleep(.05)
 end
 
 function DisablePandora()
-    IPC.PandorasBox.SetFeatureEnabled("Auto-Interact with Gathering Nodes", false)
+    IPC.PandorasBox.SetFeatureEnabled("Auto-interact with Gathering Nodes", false)
     sleep(.05)
 end
 
