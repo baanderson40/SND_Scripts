@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
+version: 0.0.2
 description: Botanist script for Phaenna for relic
 plugin_dependencies:
 - PandorasBox
@@ -14,6 +14,8 @@ plugin_dependencies:
 -- =========================================================
 import("System.Numerics")
 echoLog = false
+MissionName = ""
+MissionPicked = false
 
 -- =========================================================
 -- Echo / Log Helpers
@@ -355,9 +357,18 @@ function GetPlugins()
     end
 end
 
+function OnChatMessage()
+    local message = TriggerData.message
+    if message and message:find(MissionName) and message:find("underway") then
+        MissionPicked = true
+        return
+    end
+    MissionPicked = false
+end
+
 function StartICE(missionId)
     yield('/ice only '..missionId)
-    sleep(.05)
+    sleep(.1)
     yield('/ice start')
     sleep(.05)
 end
@@ -368,12 +379,12 @@ function StopICE()
 end
 
 function EnablePandora()
-    IPC.PandorasBox.SetFeatureEnabled("Auto-Interact with Gathering Nodes", true)
+    IPC.PandorasBox.SetFeatureEnabled("Auto-interact with Gathering Nodes", true)
     sleep(.05)
 end
 
 function DisablePandora()
-    IPC.PandorasBox.SetFeatureEnabled("Auto-Interact with Gathering Nodes", false)
+    IPC.PandorasBox.SetFeatureEnabled("Auto-interact with Gathering Nodes", false)
     sleep(.05)
 end
 
@@ -403,7 +414,6 @@ function CurrentGP()
 end
 
 function BlessedHarvestII()
-
     yield('/action "Blessed Harvest II"')
     sleep(.75)
 end
@@ -679,9 +689,10 @@ function RetrieveRelicResearch()
     return remainingByRow
 end
 
-function DoMission(position, missionId, nodes, numberof)
+function DoMission(name, position, missionId, nodes, numberof)
     numberof = tonumber(numberof) or 1
     if not position then log("[Cosmic Botanist]  DoMission: missing position"); return end
+    MissionName = name
 
     log("[Cosmic Botanist] Moving to ".. tostring(position))
     MoveNearVnav(position, 2)
@@ -692,20 +703,21 @@ function DoMission(position, missionId, nodes, numberof)
     log("[Cosmic Botanist] Starting ICE")
     StartICE(missionId)
 
-    log("[Cosmic Botanist] - (Pandora) Enabling Auto-Interact with Gathering Nodes")
-    EnablePandora()
-
     for i = 1, numberof do
+        log("[Cosmic Botanist] - (Pandora) Enabling Auto-Interact with Gathering Nodes")
+        EnablePandora()
         log("[Cosmic Botanist] Starting wait for mission")
-        -- Debounce: require window open continuously for 1.5s (12s timeout)
         repeat
-            if not IsAddonVisible("WKSMission") then
-                if not IsAddonVisible("WKSMissionInfomation") then
-                    SafeCallback("WKSHud", 11)
-                end
-            end
-            sleep(.01)
-        until WaitAddonStable("WKSMissionInfomation", .5, 1, 0.05)
+            sleep(.05)
+        until MissionPicked
+        sleep(1)
+        if not IsAddonVisible("WKSMissionInfomation") then
+            repeat
+                SafeCallback("WKSHud", 11)
+                sleep(2)
+            until IsAddonVisible("WKSMissionInfomation")
+        end
+
         local idx = 1
         repeat
         MoveNearVnav(nodes[idx])
@@ -731,8 +743,7 @@ function DoMission(position, missionId, nodes, numberof)
 
         log("[Cosmic Botanist] - (Pandora) Disable Auto-Interact with Gathering Nodes")
         DisablePandora()
-        log("[Cosmic Botanist] Moving to ".. tostring(position))
-        MoveNearVnav(position, 2)
+        MoveNearVnav(nodes[1])
     end
 end
 
@@ -803,10 +814,10 @@ while true do
 
     if missionAtotal > missionBtotal and missionAtotal > 0 then
         local numberof = math.min(missionAtotal, 3)
-        DoMission(missionA.position, missionA.id, missionA.node, numberof)
+        DoMission(missionA.name, missionA.position, missionA.id, missionA.node, numberof)
     elseif missionBtotal > 0 then
         local numberof = math.min(missionBtotal, 3)
-        DoMission(missionB.position, missionB.id, missionB.node, numberof)
+        DoMission(missionB.name, missionB.position, missionB.id, missionB.node, numberof)
     elseif missionAtotal == 0 and missionBtotal == 0 then
         StellarReturn()
         sleep(0.25)
