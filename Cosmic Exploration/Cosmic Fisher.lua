@@ -491,8 +491,8 @@ function RetrieveRelicResearch()
     local rowDivisors = {
         [4]     = 55,
         [41001] = 55,
-        [41002] = 1,   -- no division, just raw deficit
-        [41003] = 50,
+        [41002] = 55,
+        [41003] = 70,
         [41004] = 50,
     }
 
@@ -617,8 +617,8 @@ while true do
     if not GetCharacterCondition(CharacterCondition.mounted) then Mount() end
     local missions = RetrieveRelicResearch()
 
-    local missionAtotal = need(missions, 4) + need(missions, 41001)
-    local missionBtotal = need(missions, 41003) + need(missions, 41004)
+    local missionAtotal = need(missions, 4) + need(missions, 41001) + need(missions, 41002)
+    local missionBtotal = need(missions, 41003) + need(missions, 41004) + need(missions, 41002)
 
     if missionAtotal > missionBtotal and missionAtotal > 0 then
         local numberof = math.min(missionAtotal, 3)
@@ -634,7 +634,7 @@ while true do
             EnabledAutoText = true
         end
         log("[Cosmic Fisher] Research level met!")
-        MoveNearVnav(PhaennaResearchNpc.position)
+       see MoveNearVnav(PhaennaResearchNpc.position)
         log("[Cosmic Fisher] Moving to Research bunny")
         sleep(.05)
         local e = Entity.GetEntityByName(PhaennaResearchNpc.name)
