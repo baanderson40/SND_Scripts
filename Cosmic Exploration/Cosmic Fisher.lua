@@ -336,7 +336,7 @@ end
 
 function OnChatMessage()
     local message = TriggerData.message
-    if message and message:find(MissionName) and message:find("underway") then
+    if message and message:find(MissionName, 1, true) and message:find("underway") then
         MissionPicked = true
         return
     end
