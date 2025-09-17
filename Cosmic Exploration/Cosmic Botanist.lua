@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.2
+version: 0.0.3
 description: Botanist script for Phaenna for relic
 plugin_dependencies:
 - PandorasBox
@@ -653,7 +653,7 @@ function RetrieveRelicResearch()
     local rowDivisors = {
         [4]     = 30,
         [41001] = 30,
-        [41002] = 1,   -- no division, just raw deficit
+        [41002] = 40,
         [41003] = 40,
         [41004] = 25,
     }
@@ -809,8 +809,8 @@ PhaennaResearchNpc = {name = GetENpcResidentName(1052629), position = Vector3(32
 while true do
     local missions = RetrieveRelicResearch()
 
-    local missionAtotal = need(missions, 4) + need(missions, 41001)
-    local missionBtotal = need(missions, 41003) + need(missions, 41004)
+    local missionAtotal = need(missions, 4) + need(missions, 41001) + need(missions, 41002)
+    local missionBtotal = need(missions, 41003) + need(missions, 41004) + need(missions, 41002)
 
     if missionAtotal > missionBtotal and missionAtotal > 0 then
         local numberof = math.min(missionAtotal, 3)
