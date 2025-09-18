@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.2a
+version: 3.1.3
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -160,6 +160,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.3    Companion script echo logic changed to true only
     -> 3.1.2    Fix VBM/BMR hold buff rotation setting issue
     -> 3.1.1    Reverted RSR auto to just 'on'
     -> 3.1.0    Updated to support companion scripts by Minnu
@@ -3413,7 +3414,7 @@ Dalamud.Log("[FATE] Starting fate farming script.")
 State = CharacterState.ready
 CurrentFate = nil
 
-if CompanionScriptMode == EnableChangeInstance then
+if CompanionScriptMode then
     yield("/echo The companion script will overwrite changing instances.")
     EnableChangeInstance = false
 end
