@@ -1,9 +1,11 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.3
+version: 0.0.4
 description: Botanist script for Phaenna for relic
 plugin_dependencies:
+- vnavmesh
+- ICE
 - PandorasBox
 
 [[End Metadata]]
@@ -16,44 +18,56 @@ import("System.Numerics")
 echoLog = false
 MissionName = ""
 MissionPicked = false
+EnabledAutoText = false
+
+-- =========================================================
+-- Timing constants + Sleep (rounded to /wait granularity)
+-- =========================================================
+TIME = {
+    POLL    = 0.10,  -- canonical polling step (matches /wait)
+    TIMEOUT = 10.0,  -- default time budget
+}
+
+local function _sleep(seconds)
+    local s = seconds
+    if s == nil then s = 0 end
+    s = tonumber(s) or 0
+    if s < 0 then s = 0 end
+    -- round to 0.1s to avoid drift vs /wait resolution
+    s = math.floor(s * 10 + 0.5) / 10
+    yield("/wait " .. s)
+end
+Sleep, sleep = _sleep, _sleep
 
 -- =========================================================
 -- Echo / Log Helpers
 -- =========================================================
-local function _echo(s)
-    yield("/echo " .. tostring(s))
-end
-
+local function _echo(s) yield("/echo " .. tostring(s)) end
 local function _log(s)
     local msg = tostring(s)
     Dalamud.Log(msg)
     if echoLog then _echo(msg) end
 end
-
 Echo, echo = _echo, _echo
 Log,  log  = _log,  _log
 
--- =========================================================
--- Sleep Helpers
--- =========================================================
-local function _sleep(seconds)
-    seconds = tonumber(seconds) or 0
-    if seconds < 0 then seconds = 0 end
-    yield("/wait " .. seconds)
+local function InfoWindow()
+    yield("/fellowship")
+    sleep(TIME.POLL)
+    SafeCallback("CircleList", 3)
+    --yield("/callback CircleList true 3")
+    sleep(TIME.POLL)
+    Addons.GetAddon("MultipleHelpWindow"):GetNode(1, 3, 2, 3, 4).Text = "Cosmic Botanist\r\rWith ICE supporting DoL missions now you must enable\rmanual mode for the missions below:\r\rPrecise Iridized Rise Survey\rGlass Refinement Materials.\r\r The script will begin after closing this window!"
+    Addons.GetAddon("MultipleHelpWindow"):GetNode(1, 2, 2, 2).Text = "Cosmic Botanist - Help"
+    Addons.GetAddon("MultipleHelpWindow"):GetNode(1, 5, 2, 3).Text = "Cosmic Botanist"
 end
-
-Sleep, sleep = _sleep, _sleep
-
 -- =========================================================
 -- Addon Helpers
 -- =========================================================
 local function _get_addon(name)
     local ok, addon = pcall(Addons.GetAddon, name)
-    if ok and addon ~= nil then
-        return addon
-    else
-        return nil
-    end
+    if ok and addon ~= nil then return addon end
+    return nil
 end
 
 function IsAddonReady(name)
@@ -62,13 +76,13 @@ function IsAddonReady(name)
 end
 
 function AwaitAddonReady(name, timeoutSec)
-    echo("awaiting ready: " .. tostring(name))
-    local deadline = (timeoutSec or 10.0)
+    log("[Cosmic Botanist] awaiting ready: " .. tostring(name))
+    local deadline = (timeoutSec or TIME.TIMEOUT)
     local t = 0.0
     while t < deadline do
         local addon = _get_addon(name)
         if addon and addon.Ready then return true end
-        sleep(0.05); t = t + 0.05
+        sleep(TIME.POLL); t = t + TIME.POLL
     end
     log("[Cosmic Botanist] AwaitAddonReady timeout for: " .. tostring(name))
     return false
@@ -80,166 +94,44 @@ function IsAddonVisible(name)
 end
 
 function AwaitAddonVisible(name, timeoutSec)
-    echo("awaiting visible: " .. tostring(name))
-    local deadline = (timeoutSec or 10.0)
+    log("[Cosmic Botanist]awaiting visible: " .. tostring(name))
+    local deadline = (timeoutSec or TIME.TIMEOUT)
     local t = 0.0
     while t < deadline do
         local addon = _get_addon(name)
         if addon and addon.Exists then return true end
-        sleep(0.05); t = t + 0.05
+        sleep(TIME.POLL); t = t + TIME.POLL
     end
     log(" AwaitAddonVisible timeout for: " .. tostring(name))
     return false
 end
 
-local function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
-    stableSec  = tonumber(stableSec)  or 2.0
-    timeoutSec = tonumber(timeoutSec) or 10.0
-    pollSec    = tonumber(pollSec)    or 0.05
-
-    local t, visibleStart = 0.0, nil
-    while t < timeoutSec do
-        local addon = _get_addon(addonName)
-        local visible = (addon and addon.Exists) or false
-
-        if visible then
-            if not visibleStart then visibleStart = t end
-            if (t - visibleStart) >= stableSec then
-                return true
-            end
-        else
-            visibleStart = nil  -- reset the debounce if it closes
-        end
-
-        sleep(pollSec); t = t + pollSec
-    end
-    return false
-end
-
 -- =========================================================
--- Node Helpers (path = table of node indices, e.g., {3,5,2})
+-- Character / Position Helpers
 -- =========================================================
-local _unpack = table.unpack or unpack
-
-local function _get_node(addonName, path)
-    if type(path) ~= "table" then return nil end
-    local addon = _get_addon(addonName)
-    if not (addon and addon.Ready) then return nil end
-    local ok, node = pcall(function() return addon:GetNode(_unpack(path)) end)
-    if ok then return node end
-    return nil
-end
-
--- path: table of node indices (e.g., {3,5,2})
--- expected: string OR nil (if nil, only visibility is required)
--- mode: "equals" | "contains" | "pattern"  (default "equals")
--- caseInsensitive: boolean (default true)
-function AwaitAddonNodeVisible(addonName, timeoutSec, path, expected, mode, caseInsensitive)
-    echo("awaiting node visible: " .. tostring(addonName))
-    local deadline = tonumber(timeoutSec) or 10.0
-    local t = 0.0
-    mode = mode or "equals"
-    if caseInsensitive == nil then caseInsensitive = true end
-
-    local function matches(text)
-        if expected == nil then return true end
-        local lhs, rhs = tostring(text or ""), tostring(expected or "")
-        if caseInsensitive then
-            lhs = lhs:lower(); rhs = rhs:lower()
-        end
-        if mode == "equals" then
-            return lhs == rhs
-        elseif mode == "contains" then
-            return lhs:find(rhs, 1, true) ~= nil -- plain find
-        elseif mode == "pattern" then
-            return lhs:find(rhs) ~= nil          -- pattern match
-        else
-            -- fallback to equals if an unknown mode is passed
-            return lhs == rhs
-        end
-    end
-
-    while t < deadline do
-        local node = _get_node(addonName, path)
-        if node and node.IsVisible then
-            local text = tostring(node.Text or "")
-            if matches(text) then
-                return true
-            end
-        end
-        sleep(0.05); t = t + 0.05
-    end
-
-    local lastText = ""
-    local node = _get_node(addonName, path)
-    if node then lastText = tostring(node.Text or "") end
-    Log(string.format("AwaitAddonNodeVisible timeout for: %s (last Text='%s')",
-        tostring(addonName), lastText))
-    return false
-end
-
-
-function IsNodeVisible(addonName, path)
-    local node = _get_node(addonName, path)
-    return node and node.IsVisible or false
-end
-
-function GetNodeText(addonName, path)
-    local node = _get_node(addonName, path)
-    return node and tostring(node.Text or "") or ""
-end
-
-function GetNodeType(addonName, path)
-    local node = _get_node(addonName, path)
-    return node and tostring(node.NodeType or "") or ""
-end
-
-function GetMyNode(addonName, index)
-    local addon = _get_addon(addonName)
-    if not (addon and addon.Ready) then return nil end
-    local nodes = addon.Nodes
-    return nodes and nodes[index] or nil
-end
-
-function GetNodeText2(addonName, path)
-    if not AwaitAddonReady(addonName, 5) then return "" end
-    return GetNodeText(addonName, path)
-end
-
--- =========================================================
--- Character / Target / Position Helpers
--- =========================================================
-function GetCharacterName()
-    return (Entity and Entity.Player and Entity.Player.Name) or ""
-end
-
 function GetCharacterCondition(i, bool)
     if bool == nil then bool = true end
     return Svc and Svc.Condition and (Svc.Condition[i] == bool) or false
 end
 
--- Wait until Svc.Condition[idx] == want for `stableSec` seconds straight.
--- Returns true on success, false on timeout.
 function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
-    want       = (want ~= false)                 -- default true
-    stableSec  = tonumber(stableSec)  or 2.0     -- how long it must hold
-    timeoutSec = tonumber(timeoutSec) or 15.0    -- total wait budget
-    pollSec    = tonumber(pollSec)    or 0.05
+    want       = (want ~= false)
+    stableSec  = tonumber(stableSec)  or 2.0
+    timeoutSec = tonumber(timeoutSec) or 15.0
+    pollSec    = tonumber(pollSec)    or TIME.POLL
 
     if not (Svc and Svc.Condition) then
-        log(" WaitConditionStable: Svc.Condition unavailable"); return false
+        log("[Cosmic Botanist] WaitConditionStable: Svc.Condition unavailable"); return false
     end
 
     local t, startHold = 0.0, nil
     while t < timeoutSec do
-        local ok = GetCharacterCondition(idx, want) -- your helper
+        local ok = GetCharacterCondition(idx, want)
         if ok then
             if not startHold then startHold = t end
-            if (t - startHold) >= stableSec then
-                return true
-            end
+            if (t - startHold) >= stableSec then return true end
         else
-            startHold = nil -- broke the streak; reset debounce
+            startHold = nil
         end
         sleep(pollSec); t = t + pollSec
     end
@@ -247,28 +139,6 @@ function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
     Log(string.format("WaitConditionStable timeout (idx=%s want=%s stable=%.2fs)",
         tostring(idx), tostring(want), stableSec))
     return false
-end
-
-function IsInZone(id)
-    return Svc and Svc.ClientState and (Svc.ClientState.TerritoryType == id) or false
-end
-
-function GetTargetName()
-    return (Entity and Entity.Target and Entity.Target.Name) or ""
-end
-
-function GetDistanceToTarget()
-    if not (Entity and Entity.Player and Entity.Target) then return math.huge end
-    return Vector3.Distance(Entity.Player.Position, Entity.Target.Position)
-end
-
-function DistanceBetweenPositions(pos1, pos2)
-    if not (pos1 and pos2) then return math.huge end
-    return Vector3.Distance(pos1, pos2)
-end
-
-function GetTargetName()
-    return (Entity and Entity.Target and Entity.Target.Name) or ""
 end
 
 function InteractByName(name, timeout)
@@ -279,12 +149,12 @@ function InteractByName(name, timeout)
     local start = os.clock()
     while (os.clock() - start) < timeout do
         e:SetAsTarget()
-        sleep(.05)
-        if Entity.Target or Entity.Target.Name ~= name then
+        sleep(TIME.POLL)
+        if Entity.Target and Entity.Target.Name == name then
             e:Interact()
             return true
         end
-        sleep(0.05)
+        sleep(TIME.POLL)
     end
     return false
 end
@@ -326,7 +196,7 @@ function SafeCallback(...)
         end
     end
 
-    echo("calling: " .. call)
+    log("[Cosmic Botanist] calling: " .. call)
     if IsAddonReady(addon) and IsAddonVisible(addon) then
         yield(call)
     else
@@ -335,160 +205,75 @@ function SafeCallback(...)
 end
 
 -- =========================================================
--- Plugins
+-- Chat + Actions
 -- =========================================================
-function HasPlugin(name)
-    for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
-        if plugin.InternalName == name and plugin.IsLoaded then return true end
-    end
-    return false
-end
-
-function GetPlugins()
-    local plugins = {}
-    for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
-        table.insert(plugins, { name = plugin.InternalName, loaded = plugin.IsLoaded })
-    end
-    table.sort(plugins, function(a,b) return a.name:lower() < b.name:lower() end)
-
-    log(" Installed plugins:")
-    for _, p in ipairs(plugins) do
-        Log(string.format("  %s | Enabled: %s", p.name, tostring(p.loaded)))
-    end
-end
-
 function OnChatMessage()
     local message = TriggerData.message
     if message and message:find(MissionName, 1, true) and message:find("underway") then
         MissionPicked = true
         return
     end
-    MissionPicked = false
 end
 
 function StartICE(missionId)
-    yield('/ice only '..missionId)
-    sleep(.1)
-    yield('/ice start')
-    sleep(.05)
+    yield('/ice only '..missionId); sleep(TIME.POLL)
+    yield('/ice start');            sleep(TIME.POLL)
 end
 
 function StopICE()
-    yield('/ice stop')
-    sleep(.05)
+    yield('/ice stop'); sleep(TIME.POLL)
 end
 
 function EnablePandora()
     IPC.PandorasBox.SetFeatureEnabled("Auto-interact with Gathering Nodes", true)
-    sleep(.05)
+    sleep(TIME.POLL)
 end
 
 function DisablePandora()
     IPC.PandorasBox.SetFeatureEnabled("Auto-interact with Gathering Nodes", false)
-    sleep(.05)
+    sleep(TIME.POLL)
 end
 
 function StellarReturn()
-    Log(" Stellar Return")
+    Log("[Cosmic Botanist] Stellar Return")
     yield('/gaction "Duty Action"')
-    sleep(4)
-    repeat
-        sleep(0.1)
-    until not GetCharacterCondition(CharacterCondition.casting)
-        and not GetCharacterCondition(CharacterCondition.betweenAreas) and not Player.IsBusy
-    sleep(.05)
+    sleep(3)
+    repeat sleep(TIME.POLL) until WaitConditionStable(CharacterCondition.normalConditions, 2)
+    sleep(TIME.POLL)
 end
 
-function Mount()
-    yield('/gaction "mount roulette"')
-    sleep(.05)
-end
-
-function Dismount()
-    yield("/ac dismount")
-    sleep(.05)
-end
+function Mount()    yield('/gaction "mount roulette"'); sleep(TIME.POLL) end
+function Dismount() yield("/ac dismount");               sleep(TIME.POLL) end
 
 function CurrentGP()
     return toNumberSafe(Svc.ClientState.LocalPlayer.CurrentGp)
 end
 
-function BlessedHarvestII()
-    yield('/action "Blessed Harvest II"')
-    sleep(.75)
-end
+function BlessedHarvestII()  yield('/action "Blessed Harvest II"');  sleep(0.75) end
+function PioneersGiftII()    yield('/action "Pioneer\'s Gift II"');  sleep(0.75) end
+function PioneersGiftI()     yield('/action "Pioneer\'s Gift I"');   sleep(0.75) end
 
-function PioneersGiftII()
-    yield('/action "Pioneer\'s Gift II"')
-    sleep(.75)
-end
+function FacetedBluegrassCount()       return toNumberSafe(Inventory.GetItemCount(47393)) or 0 end
+function FacetedBluegrassCollect()     SafeCallback("Gathering", 2); sleep(1) end
+function BluegrassFritCount()          return toNumberSafe(Inventory.GetItemCount(47394)) or 0 end
+function BluegrassFritCollect()        SafeCallback("Gathering", 4); sleep(1) end
+function FacetedBluegrassRootCount()   return toNumberSafe(Inventory.GetItemCount(47395)) or 0 end
+function FacetedBluegrassRootCollect() SafeCallback("Gathering", 6); sleep(1) end
+function FacetedGrassRootCount()       return toNumberSafe(Inventory.GetItemCount(47398)) or 0 end
+function FacetedGrassRootCollect()     SafeCallback("Gathering", 7); sleep(1) end
+function FacetedGrassStemsCount()      return toNumberSafe(Inventory.GetItemCount(47397)) or 0 end
+function FacetedGrassStemsCollect()    SafeCallback("Gathering", 4); sleep(1) end
+function FacetedGrassCount()           return toNumberSafe(Inventory.GetItemCount(47396)) or 0 end
+function FacetedGrassCollect()         SafeCallback("Gathering", 3); sleep(1) end
 
-function PioneersGiftI()
-    yield('/action "Pioneer\'s Gift I"')
-    sleep(.75)
-end
-
-function FacetedBluegrassCount()
-    return toNumberSafe(Inventory.GetItemCount(47393)) or 0
-end
-
-function FacetedBluegrassCollect()
-    SafeCallback("Gathering", 2)
-    sleep(1)
-end
-
-function BluegrassFritCount()
-    return toNumberSafe(Inventory.GetItemCount(47394)) or 0
-end
-
-function BluegrassFritCollect()
-    SafeCallback("Gathering", 4)
-    sleep(1)
-end
-
-function FacetedBluegrassRootCount()
-    return toNumberSafe(Inventory.GetItemCount(47395)) or 0
-end
-
-function FacetedBluegrassRootCollect()
-    SafeCallback("Gathering", 6)
-    sleep(1)
-end
-
-function FacetedGrassRootCount()
-    return toNumberSafe(Inventory.GetItemCount(47398)) or 0
-end
-
-function FacetedGrassRootCollect()
-    SafeCallback("Gathering", 7)
-    sleep(1)
-end
-
-function FacetedGrassStemsCount()
-    return toNumberSafe(Inventory.GetItemCount(47397)) or 0
-end
-
-function FacetedGrassStemsCollect()
-    SafeCallback("Gathering", 4)
-    sleep(1)
-end
-
-function FacetedGrassCount()
-    return toNumberSafe(Inventory.GetItemCount(47396)) or 0
-end
-
-function FacetedGrassCollect()
-    SafeCallback("Gathering", 3)
-    sleep(1)
-end
 -- =========================================================
 -- VNAV Helpers
 -- =========================================================
 function PathandMoveVnav(dest, fly)
-    fly = (fly == true) -- default false
-    local t, timeout = 0, 10.0
+    fly = (fly == true)
+    local t, timeout = 0, TIME.TIMEOUT
     while not IPC.vnavmesh.IsReady() and t < timeout do
-        sleep(0.05); t = t + 0.05
+        sleep(TIME.POLL); t = t + TIME.POLL
     end
     if not IPC.vnavmesh.IsReady() then
         log("[Cosmic Botanist]  VNAV not ready (timeout)")
@@ -498,10 +283,8 @@ function PathandMoveVnav(dest, fly)
     if not ok then log("[Cosmic Botanist] VNAV pathfind failed") end
     if ok then
         local me = Entity and Entity.Player
-        if me and me.Position then
-            if Vector3.Distance(me.Position, dest) > 25 then
-                Mount()
-            end
+        if me and me.Position and Vector3.Distance(me.Position, dest) > 25 then
+            Mount()
         end
     end
     return ok and true or false
@@ -510,9 +293,9 @@ end
 function StopCloseVnav(dest, stopDistance)
     stopDistance = tonumber(stopDistance) or 3.0
     if not dest then return end
-    local t, timeout = 0, 10.0
+    local t, timeout = 0, TIME.TIMEOUT
     while not IPC.vnavmesh.IsRunning() and t < timeout do
-        sleep(0.05); t = t + 0.05
+        sleep(TIME.POLL); t = t + TIME.POLL
     end
     if not IPC.vnavmesh.IsRunning() then
         log("[Cosmic Botanist]  VNAV not running (timeout)")
@@ -521,17 +304,15 @@ function StopCloseVnav(dest, stopDistance)
     while IPC.vnavmesh.IsRunning() do
         local me = Entity and Entity.Player
         if me and me.Position then
-            if Vector3.Distance(me.Position, dest) < 10 then
-                if GetCharacterCondition(CharacterCondition.mounted) then
-                    Dismount()
-                end
+            if Vector3.Distance(me.Position, dest) < 10 and GetCharacterCondition(CharacterCondition.mounted) then
+                Dismount()
             end
             if Vector3.Distance(me.Position, dest) < stopDistance then
                 IPC.vnavmesh.Stop()
                 break
             end
         end
-        sleep(0.05)
+        sleep(TIME.POLL)
     end
 end
 
@@ -543,8 +324,11 @@ function MoveNearVnav(dest, stopDistance, fly)
     return false
 end
 
+-- =========================================================
+-- Mission Logic
+-- =========================================================
 function MissionBravoGather()
-    sleep(0.05)
+    sleep(TIME.POLL)
     if CurrentGP() >= 650 then
         BlessedHarvestII(); PioneersGiftII(); PioneersGiftI()
     elseif CurrentGP() >= 150 then
@@ -552,22 +336,18 @@ function MissionBravoGather()
     end
 
     repeat
-    if FacetedBluegrassRootCount() < 20 then
-        FacetedBluegrassRootCollect()
-    elseif BluegrassFritCount() < 15 then
-        BluegrassFritCollect()
-    elseif FacetedBluegrassCount() < 15 then
-        FacetedBluegrassCollect()
-    else
-        FacetedBluegrassRootCollect()
-    end
+        if     FacetedBluegrassRootCount() < 20 then FacetedBluegrassRootCollect()
+        elseif BluegrassFritCount()        < 15 then BluegrassFritCollect()
+        elseif FacetedBluegrassCount()     < 15 then FacetedBluegrassCollect()
+        else                                     FacetedBluegrassRootCollect()
+        end
     until not IsAddonVisible("Gathering")
 end
 
 function MissionBravoComplete()
     local h = FacetedBluegrassRootCount() or 0
-    local m = BluegrassFritCount() or 0
-    local p = FacetedBluegrassCount() or 0
+    local m = BluegrassFritCount()        or 0
+    local p = FacetedBluegrassCount()     or 0
     if h < 20 then return false
     elseif m < 15 then return false
     elseif p < 15 then return false
@@ -575,29 +355,25 @@ function MissionBravoComplete()
 end
 
 function MissionAlphaGather()
-    sleep(0.05)
+    sleep(TIME.POLL)
     if CurrentGP() >= 650 then
         BlessedHarvestII(); PioneersGiftII(); PioneersGiftI()
     elseif CurrentGP() >= 150 then
         PioneersGiftII(); PioneersGiftI()
     end
     repeat
-    if FacetedGrassCount() < 15 then
-        FacetedGrassCollect()
-    elseif FacetedGrassStemsCount() < 15 then
-        FacetedGrassStemsCollect()
-    elseif FacetedGrassRootCount() < 15 then
-        FacetedGrassRootCollect()
-    else
-        FacetedGrassRootCollect()
-    end
+        if     FacetedGrassCount()      < 15 then FacetedGrassCollect()
+        elseif FacetedGrassStemsCount() < 15 then FacetedGrassStemsCollect()
+        elseif FacetedGrassRootCount()  < 15 then FacetedGrassRootCollect()
+        else                                   FacetedGrassRootCollect()
+        end
     until not IsAddonVisible("Gathering")
 end
 
 function MissionAlphaComplete()
-    local a = FacetedGrassCount() or 0
+    local a = FacetedGrassCount()      or 0
     local v = FacetedGrassStemsCount() or 0
-    local f = FacetedGrassRootCount() or 0
+    local f = FacetedGrassRootCount()  or 0
     if a < 15 then return false
     elseif v < 15 then return false
     elseif f < 15 then return false
@@ -606,19 +382,18 @@ end
 
 function ReportMission()
     SafeCallback("WKSMissionInfomation", 11)
-    sleep(.05)
+    sleep(TIME.POLL)
 end
 
 function GetENpcResidentName(dataId)
     local sheet = Excel.GetSheet("ENpcResident")
     if not sheet then return nil, "ENpcResident sheet not available" end
-
     local row = sheet:GetRow(dataId)
     if not row then return nil, "no row for id "..tostring(dataId) end
-
     local name = row.Singular or row.Name
     return name, "ENpcResident"
 end
+
 -- =========================================================
 -- String / Number Helpers
 -- =========================================================
@@ -633,20 +408,18 @@ function need(tbl, key)
     return tonumber(tbl[key] or 0) or 0
 end
 
-
 -- =========================================================
--- Worker Funcitons
+-- Worker Functions
 -- =========================================================
-
--- Returns a table of remaining needed per row.
--- Keys = row IDs, Values = how many still needed (0 if complete).
 function RetrieveRelicResearch()
     repeat
-    if not IsAddonVisible("WKSToolCustomize") and IsAddonVisible("WKSHud") then
-        SafeCallback("WKSHud", 15)
-        sleep(0.25)
-    end
+        if not IsAddonVisible("WKSToolCustomize") and IsAddonVisible("WKSHud") then
+            SafeCallback("WKSHud", 15)
+            sleep(0.25) -- allow UI to open/settle
+        end
+        sleep(TIME.POLL)
     until IsAddonVisible("WKSToolCustomize")
+
     local ToolAddon = Addons.GetAddon("WKSToolCustomize")
 
     -- Divisor rules for rows
@@ -665,26 +438,17 @@ function RetrieveRelicResearch()
         local currentNode  = ToolAddon:GetNode(1, 55, 68, row, 4, 5)
         local requiredNode = ToolAddon:GetNode(1, 55, 68, row, 4, 7)
 
-        if not currentNode or not requiredNode then
-            break
-        end
+        if not currentNode or not requiredNode then break end
 
-        local current  = toNumberSafe(currentNode.Text) or 0
+        local current  = toNumberSafe(currentNode.Text)  or 0
         local required = toNumberSafe(requiredNode.Text) or 0
 
-        local deficit = 0
-        if required > current then
-            deficit = required - current
-        end
-
+        local deficit = (required > current) and (required - current) or 0
         local divisor = rowDivisors[row] or 1
-        if divisor > 1 then
-            remainingByRow[row] = math.ceil(deficit / divisor)
-        else
-            remainingByRow[row] = deficit
-        end
+        remainingByRow[row] = (divisor > 1) and math.ceil(deficit / divisor) or deficit
     end
-    sleep(.05)
+
+    sleep(TIME.POLL)
     if IsAddonVisible("WKSToolCustomize") then SafeCallback("WKSToolCustomize",-1) end
     return remainingByRow
 end
@@ -706,40 +470,43 @@ function DoMission(name, position, missionId, nodes, numberof)
     for i = 1, numberof do
         log("[Cosmic Botanist] - (Pandora) Enabling Auto-Interact with Gathering Nodes")
         EnablePandora()
+
         log("[Cosmic Botanist] Starting wait for mission")
-        repeat
-            sleep(.05)
-        until MissionPicked
-        sleep(1)
+        repeat sleep(TIME.POLL) until MissionPicked
+        sleep(1) -- grace for mission window
+
         if not IsAddonVisible("WKSMissionInfomation") then
             repeat
                 SafeCallback("WKSHud", 11)
-                sleep(2)
+                sleep(2) -- allow UI to open
             until IsAddonVisible("WKSMissionInfomation")
         end
 
         local idx = 1
         repeat
-        MoveNearVnav(nodes[idx])
+            MoveNearVnav(nodes[idx])
 
-        log("[Cosmic Botanist] Waiting for gathering")
-        AwaitAddonVisible("Gathering")
+            log("[Cosmic Botanist] Waiting for gathering")
+            AwaitAddonVisible("Gathering")
 
-        if missionId == 948 then
-            log("[Cosmic Botanist] Doing Mission A")
-            MissionAlphaGather()
-        elseif missionId == 950 then
-            log("[Cosmic Botanist] Doing Mission B")
-            MissionBravoGather()
-        end
+            if missionId == 948 then
+                log("[Cosmic Botanist] Doing Mission A")
+                MissionAlphaGather()
+            elseif missionId == 950 then
+                log("[Cosmic Botanist] Doing Mission B")
+                MissionBravoGather()
+            end
 
-        idx = (idx % #nodes) + 1
+            idx = (idx % #nodes) + 1
         until MissionAlphaComplete() or MissionBravoComplete()
+
         log("[Cosmic Botanist] Mission Complete")
-        sleep(.05)
-        if i >= 3 then StopICE() end
+        sleep(TIME.POLL)
+        if i >= numberof then StopICE() end
+
         log("[Cosmic Botanist] Report Mission")
         ReportMission()
+        MissionPicked = false
 
         log("[Cosmic Botanist] - (Pandora) Disable Auto-Interact with Gathering Nodes")
         DisablePandora()
@@ -750,61 +517,51 @@ end
 -- =========================================================
 -- Script Settings 
 -- =========================================================
-
- CharacterCondition = {
-    normalConditions                   = 1, -- moving or standing still
-    mounted                            = 4, -- moving
-    crafting                           = 5,
-    gathering                          = 6,
-    casting                            = 27,
-    occupiedInQuestEvent               = 32,
-    occupied33                         = 33,
-    occupiedMateriaExtractionAndRepair = 39,
-    executingCraftingAction            = 40,
-    preparingToCraft                   = 41,
-    executingGatheringAction           = 42,
-    fishing                            = 43,
-    betweenAreas                       = 45,
-    jumping48                          = 48, -- moving
-    occupiedSummoningBell              = 50,
-    mounting57                         = 57, -- moving
-    unknown85                          = 85, -- Part of gathering
- }
+CharacterCondition = {
+    normalConditions = 1, -- moving or standing still
+    mounted          = 4, -- moving
+}
 
 missionA = {
-    name = "Precise Iridized Rise Survey",
+    name     = "Precise Iridized Rise Survey",
     position = Vector3(-264.160, 20.315, 163.899),
-    id = 948,
-    node = {Vector3(-255.782, 20.880, 160.893),
-            Vector3(-251.373, 21.086, 161.462),
-            Vector3(-224.286, 20.862, 179.909),
-            Vector3(-218.142, 20.717, 184.682),
-            Vector3(-215.209, 20.717, 197.586),
-            Vector3(-208.331, 20.780, 200.303),
-            Vector3(-243.339, 20.850, 211.779),
-            Vector3(-245.061, 21.010, 215.409),
-        }
+    id       = 948,
+    node     = {
+        Vector3(-255.782, 20.880, 160.893),
+        Vector3(-251.373, 21.086, 161.462),
+        Vector3(-224.286, 20.862, 179.909),
+        Vector3(-218.142, 20.717, 184.682),
+        Vector3(-215.209, 20.717, 197.586),
+        Vector3(-208.331, 20.780, 200.303),
+        Vector3(-243.339, 20.850, 211.779),
+        Vector3(-245.061, 21.010, 215.409),
     }
+}
 
 missionB = {
-    name = "Glass Refinement Materials",
+    name     = "Glass Refinement Materials",
     position = Vector3(-83.884, 1.980, 171.817),
-    id = 950,
-    node = {Vector3(-71.634, 2.706, 176.741),
-            Vector3(-73.996, 2.704, 167.992),
-            Vector3(-122.463, 2.847, 120.669),
-            Vector3(-129.567, 2.558, 116.940),
-            Vector3(-14.556, -9.342, 79.263),
-            Vector3(-16.470, -9.328, 72.524),
-        }
+    id       = 950,
+    node     = {
+        Vector3(-71.634, 2.706, 176.741),
+        Vector3(-73.996, 2.704, 167.992),
+        Vector3(-122.463, 2.847, 120.669),
+        Vector3(-129.567, 2.558, 116.940),
+        Vector3(-14.556, -9.342, 79.263),
+        Vector3(-16.470, -9.328, 72.524),
     }
+}
 
-PhaennaGateHub = Vector3(340.721, 52.864, -418.183)
-PhaennaResearchNpc = {name = GetENpcResidentName(1052629), position = Vector3(321.218, 53.193, -401.236)}
+PhaennaResearchNpc = { name = GetENpcResidentName(1052629), position = Vector3(321.218, 53.193, -401.236) }
 
 -- =========================================================
 -- Main Script 
--- ========================================================= 
+-- =========================================================
+
+InfoWindow()
+while IsAddonVisible("MultipleHelpWindow") do
+    sleep(TIME.POLL)
+end
 
 while true do
     local missions = RetrieveRelicResearch()
@@ -815,50 +572,46 @@ while true do
     if missionAtotal > missionBtotal and missionAtotal > 0 then
         local numberof = math.min(missionAtotal, 3)
         DoMission(missionA.name, missionA.position, missionA.id, missionA.node, numberof)
+
     elseif missionBtotal > 0 then
         local numberof = math.min(missionBtotal, 3)
         DoMission(missionB.name, missionB.position, missionB.id, missionB.node, numberof)
+
     elseif missionAtotal == 0 and missionBtotal == 0 then
         StellarReturn()
         sleep(0.25)
+
         if not IPC.TextAdvance.IsEnabled() then
             yield("/at enable")
             EnabledAutoText = true
         end
+
         log("[Cosmic Botanist] Research level met!")
         MoveNearVnav(PhaennaResearchNpc.position)
         log("[Cosmic Botanist] Moving to Research bunny")
-        sleep(.05)
-        repeat
-            sleep(.05)
-        until InteractByName(PhaennaResearchNpc.name)
-        repeat
-            sleep(.05)
-        until AwaitAddonReady("SelectString")
-        if IsAddonReady("SelectString") then
+        sleep(TIME.POLL)
+
+        repeat sleep(TIME.POLL) until InteractByName(PhaennaResearchNpc.name)
+
+        if AwaitAddonReady("SelectString") then
             SafeCallback("SelectString", 0)
         end
-        repeat
-            sleep(.05)
-        until AwaitAddonReady("SelectIconString")
-        if IsAddonReady("SelectIconString") then
+
+        if AwaitAddonReady("SelectIconString") then
             StringId = Player.Job.Id - 8
             SafeCallback("SelectIconString", StringId)
         end
-        repeat
-            sleep(.05)
-        until AwaitAddonReady("SelectYesno")
-        if IsAddonReady("SelectYesno") then
+
+        if AwaitAddonReady("SelectYesno") then
             SafeCallback("SelectYesno", 0)
         end
-        repeat
-            sleep(.05)
-        until not IsAddonVisible("SelectYesno")
+        repeat sleep(TIME.POLL) until not IsAddonVisible("SelectYesno")
+
         if EnabledAutoText then
             yield("/at disable")
             EnabledAutoText = false
         end
     else
-        sleep(0.5)
+        sleep(TIME.POLL)
     end
 end
