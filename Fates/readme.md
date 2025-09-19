@@ -7,9 +7,19 @@ FATE centered SND2 lua scripts.
 
 ## Scripts
 - FATE Farming
+  
   - Farm FATEs in given area
-  - Purchase Bicolor gemsrone items
+  - Purchase Bicolor gemstone items
   - Process Retainers when available
+    
+- Multi Zone Farming
+  - Multi zone farming script meant to be used with `Fate Farming.lua`.
+
+- Occult Demiatma Farming
+  - Demiatma Farming script meant to be used with `Fate Farming.lua`.
+ 
+- Zodiac Atma Farming
+  - Atma farming script meant to be used with `Fate Farming.lua`.
 
 ## Known Issues
 - None at the moment
