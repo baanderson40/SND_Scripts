@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.4
+version: 0.0.4a
 description: Fisher script for Phaenna for relic
 plugin_dependencies:
 - vnavmesh
@@ -416,7 +416,7 @@ missionB = {
     name     = "Elemental-esque Aquaculture Specimens",
     position = Vector3(381.041, 27.040, -76.952),
     id       = 988,
-    ahPreset = "AH4_H4sIAAAAAAAACs1WTW/bOBD9KwHPUkHJFC3p5rpuNoCTDWoHeyj2QEkjmwgtOiTVbTbwf19QEmNbtlt1kXb3JpEzb958cl7QpDZyyrTR03KF0hc0q1gmYCIESo2qwUMfZGWmrMpB3EqZr1FaMqHBQ1ZpzivYKx"
+    ahPreset = "AH4_H4sIAAAAAAAACs1WTW/bOBD9KwHPUkHJFC3p5rpuNoCTDWoHeyj2QEkjmwgtOiTVbTbwf19QEmNbtlt1kXb3JpEzb958cl7QpDZyyrTR03KF0hc0q1gmYCIESo2qwUMfZGWmrMpB3EqZr1FaMqHBQ1ZpzivYKxVO5aZAaRgnl3XvFZeKm2eUBh660bOvuagLKPbHFmfX2ug0X1DzEdqvBp/GHrreLtcK9FqKAqUBxkfI34ZuMJLxII74uySn63pzIRAkwKTHNLJMB9h14FIIyI3znAQ4GKIefp+1VAVn4gLxAGMakEGmSAf4kev17Bn0AdWo73s0yHfqss8eYbHmpXnPeBMBe6DdwcKw/FGjNOrySeNTe0OsJZ21e2Y4VDkc8Kd9PDosd6GDVPxvmDLT1rBj2UcNB1bEqENdrpng7FF/ZF+kssBHBy4sI+/4/BPk8gsolAY2Ceealsa2WAcQcfl5z1fXbNMEbFKtBCjtjNvyK1A6GmNy4u0gE/Fu56HZV6NYN5psxpdy8Rfb3lSm5obL6prxysXVDzw0rxXcgtZsBShFyEN3DTl0JytAXovwvAWU2kCewZtLbf413r0CDecZIh9duG8tNvd7Post5EYxMa2Vgsq8kZc91Dfz9SzbE4/PWm+k2sJZGLm184NXq4WBbfM07Ll3xTVRb0P5EK7h8FDxpxosLiqKPAtDHPt0jMc+ScLIz4oSfJpkOCBACxYQtPPQnGvze2ltaJR+bsvTOvBKMEkuM5wIcdWq9mneSbVh4jcpHy2Qm0h/AGv+26a1txqM9cS1b3fU4pBgbEeaU14YJavVj6jj0YH6HFZQFUw9/zDCg4YPsu7k9wuFPXEO2Zsl34DqjaNbXr1e2WHwDnvIvrLnZO15Tx6/i3uUQmpD0hrfB+Q/MX8U0F/MYKn49jj6e4FxFI5eRY5jdEHoxJMTOdvWk9KAmrJ6tTZzvrHveBC1N8cNj0PS7ZW1apcI+3HwmrUPSpT0F6pvbmh22XPT1rXVJ3iquYJiYZip7QJht8l+rw1rqcGdc07wtBcG1Ouwmvp/5v1c2n9Ozh/2E50EUIaUMj/HNPFJGRM/znDox9G4CBjBJEso2v3pRnq3kXx+PWinuv1v35Buhs8EbKAyTPign2q4mjzVLK+FAXVlHzu+gcqO9wMiGGdJFuYjPx8z7JMyI35csMiPaZLQLMcjCiHa/QOhkWZllQ0AAA=="
 }
 
 PhaennaResearchNpc = {
