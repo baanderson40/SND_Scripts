@@ -634,7 +634,7 @@ while true do
             EnabledAutoText = true
         end
         log("[Cosmic Fisher] Research level met!")
-       see MoveNearVnav(PhaennaResearchNpc.position)
+        MoveNearVnav(PhaennaResearchNpc.position)
         log("[Cosmic Fisher] Moving to Research bunny")
         sleep(.05)
         local e = Entity.GetEntityByName(PhaennaResearchNpc.name)
