@@ -2349,7 +2349,7 @@ function TurnOnCombatMods(rotationMode)
                 Engines.Run("/vbmai followcombat on")
                 Engines.Run("/vbmai maxdistancetarget " .. MaxDistance)
                 if MoveToMob == true then
-                    Engines.Run("/bmrai followoutofcombat on")
+                    Engines.Run("/vbmai followoutofcombat on")
                 end
                 if RotationPlugin ~= "VBM" then
                     Engines.Run("/vbmai ForbidActions on") --This Disables VBM AI Auto-Target
