@@ -57,18 +57,18 @@ local CFG = {
 
 -- Only reprice these retainers by name. Leave EMPTY to process **all** retainers.
 local TARGET_RETAINERS = {
-   "Flowers'",
-   "Power",
-  -- "Stevie",
+   "",
+   "",
+  -- "",
 }
 -- Used by: is_target_retainer() to decide which retainers to include during a run.
 -- Behavior per code: if this table has length 0, every retainer on the Retainer List is considered a target.
 
 -- Your own retainer names (used to avoid undercutting yourself on market listings)
 local MY_RETAINERS = {
-  "Flowers'",
-  "Power",
-  "Stevie",
+  "",
+  "",
+  "",
 }
 -- Used by: is_my_retainer() and DecideNewPrice(). If the current lowest seller matches any of these names,
 -- the script keeps the lowest price instead of undercutting it.
