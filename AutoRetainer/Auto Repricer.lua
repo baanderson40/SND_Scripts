@@ -8,82 +8,106 @@ description: |
   No support will be provided by developers and will lead to a ban.
   Use at your own risk
 triggers:
-- onlogin
+- onterritorychange
+
 [[End Metadata]]
 ]=====]--
 
 ------------------------------------------------------------
---Config
+-- CONFIG
 ------------------------------------------------------------
 local CFG = {
-  DEBUG = true,               -- When true, enables debug logs via dbg()/Dalamud.Log (e.g., "OpenItem:", prices read, state transitions).
+  DEBUG = true,                 -- Enable verbose dbg() logging.
 
-  UNDERCUT = 1,               -- Amount subtracted from the current lowest market price when the lowest seller is not one of MY_RETAINERS.
-                              -- Used by DecideNewPrice(): new price = max(1, lowestPrice - UNDERCUT). If lowest seller is yours, price is kept.
+  UNDERCUT = 1,                 -- If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
 
-  FAST = {
-    maxWaitSec      = 2,      -- Upper bound (seconds) for ReadLowestListing_Fast() to find and parse the first row’s price/seller.
-    refreshAfterSec = 1,      -- If the first row isn’t readable by this age (seconds), trigger one “Compare prices” refresh and try again.
+  FAST = {                      -- Market board read timing.
+    maxWaitSec      = 5,        -- Max seconds to read first row of ItemSearchResult.
+    refreshAfterSec = 3,        -- If row not readable after this, trigger one refresh.
   },
 
-  OpenBell = {
-    maxAttempts = 50,         -- Maximum loop iterations to target and interact with the Summoning Bell until RetainerList is open/ready.
-    targetWait  = 0.5,        -- Delay (seconds) after “/target Summoning Bell” before attempting to interact.
-    interactWait= 1.0,        -- Delay (seconds) after “/pinteract” before checking if RetainerList appeared.
+  OpenBell = {                  -- Summoning Bell open timing.
+    maxAttempts = 50,
+    targetWait  = 0.5,
+    interactWait= 1.0,
   },
 
-  CloseBack = {
-    graceWaitSec = 0.5,       -- Small wait used by CloseBackToRetainerList() when returning from a retainer’s Sell List,
-                              -- allowing the intermediate “SelectString” window to appear before closing it.
+  CloseBack = {                 -- When backing out to RetainerList.
+    graceWaitSec = 0.5,
   },
 
-  -- AutoRetainer wait config
-  AutoRetainer = {
-    enabled     = true,       -- If true and AutoRetainer IPC is available, EnsureAutoRetainerIdle() waits for AutoRetainer to be not busy.
-    maxWaitSec  = 60,         -- Overall timeout (seconds) to wait for AutoRetainer to become idle before aborting an auto run.
-    settleSec   = 1.5,        -- Once AutoRetainer reports not busy, it must remain not busy for this many seconds to confirm “idle”.
-    pollSec     = 0.5,        -- Polling interval (seconds) while checking AutoRetainer busy/idle state.
+  AutoRetainer = {              -- Wait for AutoRetainer to be idle before running.
+    enabled     = true,
+    maxWaitSec  = 60,
+    settleSec   = 3,
+    pollSec     = 0.5,
   },
 
-  -- Auto Bell polling loop
-  Auto = {
-    enabled      = true,      -- Master toggle for the auto-run loop that watches the Summoning Bell condition and triggers repricing.
-    debounceSec  = 3.0,       -- Minimum seconds between successive auto runs (prevents rapid re-triggering).
-    postDelaySec = 0.8,       -- Short delay (seconds) after deciding to fire but before starting, to let UI settle.
-    bellSettleSec= 0.5,       -- The Summoning Bell must be continuously “occupied” for at least this long before arming the run.
-    pollSec      = 0.5,       -- Cadence (seconds) of the auto loop’s polling cycle (both for bell state and between loop iterations).
+  Auto = {                      -- Auto polling loop (bell-occupied trigger).
+    enabled      = true,
+    debounceSec  = 3.0,
+    postDelaySec = 0.8,
+    bellSettleSec= 0.5,
+    pollSec      = 0.5,
+  },
+
+  NEW_SALES = {                 -- Add new items for sale
+    enabled      = true,        -- Master toggle for sale.
+
+    -- Define items here: [item#] = { minQty = 99, defaultPrice =  }, --
+    items = {
+      -- Retainer Ventures
+      [44106] = { minQty = 30, defaultPrice = 1000 }, -- Rroneek Chuck
+      [44063] = { minQty = 30, defaultPrice = 1000 }, -- Alpaca Fillet
+      [36256] = { minQty = 30, defaultPrice = 1000 }, -- Egg of Elpis
+      [36255] = { minQty = 30, defaultPrice = 1000 }, -- Ovibos Milk
+      [27774] = { minQty = 30, defaultPrice = 1000 }, -- Vampire Vine Sap
+      -- Dungeons
+      [44012] = { minQty = 15, defaultPrice = 1500 }, -- Black Star
+      [44001] = { minQty = 15, defaultPrice = 2000 }, -- Ra'Kaznar Ingot
+      [44150] = { minQty = 15, defaultPrice = 2000 }, -- Blackseed Cotton Cloth
+      [44033] = { minQty = 15, defaultPrice = 1000 }, -- Thunderyards Silk
+      [44062] = { minQty = 15, defaultPrice = 3500 }, -- Gargantua Leather
+      [46778] = { minQty = 1, defaultPrice = 125000 }, -- Micro Crow
+
+    },
+
+    containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Only used by fallbacks.
+    maxAddsPerRetainer = 20,    -- Safety cap per retainer.
+    stepDelaySec       = 0.25,  -- Delay between new listings.
+
+    -- Global defaults/fallbacks
+    defaultMinQty      = 1,     -- If item.minQty is nil, require at least this many in the stack.
+    defaultPrice       = 1000,  -- If item.defaultPrice is nil and there are no active listings, use this (if not nil).
+    useDefaultIfNoList = true,  -- Only used when there are NO active listings for the item.
   },
 }
 
--- Only reprice these retainers by name. Leave EMPTY to process **all** retainers.
+-- Process all retainers unless you restrict here
 local TARGET_RETAINERS = {
-   "",
-   "",
-  -- "",
+   "retainer1",
+   "retainer2",
+  -- "retainer3",
 }
--- Used by: is_target_retainer() to decide which retainers to include during a run.
--- Behavior per code: if this table has length 0, every retainer on the Retainer List is considered a target.
 
--- Your own retainer names (used to avoid undercutting yourself on market listings)
+-- Your own retainers—don’t undercut these names
 local MY_RETAINERS = {
-  "",
-  "",
-  "",
+   "retainer1",
+   "retainer2",
+  -- "retainer3",
 }
--- Used by: is_my_retainer() and DecideNewPrice(). If the current lowest seller matches any of these names,
--- the script keeps the lowest price instead of undercutting it.
 
 ------------------------------------------------------------
---Node map (single source of truth)
+-- NODE MAP
 ------------------------------------------------------------
 local N = {
   SellList = {
-    count = {1,14,19},           -- "N/20"
+    count = {1,14,19},        -- "N/20"
   },
   Market = {
     firstPrice  = {1,26,4,5},
     firstSeller = {1,26,4,10},
-    footer      = {26},          -- "No items found."
+    footer      = {26},
   },
   RetainerName = function(slot)
     local mid = (slot == 1) and 4 or (41000 + (slot - 1))
@@ -92,9 +116,10 @@ local N = {
 }
 
 ------------------------------------------------------------
---Addon utils
+-- ADDON / UTIL HELPERS
 ------------------------------------------------------------
 local function dbg(msg) if CFG.DEBUG then Dalamud.Log("[Repricer][DBG] "..tostring(msg)) end end
+local function echo(msg) yield("/echo [Repricer] "..tostring(msg)) end
 
 local function addon(name)
   local ok,res = pcall(function() return Addons.GetAddon(name) end)
@@ -111,8 +136,7 @@ local function wait_ready(name, ticks, interval)
   local t=0
   while t<ticks do
     if exists(name) and ready(name) then return true end
-    yield(string.format("/wait %.2f", interval))
-    t=t+1
+    yield(string.format("/wait %.2f", interval)); t=t+1
   end
   return exists(name) and ready(name)
 end
@@ -183,27 +207,6 @@ local function close_panels(list)
   for i=1,#list do close_addon(list[i]) end
 end
 
-function GetTargetName()
-    return (Entity and Entity.Target and Entity.Target.Name) or ""
-end
-
-------------------------------------------------------------
---Parsing & timing helpers
-------------------------------------------------------------
-local function parse_price(text)
-  if not text or text=="" then return nil end
-  local cleaned = string.gsub(text, "[,%s%.]", "")
-  cleaned = string.gsub(cleaned, "[^0-9]", "")
-  if cleaned=="" then return nil end
-  return tonumber(cleaned)
-end
-
-local function parse_ratio_head(text)
-  if not text or text=="" then return 0 end
-  local m = string.match(text, "^(%d+)")
-  return tonumber(m or "0") or 0
-end
-
 local function wait_until(pred, maxSec, stepSec)
   maxSec  = maxSec or 1.5
   stepSec = stepSec or 0.05
@@ -219,12 +222,11 @@ end
 local function now_s() return os.clock() end
 
 ------------------------------------------------------------
---AutoRetainer IPC helpers
+-- AUTORETAINER IPC
 ------------------------------------------------------------
 local function AR_IsAvailable()
   return (IPC and IPC.AutoRetainer and IPC.AutoRetainer.IsBusy) and true or false
 end
-
 local function AR_IsBusy()
   local ok, busy = pcall(function() return IPC.AutoRetainer.IsBusy() end)
   if not ok then return false end
@@ -266,7 +268,7 @@ function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
 end
 
 ------------------------------------------------------------
---Open Summoning Bell -> RetainerList
+-- OPEN SUMMONING BELL -> RETAINER LIST
 ------------------------------------------------------------
 function EnsureRetainerListOpen()
   if exists("RetainerList") and ready("RetainerList") then return true end
@@ -290,7 +292,7 @@ function EnsureRetainerListOpen()
 end
 
 ------------------------------------------------------------
---Item open / search open / fast read / close panels
+-- ITEM OPEN / SEARCH OPEN / FAST READ
 ------------------------------------------------------------
 function OpenItem(slot)
   dbg("OpenItem slot="..tostring(slot))
@@ -348,9 +350,7 @@ function EnsureSearchOpen_AutoFriendly(preWaitTicks, graceReadyTicks, totalWaitT
   end
 
   if not exists("ItemSearchResult") then
-    pcall_addon("RetainerSell", true, 4) -- Compare prices
-  else
-    dbg("EnsureSearchOpen: exists but not ready; no fallback, just waiting.")
+    pcall_addon("RetainerSell", true, 4) -- Compare Prices
   end
 
   local used=t; local budget=math.max(0, totalWaitTicks-used)
@@ -381,7 +381,13 @@ function ReadLowestListing_Fast(maxWaitSec, refreshAfterSec)
 
   while (os.clock() - start) < maxWaitSec do
     local rawPrice = gettext("ItemSearchResult", N.Market.firstPrice)
-    local price    = parse_price(rawPrice)
+    local price    = (function(t)
+      if not t or t=="" then return nil end
+      local cleaned = string.gsub(t, "[,%s%.]", "")
+      cleaned = string.gsub(cleaned, "[^0-9]", "")
+      if cleaned=="" then return nil end
+      return tonumber(cleaned)
+    end)(rawPrice)
     if price ~= nil then
       local seller = gettext("ItemSearchResult", N.Market.firstSeller)
       dbg("firstRow priceCell='"..tostring(rawPrice).."' -> parsed="..tostring(price))
@@ -410,7 +416,7 @@ function CloseItemPanels()
 end
 
 ------------------------------------------------------------
---Pricing
+-- PRICING
 ------------------------------------------------------------
 local function is_my_retainer(name)
   if not name or name=="" then return false end
@@ -429,7 +435,14 @@ function ApplyPrice(newPrice)
     dbg("ApplyPrice: RetainerSell not ready."); return false end
 
   local rawCurrent = gettext("RetainerSell", {6})
-  local current    = parse_price(rawCurrent) or -1
+  local current
+  if rawCurrent and rawCurrent~="" then
+    local cleaned = string.gsub(rawCurrent, "[,%s%.]", "")
+    cleaned = string.gsub(cleaned, "[^0-9]", "")
+    current = tonumber(cleaned) or -1
+  else
+    current = -1
+  end
 
   if not newPrice or newPrice <= 0 then
     dbg("ApplyPrice: invalid newPrice="..tostring(newPrice)); return false end
@@ -451,8 +464,14 @@ function CloseItem()
 end
 
 ------------------------------------------------------------
---Per-retainer batch repricer (Sell List must be open)
+-- REPRICE EXISTING LISTINGS
 ------------------------------------------------------------
+local function parse_ratio_head(text)
+  if not text or text=="" then return 0 end
+  local m = string.match(text, "^(%d+)")
+  return tonumber(m or "0") or 0
+end
+
 local function CountItems()
   local t = gettext("RetainerSellList", N.SellList.count)
   local n = parse_ratio_head(t)
@@ -500,7 +519,7 @@ function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlo
 end
 
 ------------------------------------------------------------
---Retainer list helpers + roundtrip
+-- RETAINER LIST HELPERS / ROUNDTRIP
 ------------------------------------------------------------
 local function is_target_retainer(name)
   if not name or name=="" then return false end
@@ -534,7 +553,7 @@ local function OpenRetainerBySlot(slot)
   pcall_addon("RetainerList", true, 2, slot-1)
   if not wait_ready("SelectString", 80) then
     dbg("OpenRetainerBySlot: SelectString did not appear."); return false end
-  pcall_addon("SelectString", true, 3) -- "Sell items"
+  pcall_addon("SelectString", true, 2)
   if not wait_ready("RetainerSellList", 120) then
     dbg("OpenRetainerBySlot: RetainerSellList failed to open."); return false end
   return true
@@ -547,14 +566,14 @@ local function CloseBackToRetainerList(graceWaitSec)
   close_addon("RetainerSellList", 80, 0.05)
 
   local ticks = math.max(1, math.floor(graceWaitSec / 0.1 + 0.5))
-  for i=1,ticks do
+  for _=1,ticks do
     if exists("SelectString") then break end
     yield("/wait 0.1")
   end
 
   local ok = wait_until(function() return exists("SelectString") and ready("SelectString") end, 5.0, 0.1)
   if ok then
-    for i=1,10 do
+    for _=1,10 do
       pcall_addon("SelectString", true, -1)
       yield("/wait 0.05")
       if not exists("SelectString") then break end
@@ -569,12 +588,9 @@ end
 
 local function CloseRetainerList()
   dbg("CloseRetainerList: begin")
-
-  -- Defensive: make sure nothing upstream is left open
   close_addon("RetainerSellList", 80, 0.05)
   close_addon("SelectString",    80, 0.05)
 
-  -- Now close the Retainer List itself
   local tries = 0
   while exists("RetainerList") and tries < 80 do
     pcall_addon("RetainerList", true, -1)
@@ -591,6 +607,186 @@ local function CloseRetainerList()
   return true
 end
 
+------------------------------------------------------------
+-- SELL NEW ITEMS
+------------------------------------------------------------
+-- Convert helper container to 0..3 or 9.
+local function to_cidx(v)
+  if type(v) == 'number' then
+    if v >= 0 and v <= 3 then return v end
+    return nil
+  end
+
+  local s = tostring(v or "")
+  if s == "" then return nil end
+
+  -- hard block: ignore retainer containers
+  if s:match('^Retainer') or s:match('^Market') then return nil end
+
+  -- "Inventory2" -> 1
+  local n = tonumber((s:gsub('%s+','')):match('[Ii]nventory(%d+)'))
+  if n and n >= 1 and n <= 4 then return n - 1 end
+
+  -- "Inventory1: 0" -> 0 (trailing number often present)
+  local tail = s:match(':%s*(%d+)$')
+  if tail then
+    local tnum = tonumber(tail)
+    if tnum and tnum >= 0 and tnum <= 3 then return tnum end
+  end
+
+  -- Crystal container
+  if s:find("Crystal") then return 9 end
+
+  -- final numeric fallback
+  local asnum = tonumber(s)
+  if asnum and asnum >= 0 and asnum <= 3 then return asnum end
+
+  return nil
+end
+
+local function OpenRetainerSellForSource(containerIndex, slot0)
+  -- Confirmed mapping: opens RetainerSell with max quantity auto-filled
+  local cmd = string.format("/pcall InventoryGrid true 15 %d %d", containerIndex, slot0)
+  dbg("SELL PCALL -> "..cmd)
+  yield(cmd)
+  return wait_ready("RetainerSell", 60)
+end
+
+local function EnsureSearchOpen_Sell()
+  if not (exists("RetainerSell") and ready("RetainerSell")) then
+    dbg("EnsureSearchOpen_Sell: RetainerSell not ready."); return false
+  end
+  if exists("ItemSearchResult") and ready("ItemSearchResult") then return true end
+  for _=1,8 do
+    if exists("ItemSearchResult") and ready("ItemSearchResult") then return true end
+    yield("/wait 0.1")
+  end
+  if not exists("ItemSearchResult") then
+    pcall_addon("RetainerSell", true, 4) -- Compare Prices
+  end
+  for _=1,90 do
+    if exists("ItemSearchResult") and ready("ItemSearchResult") then return true end
+    yield("/wait 0.1")
+  end
+  dbg("EnsureSearchOpen_Sell: ItemSearchResult not ready within timeout.")
+  return false
+end
+
+-- Sell ONE item (by itemId), honoring per-item minQty/defaultPrice with global fallbacks.
+function SellNewItem(itemId, perItemCfg)
+  -- Per-item overrides, then global defaults, then hard fallback.
+  local minQty       = tonumber(perItemCfg and perItemCfg.minQty) or tonumber(CFG.NEW_SALES.defaultMinQty) or 1
+  local defaultPrice = tonumber(perItemCfg and perItemCfg.defaultPrice) or tonumber(CFG.NEW_SALES.defaultPrice)
+
+  while true do
+    local ok,res = pcall(function() return Inventory.GetInventoryItem(itemId) end)
+    if not ok or not res then
+      dbg(("SellNewItem: helper found no stack for %d; stop."):format(itemId))
+      return false
+    end
+
+    -- Extract container index strictly from "Inventory1..4" and Crystal.
+    local cidx = to_cidx(res.Container)
+    if cidx == nil then
+      dbg(("SellNewItem: helper returned non-player container '%s'; stop."):format(tostring(res.Container)))
+      return false
+    end
+
+    local slot0 = tonumber(res.Slot) or 0
+    local qty   = tonumber(res.Quantity or res.Count or res.StackSize or res.Amount or 0) or 0
+
+    -- Respect min quantity threshold.
+    if qty < minQty then
+      dbg(("SellNewItem: qty %d < minQty %d for %d; skip."):format(qty, minQty, itemId))
+      return false
+    end
+
+    -- Open RetainerSell with max-allowed quantity (game caps at 99 per listing).
+    if not OpenRetainerSellForSource(cidx, slot0) then
+      dbg(("SellNewItem: failed to open RetainerSell for cidx=%d slot=%d"):format(cidx, slot0))
+      return false
+    end
+
+    -- Try to get market price; if none, fall back to defaultPrice (if provided).
+    local priceToUse = nil
+    if EnsureSearchOpen_Sell() then
+      local low, seller = ReadLowestListing_Fast(CFG.FAST.maxWaitSec, CFG.FAST.refreshAfterSec)
+      CloseItemPanels()
+      if low then priceToUse = DecideNewPrice(low, seller) end
+    end
+    if not priceToUse then
+      priceToUse = defaultPrice
+      if not priceToUse or priceToUse <= 0 then
+        dbg(("SellNewItem: no market data and no defaultPrice for %d; closing."):format(itemId))
+        CloseItem()
+        return false
+      end
+    end
+
+    -- Apply price & close. If the original stack >99, the remainder stays in player inventory,
+    -- so a subsequent loop iteration may sell another 99 (until helper stops returning player containers).
+    ApplyPrice(priceToUse)
+    CloseItem()
+
+    -- Yield briefly to let inventory update before the next helper call.
+    yield(("/wait %.2f"):format(CFG.NEW_SALES.stepDelaySec or 0.25))
+    -- Loop continues; if a remainder exists in player inventory, helper should return it again.
+  end
+end
+
+-- Capacity-aware wrapper that sells NEW items after repricing, honoring per-item/global thresholds.
+function SellNewItemsOnThisRetainer()
+  if not (CFG.NEW_SALES and CFG.NEW_SALES.enabled) then return end
+  if not (exists("RetainerSellList") and ready("RetainerSellList")) then
+    echo("Open the retainer's Sell List first before selling new items."); return
+  end
+
+  local listedText = gettext("RetainerSellList", N.SellList.count)
+  local listed     = parse_ratio_head(listedText) or 0
+  local free       = math.max(0, 20 - listed)
+  if free <= 0 then
+    echo("Sell list full; skipping new sales.")
+    return
+  end
+
+  local capacity = math.min(free, tonumber(CFG.NEW_SALES.maxAddsPerRetainer) or 100)
+  local added = 0
+  echo(("Adding up to %d new listing(s)."):format(capacity))
+
+  -- Iterate your configured items; each value is a table { minQty=.., defaultPrice=.. }.
+  for itemId, perCfg in pairs(CFG.NEW_SALES.items or {}) do
+    -- Keep trying to sell this item until we hit capacity or the helper stops returning player stacks.
+    while added < capacity do
+      local before = added
+      if not SellNewItem(itemId, perCfg) then
+        -- Could be: below minQty, no player stack, or no price path; move on to next itemId.
+        break
+      end
+      added = added + 1
+      if added >= capacity then break end
+      yield(("/wait %.2f"):format(CFG.NEW_SALES.stepDelaySec or 0.25))
+      -- If nothing was added, break to avoid tight loop.
+      if added == before then break end
+    end
+    if added >= capacity then break end
+  end
+
+  echo("New sales added: "..tostring(added))
+end
+
+------------------------------------------------------------
+-- PER-RETAINER ROUNDTRIP
+------------------------------------------------------------
+local function ProcessThisRetainer()
+  if not (exists("RetainerSellList") and ready("RetainerSellList")) then
+    echo("RetainerSellList not ready; aborting retainer process."); return end
+
+  -- Phase A: reprice existing listings
+  RepriceAllOnThisRetainer()
+
+  -- Phase B: add new items
+  SellNewItemsOnThisRetainer()
+end
 
 function RepriceTargetsOnRetainerList()
   if not EnsureRetainerListOpen() then return end
@@ -607,17 +803,18 @@ function RepriceTargetsOnRetainerList()
   for i,t in ipairs(targets) do
     yield(string.format("/echo [Repricer] [%d/%d] %s (slot %d)", i, #targets, t.name, t.slot))
     if OpenRetainerBySlot(t.slot) then
-      RepriceAllOnThisRetainer(CFG.FAST.maxWaitSec, CFG.FAST.refreshAfterSec)
+      ProcessThisRetainer()
     end
     CloseBackToRetainerList()
     yield("/wait 0.1")
   end
   CloseRetainerList()
   yield("/echo [Repricer] All target retainers processed.")
+  if AutoDutyRunning then yield("/snd run HelioFarm"); AutoDutyRunning = false end
 end
 
 ------------------------------------------------------------
---Auto trigger via polling Svc.Condition[50]
+-- AUTO POLLING LOOP
 ------------------------------------------------------------
 local AUTO_ENABLED       = CFG.Auto.enabled
 local AUTO_DEBOUNCE_SEC  = CFG.Auto.debounceSec
@@ -638,7 +835,7 @@ end
 
 local function IsBellOccupied()
   local ok, val = pcall(function()
-    return Svc and Svc.Condition and Svc.Condition[50]
+    return Svc and Svc.Condition and Svc.Condition[50] and Entity.Target and Entity.Target.Name == "Summoning Bell"
   end)
   if not ok then return false end
   return val and true or false
@@ -647,39 +844,43 @@ end
 function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Repricer] Auto trigger ENABLED")  end
 function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigger DISABLED") end
 
-
 yield("/echo [Repricer] AutoBell polling loop started.")
 while true do
-local occupied = IsBellOccupied()
-local SummoningBell = GetTargetName() == "Summoning Bell"
+  local occupied = IsBellOccupied()
 
-if occupied and SummoningBell then
+  if occupied and AR_IsBusy() then
+    if not IPC.AutoDuty.IsStopped() then
+      AutoDutyRunning = true
+      yield('/snd stop HelioFarm')
+      IPC.AutoDuty.Stop()
+    end
+
     if _bell_since == 0 then _bell_since = now_s() end
 
     if _auto_can_fire() and (now_s() - _bell_since) >= BELL_SETTLE_SEC then
-    _auto_in_progress = true
-    yield("/echo [Repricer] Auto: Bell occupied — preparing to start…")
+      _auto_in_progress = true
+      yield("/echo [Repricer] Auto: Bell occupied — preparing to start…")
 
-    yield(string.format("/wait %.2f", AUTO_POST_DELAY))
+      yield(string.format("/wait %.2f", AUTO_POST_DELAY))
 
-    if not EnsureAutoRetainerIdle() then
+      if not EnsureAutoRetainerIdle() then
         _auto_in_progress = false
         yield("/echo [Repricer] Auto: aborted — AutoRetainer busy.")
-    else
+      else
         RepriceTargetsOnRetainerList()
         _auto_last_fire_t = now_s()
         _auto_in_progress = false
         yield("/echo [Repricer] Auto: run finished.")
-    end
+      end
 
-    repeat
+      repeat
         yield("/wait 0.20")
-    until not IsBellOccupied()
-    _bell_since = 0.0
+      until not IsBellOccupied()
+      _bell_since = 0.0
     end
-else
+  else
     _bell_since = 0.0
-end
+  end
 
-yield(string.format("/wait %.2f", POLL_INTERVAL_SEC))
+  yield(string.format("/wait %.2f", POLL_INTERVAL_SEC))
 end
