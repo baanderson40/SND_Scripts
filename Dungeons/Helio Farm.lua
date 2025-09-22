@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
+version: 0.0.2
 description: |
   Script to run Helio tome dungeons repeatly and auto purchase Phantom relic arcanite items.
 plugin_dependencies:
@@ -43,15 +43,15 @@ CharacterCondition = {
 }
 
 ArcaniteTypes  = {
-    {name = "Arcanite", id = 1},
-    {name = "Waxing Arcanite", id = 0}
+    {name = "Arcanite",         id = 1},
+    {name = "Waxing Arcanite",  id = 0}
 }
 
 DungList = {
-    {name = "The Meso Terminal", id = 1292, amount = 80},
-    {name = "The Underkeep", id = 1266, amount = 80},
+    {name = "The Meso Terminal",        id = 1292, amount = 80},
+    {name = "The Underkeep",            id = 1266, amount = 80},
     {name = "Yuweyawata Field Station", id = 1242, amount = 60},
-    {name = "Alexandria", id = 1199, amount = 50},
+    {name = "Alexandria",               id = 1199, amount = 50},
 }
 
 ArcaniteMap = {}
@@ -95,7 +95,7 @@ Echo, echo  = _echo, _echo
 Log,  log   = _log,  _log
 
 -- =========================================================
--- Timing constants + Sleep 
+-- Timing constants + Sleep
 -- =========================================================
 TIME = {
     POLL    = 0.10,  -- canonical polling step
@@ -323,15 +323,17 @@ end
 -- Branch functions / State machine
 -- =========================================================
 function Ready()
-    if HelioOnHand() >= HelioWanted then
-        log("[Helio Farmer] CharacterState changed to spend helio from ready")
-        State = CharacterState.spendhelio
-    elseif RunsToGo() > 0 and GetZoneId() ~= InnId then
-        log("[Helio Farmer] CharacterState changed to return to base from ready")
-        State = CharacterState.returntobase
-    elseif RunsToGo() > 0 and not IsAutoDutyRunning() then
-        log("[Helio Farmer] CharacterState changed to run auto duty from ready")
-        State = CharacterState.runautoduty
+    if not IsAutoDutyRunning() then
+        if HelioOnHand() >= HelioWanted then
+            log("[Helio Farmer] CharacterState changed to spend helio from ready")
+            State = CharacterState.spendhelio
+        elseif RunsToGo() > 0 and GetZoneId() ~= InnId then
+            log("[Helio Farmer] CharacterState changed to return to base from ready")
+            State = CharacterState.returntobase
+        elseif RunsToGo() > 0 and GetZoneId() == InnId then
+            log("[Helio Farmer] CharacterState changed to run auto duty from ready")
+            State = CharacterState.runautoduty
+        end
     end
 end
 
@@ -346,7 +348,7 @@ function RunAutoDuty()
 end
 
 function SpendHelio()
-    log("[Helio Farmer] Moving to Phantom City")
+    log("[Helio Farmer] Moving to Phantom Village")
     MoveToPhantomCity()
 
     log("[Helio Farmer] Moving to tome exchange npc")
