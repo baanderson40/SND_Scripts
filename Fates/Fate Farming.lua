@@ -2506,12 +2506,14 @@ function DoFate()
     elseif not IsFateActive(CurrentFate.fateObject) or CurrentFate.fateObject.Progress == 100 then
         yield("/vnav stop")
         ClearTarget()
-        if Remaining == 0 then
-          yield("/echo [FATE] Loop finished")
-          StopScript = true
-        elseif Remaining >= 1 then
+        if Remaining ~= -1 then
           Remaining = Remaining - 1
-          yield("/echo [FATE] " .. Remaining .. " loops remaining")
+          if Remaining <= 0 then
+            yield("/echo [FATE] Loop finished")
+            StopScript = true
+          else
+            yield("/echo [FATE] " .. Remaining .. " loops remaining")
+          end
         end
         if not Dalamud.Log("[FATE] HasContintuation check") and CurrentFate.hasContinuation then
             LastFateEndTime = os.clock()
