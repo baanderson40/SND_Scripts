@@ -21,6 +21,8 @@ configs:
   Count:
     description: How many fates to do before stopping
     default: 0
+    min: 0
+    max: 500
   Rotation Plugin:
     description: What roation plugin to use?
     default: "Any"
