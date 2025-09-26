@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.3.3
+version: 1.3.3a
 description: |
   Support via https://ko-fi.com/baanderson40
   Features:
@@ -13,6 +13,8 @@ description: |
 plugin_dependencies:
 - ICE
 - vnavmesh
+- TextAdvance
+- SimpleTweaksPlugin
 configs:
   Jump if stuck:
     description: Makes the character jump if it has been stuck in the same spot for too long.
