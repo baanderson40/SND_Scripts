@@ -71,7 +71,7 @@ configs:
     default: false
   Use Alt Job:
     description: |
-      Enable to use WAR during turning in research for relic. 
+      Enable to use an alternative crafter during turning in research for relic. 
       Doesn't work if the tool is saved to the gear set. 
     default: false
   Relic Jobs:
@@ -89,6 +89,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 1.3.4 Modified the Alt job option to use a different crafting job for turnin.
     -> 1.3.3 Fixed Summoning Bell position in Sinus
     -> 1.3.2 Added localization support -- mostly
     -> 1.3.1 Adjustments for relic turn-in due to failed mission reporting
@@ -714,7 +715,12 @@ function ShouldRelic()
         end
         CurJob = Player.Job
         sleep(.1)
-        if AltJobConfig then yield("/equipjob war") end
+        if AltJobConfig and CurJob.Id ~= 8 then
+            yield("/equipjob " .. Jobs[8].abbr)
+        elseif AltJobConfig and CurJob.Id == 8 then
+            yield("/equipjob " .. Jobs[9].abbr)
+        end
+
         local e = Entity.GetEntityByName(SinusResearchNpc.name)
         if e then
             Dalamud.Log("[Cosmic Helper] Targetting: " .. SinusResearchNpc.name)
