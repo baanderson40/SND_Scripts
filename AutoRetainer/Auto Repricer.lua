@@ -9,6 +9,9 @@ description: |
   Use at your own risk
 triggers:
 - onterritorychange
+configs:
+  GatherBuddy:
+    default: false
 
 [[End Metadata]]
 ]=====]--
@@ -17,84 +20,70 @@ triggers:
 -- CONFIG
 ------------------------------------------------------------
 local CFG = {
-  DEBUG = true,                 -- Enable verbose dbg() logging.
+  DEBUG = true,                 -- Enable verbose dbg() logging to Dalamud log.
 
-  UNDERCUT = 1,                 -- If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
+  UNDERCUT = 1,                 -- Undercut amount. If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
 
-  FAST = {                      -- Market board read timing.
-    maxWaitSec      = 5,        -- Max seconds to read first row of ItemSearchResult.
-    refreshAfterSec = 3,        -- If row not readable after this, trigger one refresh.
+  FAST = {                      -- Market board read timing behavior.
+    maxWaitSec      = 5,        -- Max seconds to wait for first row of ItemSearchResult to become readable.
+    refreshAfterSec = 3,        -- If row not readable after this many seconds, trigger one refresh.
   },
 
   OpenBell = {                  -- Summoning Bell open timing.
-    maxAttempts = 50,
-    targetWait  = 0.5,
-    interactWait= 1.0,
+    maxAttempts = 50,           -- Max attempts to open the Retainer List via targeting/interacting.
+    targetWait  = 0.5,          -- Delay (sec) between /target and /pinteract.
+    interactWait= 1.0,          -- Delay (sec) after /pinteract before checking UI state.
   },
 
   CloseBack = {                 -- When backing out to RetainerList.
-    graceWaitSec = 0.5,
+    graceWaitSec = 0.5,         -- Grace delay after closing before checking RetainerList state.
   },
 
-  AutoRetainer = {              -- Wait for AutoRetainer to be idle before running.
-    enabled     = true,
-    maxWaitSec  = 60,
-    settleSec   = 3,
-    pollSec     = 0.5,
+  AutoRetainer = {              -- Integration with AutoRetainer plugin.
+    enabled     = true,         -- If true, wait for AutoRetainer to be idle before starting loop.
+    maxWaitSec  = 60,           -- Max wait time for AutoRetainer to go idle.
+    settleSec   = 2,            -- Seconds AutoRetainer must stay idle before considered safe.
+    pollSec     = 0.5,          -- Interval for polling AutoRetainer state.
   },
 
-  Auto = {                      -- Auto polling loop (bell-occupied trigger).
-    enabled      = true,
-    debounceSec  = 3.0,
-    postDelaySec = 0.8,
-    bellSettleSec= 0.5,
-    pollSec      = 0.5,
+  Auto = {                      -- Auto polling loop for bell-occupied trigger.
+    enabled      = true,        -- Master toggle for auto polling mode.
+    debounceSec  = 3.0,         -- Debounce time to avoid double-triggers.
+    postDelaySec = 0.8,         -- Delay after finishing before next poll.
+    bellSettleSec= 0.5,         -- Delay after bell interaction before processing.
+    pollSec      = 0.5,         -- Interval for polling bell state.
   },
 
   NEW_SALES = {                 -- Add new items for sale
-    enabled      = true,        -- Master toggle for sale.
+    enabled      = true,        -- Master toggle for all new-sale actions.
 
-    -- Define items here: [item#] = { minQty = 99, defaultPrice =  }, --
-    items = {
-      -- Retainer Ventures
-      [44106] = { minQty = 30, defaultPrice = 1000 }, -- Rroneek Chuck
-      [44063] = { minQty = 30, defaultPrice = 1000 }, -- Alpaca Fillet
-      [36256] = { minQty = 30, defaultPrice = 1000 }, -- Egg of Elpis
-      [36255] = { minQty = 30, defaultPrice = 1000 }, -- Ovibos Milk
-      [27774] = { minQty = 30, defaultPrice = 1000 }, -- Vampire Vine Sap
-      -- Dungeons
-      [44012] = { minQty = 15, defaultPrice = 1500 }, -- Black Star
-      [44001] = { minQty = 15, defaultPrice = 2000 }, -- Ra'Kaznar Ingot
-      [44150] = { minQty = 15, defaultPrice = 2000 }, -- Blackseed Cotton Cloth
-      [44033] = { minQty = 15, defaultPrice = 1000 }, -- Thunderyards Silk
-      [44062] = { minQty = 15, defaultPrice = 3500 }, -- Gargantua Leather
-      [46778] = { minQty = 1, defaultPrice = 125000 }, -- Micro Crow
+    -- Define items here with per-retainer stack limits.
+    items = { --[item#] = { minQty = 99, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, -- 
+},
 
-    },
+    containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
+    maxAddsPerRetainer = 20,    -- Safety cap: don’t add more than this many new listings per retainer.
+    stepDelaySec       = 0.25,  -- Delay between posting each new listing.
 
-    containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Only used by fallbacks.
-    maxAddsPerRetainer = 20,    -- Safety cap per retainer.
-    stepDelaySec       = 0.25,  -- Delay between new listings.
-
-    -- Global defaults/fallbacks
-    defaultMinQty      = 1,     -- If item.minQty is nil, require at least this many in the stack.
-    defaultPrice       = 1000,  -- If item.defaultPrice is nil and there are no active listings, use this (if not nil).
-    useDefaultIfNoList = true,  -- Only used when there are NO active listings for the item.
+    -- Global defaults/fallbacks if not specified per item.
+    defaultMinQty      = 1,     -- Default minimum stack size to be considered saleable.
+    defaultPrice       = 1000,  -- Default fallback price if no listings exist for the item.
+    useDefaultIfNoList = true,  -- If true, use defaultPrice when no active listings are found.
   },
 }
 
 -- Process all retainers unless you restrict here
 local TARGET_RETAINERS = {
-   "retainer1",
-   "retainer2",
-  -- "retainer3",
+   "Retainer1",
+   "Retainer2",
+   "Retainer3",
 }
 
 -- Your own retainers—don’t undercut these names
 local MY_RETAINERS = {
-   "retainer1",
-   "retainer2",
-  -- "retainer3",
+  "Retainer1",
+  "Retainer2",
+  "Retainer3",
 }
 
 ------------------------------------------------------------
@@ -227,10 +216,27 @@ local function now_s() return os.clock() end
 local function AR_IsAvailable()
   return (IPC and IPC.AutoRetainer and IPC.AutoRetainer.IsBusy) and true or false
 end
+
 local function AR_IsBusy()
   local ok, busy = pcall(function() return IPC.AutoRetainer.IsBusy() end)
   if not ok then return false end
   return busy and true or false
+end
+
+local function AD_IsBusy()
+  return IPC and IPC.AutoDuty and IPC.AutoDuty.IsStopped and not IPC.AutoDuty.IsStopped()
+end
+
+local function GBR_AutoOff()
+    yield("/wait 0.1")
+    yield("/gbr auto off")
+    yield("/wait 0.1")
+end
+
+local function GBR_AutoOn()
+    yield("/wait 0.1")
+    yield("/gbr auto on")
+    yield("/wait 0.1")
 end
 
 function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
@@ -265,6 +271,79 @@ function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
     return false
   end
   return true
+end
+
+import("System.Numerics")
+local function DistanceBetweenPositions(pos1, pos2) local distance = Vector3.Distance(pos1, pos2) return distance end
+
+-- Stall Watchdog: abort AutoRetainer if player is "stuck"
+local _stall_last_pos     = nil
+local _stall_last_move_t  = now_s()
+local STALL_TIMEOUT_SEC   = 15.0
+local STALL_EPSILON_DIST  = 0.02
+
+local function AutoRetainerAvailableForThisChara()
+  return IPC and IPC.AutoRetainer
+     and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara
+     and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+end
+
+function CheckPlayerStallAndResetAR()
+  local cs = Svc and Svc.ClientState
+  local lp = cs and cs.LocalPlayer or nil
+  if not lp then return end
+
+  local pos  = lp.Position
+  local terr = cs.TerritoryType or 0
+
+  if not _stall_last_pos then
+    _stall_last_pos    = pos
+    _stall_last_move_t = now_s()
+    return
+  end
+
+  local dist = DistanceBetweenPositions(pos, _stall_last_pos) or 0
+  if dist > STALL_EPSILON_DIST then
+    _stall_last_pos    = pos
+    _stall_last_move_t = now_s()
+    return
+  end
+
+  if (now_s() - _stall_last_move_t) >= STALL_TIMEOUT_SEC
+     and terr ~= 610
+     and AutoRetainerAvailableForThisChara()
+     and IPC and IPC.AutoRetainer and IPC.AutoRetainer.AbortAllTasks then
+    yield("/echo [Repricer] Stall detected (≥5s, terr "..tostring(terr)..") — aborting AutoRetainer tasks.")
+    IPC.AutoRetainer.AbortAllTasks()
+    _stall_last_move_t = now_s()
+    _stall_last_pos    = pos
+  end
+end
+
+local _apartment_interact_timer = 0
+local _apartment_interact_threshold = 5
+
+function InteractWithApartmentEntrance()
+  local target = Player.Entity and Player.Entity.Target
+  if target and target.Name == "Apartment Building Entrance" then
+    if _apartment_interact_timer == 0 then
+      _apartment_interact_timer = now_s()
+    elseif now_s() - _apartment_interact_timer >= _apartment_interact_threshold then
+      local e = Entity.GetEntityByName("Apartment Building Entrance")
+      if e then
+        Dalamud.Log("[SomethingNeedDoing] Targetting: " .. e.Name)
+        e:SetAsTarget()
+      end
+      if Entity.Target and Entity.Target.Name == "Apartment Building Entrance" then
+        Dalamud.Log("[SomethingNeedDoing] Interacting: " .. e.Name)
+        e:Interact()
+        yield('/wait 1')
+        _apartment_interact_timer = 0
+      end
+    end
+  else
+    _apartment_interact_timer = 0 
+  end
 end
 
 ------------------------------------------------------------
@@ -519,96 +598,7 @@ function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlo
 end
 
 ------------------------------------------------------------
--- RETAINER LIST HELPERS / ROUNDTRIP
-------------------------------------------------------------
-local function is_target_retainer(name)
-  if not name or name=="" then return false end
-  if #TARGET_RETAINERS==0 then return true end
-  for i=1,#TARGET_RETAINERS do if name==TARGET_RETAINERS[i] then return true end end
-  return false
-end
-
-local function RetainerNameAt(slot)
-  return gettext("RetainerList", N.RetainerName(slot))
-end
-
-local function ReadRetainerList()
-  if not (exists("RetainerList") and ready("RetainerList")) then
-    yield("/echo [Repricer] Open the Retainer List at a Summoning Bell."); return {} end
-  local res = {}
-  for slot=1,12 do
-    local nm = RetainerNameAt(slot)
-    if nm ~= "" then
-      table.insert(res, {slot=slot, name=nm})
-      dbg(string.format("List slot %d: '%s'", slot, nm))
-    else
-      dbg(string.format("List slot %d: (empty / not purchased)", slot))
-    end
-  end
-  return res
-end
-
-local function OpenRetainerBySlot(slot)
-  dbg("Opening retainer slot "..tostring(slot).."...")
-  pcall_addon("RetainerList", true, 2, slot-1)
-  if not wait_ready("SelectString", 80) then
-    dbg("OpenRetainerBySlot: SelectString did not appear."); return false end
-  pcall_addon("SelectString", true, 2)
-  if not wait_ready("RetainerSellList", 120) then
-    dbg("OpenRetainerBySlot: RetainerSellList failed to open."); return false end
-  return true
-end
-
-local function CloseBackToRetainerList(graceWaitSec)
-  graceWaitSec = graceWaitSec or CFG.CloseBack.graceWaitSec
-  dbg("CloseBackToRetainerList: begin")
-
-  close_addon("RetainerSellList", 80, 0.05)
-
-  local ticks = math.max(1, math.floor(graceWaitSec / 0.1 + 0.5))
-  for _=1,ticks do
-    if exists("SelectString") then break end
-    yield("/wait 0.1")
-  end
-
-  local ok = wait_until(function() return exists("SelectString") and ready("SelectString") end, 5.0, 0.1)
-  if ok then
-    for _=1,10 do
-      pcall_addon("SelectString", true, -1)
-      yield("/wait 0.05")
-      if not exists("SelectString") then break end
-    end
-  end
-
-  if not wait_ready("RetainerList", 200) then
-    dbg("CloseBackToRetainerList: RetainerList not ready after closing."); return false end
-  dbg("CloseBackToRetainerList: done (RetainerList ready)")
-  return true
-end
-
-local function CloseRetainerList()
-  dbg("CloseRetainerList: begin")
-  close_addon("RetainerSellList", 80, 0.05)
-  close_addon("SelectString",    80, 0.05)
-
-  local tries = 0
-  while exists("RetainerList") and tries < 80 do
-    pcall_addon("RetainerList", true, -1)
-    yield("/wait 0.05")
-    tries = tries + 1
-  end
-
-  if exists("RetainerList") then
-    dbg("CloseRetainerList: RetainerList still open after attempts.")
-    return false
-  end
-
-  dbg("CloseRetainerList: done (RetainerList closed).")
-  return true
-end
-
-------------------------------------------------------------
--- SELL NEW ITEMS
+-- SELL NEW ITEMS (consolidated: helpers + quota + runner)
 ------------------------------------------------------------
 -- Convert helper container to 0..3 or 9.
 local function to_cidx(v)
@@ -723,19 +713,55 @@ function SellNewItem(itemId, perItemCfg)
       end
     end
 
-    -- Apply price & close. If the original stack >99, the remainder stays in player inventory,
-    -- so a subsequent loop iteration may sell another 99 (until helper stops returning player containers).
+    -- Apply price & close. Successful listing -> return true so caller counts it.
     ApplyPrice(priceToUse)
     CloseItem()
 
     -- Yield briefly to let inventory update before the next helper call.
     yield(("/wait %.2f"):format(CFG.NEW_SALES.stepDelaySec or 0.25))
-    -- Loop continues; if a remainder exists in player inventory, helper should return it again.
+    return true
   end
 end
 
--- Capacity-aware wrapper that sells NEW items after repricing, honoring per-item/global thresholds.
-function SellNewItemsOnThisRetainer()
+------------------------------------------------------------
+-- PER-RETAINER QUOTA STATE (for new listings)
+------------------------------------------------------------
+-- Tracks current stacks listed per retainer: CURRENT_STACKS[retName][itemId] = count
+local CURRENT_STACKS = {}
+
+-- Build per-retainer stack map using the RetainerMarket indexer
+local function BuildCurrentStacksForRetainer(retName)
+  CURRENT_STACKS[retName] = {}
+  local cont = Inventory.RetainerMarket         -- << key change (no string arg)
+  for i = 0, cont.Count - 1 do
+    local slot = cont[i]                        -- use indexer; includes empty slots
+    local id = tonumber(slot.ItemId)
+    if id and id > 0 then
+      CURRENT_STACKS[retName][id] = (CURRENT_STACKS[retName][id] or 0) + 1
+    end
+  end
+  local n=0 for _ in pairs(CURRENT_STACKS[retName]) do n=n+1 end
+  dbg(("[%s] current stacks snapshot built (unique items=%d)."):format(retName, n))
+end
+
+local function GetQuota(retName, itemId)
+  local cfgItems = (CFG.NEW_SALES and CFG.NEW_SALES.items) or {}
+  local cfg = cfgItems[itemId] or {}
+  local per = (cfg.perRetainer or {})[retName]
+  return tonumber(per) or tonumber(cfg.maxStacks) or math.huge
+end
+
+local function GetCount(retName, itemId)
+  local r = CURRENT_STACKS[retName]; if not r then return 0 end
+  return tonumber(r[itemId]) or 0
+end
+
+local function CanListMore(retName, itemId)
+  return GetCount(retName, itemId) < GetQuota(retName, itemId)
+end
+
+-- Runner: add new items to current retainer respecting capacity & quotas
+function SellNewItemsOnThisRetainer(retName)
   if not (CFG.NEW_SALES and CFG.NEW_SALES.enabled) then return end
   if not (exists("RetainerSellList") and ready("RetainerSellList")) then
     echo("Open the retainer's Sell List first before selling new items."); return
@@ -753,20 +779,26 @@ function SellNewItemsOnThisRetainer()
   local added = 0
   echo(("Adding up to %d new listing(s)."):format(capacity))
 
-  -- Iterate your configured items; each value is a table { minQty=.., defaultPrice=.. }.
   for itemId, perCfg in pairs(CFG.NEW_SALES.items or {}) do
-    -- Keep trying to sell this item until we hit capacity or the helper stops returning player stacks.
     while added < capacity do
-      local before = added
+      if not CanListMore(retName, itemId) then
+        dbg(("[%s] quota reached for %d (%d/%d); skipping further stacks."):format(
+          retName, itemId, GetCount(retName, itemId), GetQuota(retName, itemId)))
+        break
+      end
+
       if not SellNewItem(itemId, perCfg) then
         -- Could be: below minQty, no player stack, or no price path; move on to next itemId.
         break
       end
+
       added = added + 1
+      CURRENT_STACKS[retName][itemId] = GetCount(retName, itemId) + 1
+
       if added >= capacity then break end
+      if not CanListMore(retName, itemId) then break end
+
       yield(("/wait %.2f"):format(CFG.NEW_SALES.stepDelaySec or 0.25))
-      -- If nothing was added, break to avoid tight loop.
-      if added == before then break end
     end
     if added >= capacity then break end
   end
@@ -775,17 +807,109 @@ function SellNewItemsOnThisRetainer()
 end
 
 ------------------------------------------------------------
--- PER-RETAINER ROUNDTRIP
+-- RETAINER LIST HELPERS / ROUNDTRIP
 ------------------------------------------------------------
-local function ProcessThisRetainer()
+local function is_target_retainer(name)
+  if not name or name=="" then return false end
+  if #TARGET_RETAINERS==0 then return true end
+  for i=1,#TARGET_RETAINERS do if name==TARGET_RETAINERS[i] then return true end end
+  return false
+end
+
+local function RetainerNameAt(slot)
+  return gettext("RetainerList", N.RetainerName(slot))
+end
+
+local function ReadRetainerList()
+  if not (exists("RetainerList") and ready("RetainerList")) then
+    yield("/echo [Repricer] Open the Retainer List at a Summoning Bell."); return {} end
+  local res = {}
+  for slot=1,12 do
+    local nm = RetainerNameAt(slot)
+    if nm ~= "" then
+      table.insert(res, {slot=slot, name=nm})
+      dbg(string.format("List slot %d: '%s'", slot, nm))
+    else
+      dbg(string.format("List slot %d: (empty / not purchased)", slot))
+    end
+  end
+  return res
+end
+
+local function OpenRetainerBySlot(slot)
+  dbg("Opening retainer slot "..tostring(slot).."...")
+  pcall_addon("RetainerList", true, 2, slot-1)
+  if not wait_ready("SelectString", 80) then
+    dbg("OpenRetainerBySlot: SelectString did not appear."); return false end
+  pcall_addon("SelectString", true, 2) -- "Sell items"
+  if not wait_ready("RetainerSellList", 120) then
+    dbg("OpenRetainerBySlot: RetainerSellList failed to open."); return false end
+  return true
+end
+
+local function CloseBackToRetainerList(graceWaitSec)
+  graceWaitSec = graceWaitSec or CFG.CloseBack.graceWaitSec
+  dbg("CloseBackToRetainerList: begin")
+
+  close_addon("RetainerSellList", 80, 0.05)
+
+  local ticks = math.max(1, math.floor(graceWaitSec / 0.1 + 0.5))
+  for _=1,ticks do
+    if exists("SelectString") then break end
+    yield("/wait 0.1")
+  end
+
+  local ok = wait_until(function() return exists("SelectString") and ready("SelectString") end, 5.0, 0.1)
+  if ok then
+    for _=1,10 do
+      pcall_addon("SelectString", true, -1)
+      yield("/wait 0.05")
+      if not exists("SelectString") then break end
+    end
+  end
+
+  if not wait_ready("RetainerList", 200) then
+    dbg("CloseBackToRetainerList: RetainerList not ready after closing."); return false end
+  dbg("CloseBackToRetainerList: done (RetainerList ready)")
+  return true
+end
+
+local function CloseRetainerList()
+  dbg("CloseRetainerList: begin")
+  close_addon("RetainerSellList", 80, 0.05)
+  close_addon("SelectString",    80, 0.05)
+
+  local tries = 0
+  while exists("RetainerList") and tries < 80 do
+    pcall_addon("RetainerList", true, -1)
+    yield("/wait 0.05")
+    tries = tries + 1
+  end
+
+  if exists("RetainerList") then
+    dbg("CloseRetainerList: RetainerList still open after attempts.")
+    return false
+  end
+
+  dbg("CloseRetainerList: done (RetainerList closed).")
+  return true
+end
+
+------------------------------------------------------------
+-- PROCESS ONE RETAINER (repricing + new listings)
+------------------------------------------------------------
+local function ProcessThisRetainer(retName)
   if not (exists("RetainerSellList") and ready("RetainerSellList")) then
     echo("RetainerSellList not ready; aborting retainer process."); return end
+
+  -- Snapshot current stacks from RetainerMarket so we can enforce quotas.
+  BuildCurrentStacksForRetainer(retName)
 
   -- Phase A: reprice existing listings
   RepriceAllOnThisRetainer()
 
-  -- Phase B: add new items
-  SellNewItemsOnThisRetainer()
+  -- Phase B: add new items with quota enforcement
+  SellNewItemsOnThisRetainer(retName)
 end
 
 function RepriceTargetsOnRetainerList()
@@ -803,14 +927,19 @@ function RepriceTargetsOnRetainerList()
   for i,t in ipairs(targets) do
     yield(string.format("/echo [Repricer] [%d/%d] %s (slot %d)", i, #targets, t.name, t.slot))
     if OpenRetainerBySlot(t.slot) then
-      ProcessThisRetainer()
+      ProcessThisRetainer(t.name)  -- pass retainer name for quotas
     end
     CloseBackToRetainerList()
     yield("/wait 0.1")
   end
   CloseRetainerList()
   yield("/echo [Repricer] All target retainers processed.")
-  if AutoDutyRunning then yield("/snd run HelioFarm"); AutoDutyRunning = false end
+  if AutoDutyRunning then
+    yield('/snd run HelioFarm')
+    AutoDutyRunning = false
+  end
+
+  if GatherEnabled then GBR_AutoOn() end
 end
 
 ------------------------------------------------------------
@@ -846,41 +975,47 @@ function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigge
 
 yield("/echo [Repricer] AutoBell polling loop started.")
 while true do
-  local occupied = IsBellOccupied()
+    CheckPlayerStallAndResetAR()
+    InteractWithApartmentEntrance()
 
-  if occupied and AR_IsBusy() then
-    if not IPC.AutoDuty.IsStopped() then
-      AutoDutyRunning = true
-      yield('/snd stop HelioFarm')
-      IPC.AutoDuty.Stop()
+    local occupied = IsBellOccupied()
+    GatherEnabled = Config.Get("GatherBuddy")
+
+    if occupied and AR_IsBusy() then
+        if AD_IsBusy() then
+        AutoDutyRunning = true
+        yield('/snd stop HelioFarm')
+        IPC.AutoDuty.Stop()
+        end
+
+    if GatherEnabled then GBR_AutoOff() end
+
+        if _bell_since == 0 then _bell_since = now_s() end
+
+        if _auto_can_fire() and (now_s() - _bell_since) >= BELL_SETTLE_SEC then
+        _auto_in_progress = true
+        yield("/echo [Repricer] Auto: Bell occupied — preparing to start…")
+
+        yield(string.format("/wait %.2f", AUTO_POST_DELAY))
+
+        if not EnsureAutoRetainerIdle() then
+            _auto_in_progress = false
+            yield("/echo [Repricer] Auto: aborted — AutoRetainer busy.")
+        else
+            RepriceTargetsOnRetainerList()
+            _auto_last_fire_t = now_s()
+            _auto_in_progress = false
+            yield("/echo [Repricer] Auto: run finished.")
+        end
+
+        repeat
+            yield("/wait 0.20")
+        until not IsBellOccupied()
+        _bell_since = 0.0
+        end
+    else
+        _bell_since = 0.0
     end
 
-    if _bell_since == 0 then _bell_since = now_s() end
-
-    if _auto_can_fire() and (now_s() - _bell_since) >= BELL_SETTLE_SEC then
-      _auto_in_progress = true
-      yield("/echo [Repricer] Auto: Bell occupied — preparing to start…")
-
-      yield(string.format("/wait %.2f", AUTO_POST_DELAY))
-
-      if not EnsureAutoRetainerIdle() then
-        _auto_in_progress = false
-        yield("/echo [Repricer] Auto: aborted — AutoRetainer busy.")
-      else
-        RepriceTargetsOnRetainerList()
-        _auto_last_fire_t = now_s()
-        _auto_in_progress = false
-        yield("/echo [Repricer] Auto: run finished.")
-      end
-
-      repeat
-        yield("/wait 0.20")
-      until not IsBellOccupied()
-      _bell_since = 0.0
-    end
-  else
-    _bell_since = 0.0
-  end
-
-  yield(string.format("/wait %.2f", POLL_INTERVAL_SEC))
+    yield(string.format("/wait %.2f", POLL_INTERVAL_SEC))
 end
