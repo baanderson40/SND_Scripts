@@ -58,39 +58,7 @@ local CFG = {
     enabled      = true,        -- Master toggle for all new-sale actions.
 
     -- Define items here with per-retainer stack limits.
-    items = { --[item#] = { minQty = 99, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- 
-    -- Retainer Ventures
-    [44106] = { minQty = 90, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Rroneek Chuck
-    [44063] = { minQty = 90, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Alpaca Fillet
-    [36256] = { minQty = 90, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Egg of Elpis
-    [36255] = { minQty = 90, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Ovibos Milk
-    [27774] = { minQty = 90, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Vampire Vine Sap
-
-    -- Prev Week
-    [5350]  = { minQty = 99, defaultPrice = 2500, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Silkworm Coccoon
-    [45972] = { minQty = 99, defaultPrice = 929,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Cochineal Pigment
-
-    -- Week
-    [5118]  = { minQty = 99,  defaultPrice = 709,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Gold Ore
-    [7590]  = { minQty = 99,  defaultPrice = 1995, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Scarlet Sap
-    [45971] = { minQty = 99,  defaultPrice = 730,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Shaaloani Coffee
-    [45968] = { minQty = 99,  defaultPrice = 1397, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Cordia Log
-    [16]    = { minQty = 999, defaultPrice = 541,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Wind Cluster
-    [14]    = { minQty = 999, defaultPrice = 528,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Fire Cluster
-    [19]    = { minQty = 999, defaultPrice = 548,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Water Cluster
-    [13]    = { minQty = 999, defaultPrice = 565,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Water Crystal
-    [8]     = { minQty = 999, defaultPrice = 567,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Fire Crystal
-    [10]    = { minQty = 999, defaultPrice = 553,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Wind Crystal
-    [9]     = { minQty = 999, defaultPrice = 548,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Ice Crystal
-    [3]     = { minQty = 999, defaultPrice = 564,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Ice Shard
-    [2]     = { minQty = 999, defaultPrice = 564,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Fire Shard
-    [12]    = { minQty = 999, defaultPrice = 537,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Lightning Crystal
-    [11]    = { minQty = 999, defaultPrice = 555,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Earth Crystal
-    [7]     = { minQty = 999, defaultPrice = 565,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Water Shard
-    [4]     = { minQty = 999, defaultPrice = 568,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Wind Shard
-    [44039] = { minQty = 99,  defaultPrice = 547,  maxStacks = 1, perRetainer = { ["Flowers'"]=2, ["Power"]=2, ["Stevie"]=2 } }, -- Wind Parsley
-    [44040] = { minQty = 99,  defaultPrice = 779,  maxStacks = 1, perRetainer = { ["Flowers'"]=2, ["Power"]=2, ["Stevie"]=2 } }, -- Kozama'uka Chamomile
-    [12531] = { minQty = 99,  defaultPrice = 799,  maxStacks = 1, perRetainer = { ["Flowers'"]=2, ["Power"]=2, ["Stevie"]=2 } }, -- Mythrite Sand
+    items = { --[item#] = { minQty = 99, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, -- 
 },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
@@ -106,16 +74,16 @@ local CFG = {
 
 -- Process all retainers unless you restrict here
 local TARGET_RETAINERS = {
-   "Flowers'",
-   "Power",
-   "Stevie",
+   "Retainer1",
+   "Retainer2",
+   "Retainer3",
 }
 
 -- Your own retainers—don’t undercut these names
 local MY_RETAINERS = {
-  "Flowers'",
-  "Power",
-  "Stevie",
+  "Retainer1",
+  "Retainer2",
+  "Retainer3",
 }
 
 ------------------------------------------------------------
