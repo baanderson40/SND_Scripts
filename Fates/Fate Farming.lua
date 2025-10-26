@@ -553,6 +553,7 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {
                 { fateName="Corporal Punishment", npcName="Mogpo the Magnificent" },
+                { fateName="End of the Rainbow", npcName="Zenith Dragonling" },
                 },
             fatesWithContinuations = {},
             blacklistedFates= {}
