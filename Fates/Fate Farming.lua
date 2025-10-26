@@ -480,9 +480,16 @@ FatesData = {
         zoneId = 397,
         fatesList= {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="A Dung Deal", npcName="Garrison Knight" },
+                { fateName="Dishonored", npcName="Beaudonet the Blunt" },
+                { fateName="No Ifs, Ands, or Butts", npcName="Convictor Knight" },
+            },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            specialFates = {},
+            blacklistedFates= {
+                "We Fought a Dzu" --long boss fight.
+            }
         }
     },
     {
