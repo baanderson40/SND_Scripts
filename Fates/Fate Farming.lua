@@ -502,7 +502,9 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {},
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "The Fugitive" --Escort
+            }
         }
     },
     {
