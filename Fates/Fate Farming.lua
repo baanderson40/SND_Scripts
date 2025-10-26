@@ -554,6 +554,7 @@ FatesData = {
             otherNpcFates= {
                 { fateName="Corporal Punishment", npcName="Mogpo the Magnificent" },
                 { fateName="End of the Rainbow", npcName="Zenith Dragonling" },
+                { fateName="The Nuts", npcName="Mogoosh the Misbehaving" },
                 },
             fatesWithContinuations = {},
             blacklistedFates= {}
