@@ -554,7 +554,11 @@ FatesData = {
             otherNpcFates= {
                 { fateName="Corporal Punishment", npcName="Mogpo the Magnificent" },
                 { fateName="End of the Rainbow", npcName="Zenith Dragonling" },
+                { fateName="Infamous", npcName="Zenith Dragonling" },
                 { fateName="The Nuts", npcName="Mogoosh the Misbehaving" },
+                { fateName="It's the Moogle, Reinvented", npcName="Mouthing-off Moogle" },
+                { fateName="Coin Toss", npcName="Modish Moogle" },
+                { fateName="Waiting for Fjalar to Stall", npcName="Fjalar" },
                 },
             fatesWithContinuations = {},
             blacklistedFates= {}
