@@ -551,7 +551,9 @@ FatesData = {
         zoneId=400,
         fatesList= {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Corporal Punishment", npcName="Mogpo the Magnificent" },
+                },
             fatesWithContinuations = {},
             blacklistedFates= {}
         }
