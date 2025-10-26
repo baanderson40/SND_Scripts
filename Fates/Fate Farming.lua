@@ -517,7 +517,9 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {},
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "Prey Online", --Noctilucale, too long/hard of a solo fight.
+            }
         }
     },
     {
