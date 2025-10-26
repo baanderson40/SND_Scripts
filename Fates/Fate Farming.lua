@@ -499,11 +499,14 @@ FatesData = {
         zoneName = "The Sea of Clouds",
         zoneId = 401,
         fatesList= {
-            collectionsFates= {},
+            collectionsFates= {
+                { fateName="Obey their Thirst", npcName="Nat'leii Zundu"},
+            },
             otherNpcFates= {},
             fatesWithContinuations = {},
             blacklistedFates= {
-                "The Fugitive" --Escort
+                "The Fugitive", --Escort
+                "On Dangerous Ground", --Groundseater, too long of a solo fight.
             }
         }
     },
