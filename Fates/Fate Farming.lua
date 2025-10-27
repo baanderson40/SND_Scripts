@@ -549,8 +549,13 @@ FatesData = {
         fatesList= {
             collectionsFates= {},
             otherNpcFates= {},
-            fatesWithContinuations = {},
-            blacklistedFates= {}
+            fatesWithContinuations = {
+                { fateName="Metal Gears Rising", npcName="Slicktrix the Gobnanimous" },
+                { fateName="Tome Raider", npcName="Browfix Turnalot" },
+            },
+            blacklistedFates= {
+                "Poroggo Stuck", --Escort quest
+            }
         }
     },
     {
