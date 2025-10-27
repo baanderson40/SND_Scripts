@@ -554,6 +554,7 @@ FatesData = {
                 { fateName="Tome Raider", npcName="Browfix Turnalot" },
             },
             blacklistedFates= {
+                "Metal Gears Revengeance 2", --Boss fight too big for one player
                 "Poroggo Stuck", --Escort quest
             }
         }
