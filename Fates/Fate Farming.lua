@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.4
+version: 3.1.5
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -160,6 +160,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.5    Added HW fate definitions
     -> 3.1.4    Modified VBM/BMR combat commands to use IPCs
     -> 3.1.3    Companion script echo logic changed to true only
     -> 3.1.2    Fix VBM/BMR hold buff rotation setting issue
@@ -480,8 +481,15 @@ FatesData = {
         zoneId = 397,
         fatesList= {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="A Dung Deal", npcName="Garrison Knight" },
+                { fateName="Dishonored", npcName="Beaudonet the Blunt" },
+                { fateName="No Ifs, Ands, or Butts", npcName="Convictor Knight" },
+            },
             fatesWithContinuations = {},
+            specialFates = {
+                "We Fought a Dzu", --Dzu, long boss fight.
+            },
             blacklistedFates= {}
         }
     },
@@ -499,10 +507,19 @@ FatesData = {
         zoneName = "The Sea of Clouds",
         zoneId = 401,
         fatesList= {
-            collectionsFates= {},
-            otherNpcFates= {},
+            collectionsFates= {
+                { fateName="Obey their Thirst", npcName="Nat'leii Zundu"},
+            },
+            otherNpcFates= {
+                { fateName="Mint Condition", npcName="Rose Knight"},
+            },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            specialFates = {
+                "On Dangerous Ground", --Groundseater
+            },
+            blacklistedFates= {
+                "The Fugitive", --Escort
+            }
         }
     },
     {
@@ -511,7 +528,12 @@ FatesData = {
         fatesList= {
             collectionsFates= {},
             otherNpcFates= {},
-            fatesWithContinuations = {},
+            fatesWithContinuations = {
+                { fateName="A Bug's Death", npcName="Verification Node" },
+            },
+            specialFates = {
+                "Prey Online", --Noctilucale
+            },
             blacklistedFates= {}
         }
     },
@@ -519,11 +541,16 @@ FatesData = {
         zoneName = "The Dravanian Forelands",
         zoneId = 398,
         fatesList= {
-            collectionsFates= {},
-            otherNpcFates= {},
+            collectionsFates= {
+                { fateName="Birds of a Feather", npcName="Tailfeather Hunter" },
+            },
+            otherNpcFates= {
+                { fateName="Who's the Moss", npcName="Mossy Peak" },
+            },
             fatesWithContinuations = {},
             specialFates = {
-                "Coeurls Chase Boys Chase Coeurls" --coeurlregina
+                "Coeurls Chase Boys Chase Coeurls", --coeurlregina
+                "Special Tarasque Force ", --Tarasque
             },
             blacklistedFates= {}
         }
@@ -535,8 +562,16 @@ FatesData = {
         fatesList= {
             collectionsFates= {},
             otherNpcFates= {},
-            fatesWithContinuations = {},
-            blacklistedFates= {}
+            fatesWithContinuations = {
+                { fateName="Metal Gears Rising", npcName="Slicktrix the Gobnanimous" },
+                { fateName="Tome Raider", npcName="Browfix Turnalot" },
+            },
+            specialFates = {
+                "Metal Gears Revengeance 2", --Boss fight
+            },
+            blacklistedFates= {
+                "Poroggo Stuck", --Escort quest
+            }
         }
     },
     {
@@ -544,7 +579,15 @@ FatesData = {
         zoneId=400,
         fatesList= {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Corporal Punishment", npcName="Mogpo the Magnificent" },
+                { fateName="End of the Rainbow", npcName="Zenith Dragonling" },
+                { fateName="Infamous", npcName="Zenith Dragonling" },
+                { fateName="The Nuts", npcName="Mogoosh the Misbehaving" },
+                { fateName="It's the Moogle, Reinvented", npcName="Mouthing-off Moogle" },
+                { fateName="Coin Toss", npcName="Modish Moogle" },
+                { fateName="Waiting for Fjalar to Stall", npcName="Fjalar" },
+            },
             fatesWithContinuations = {},
             blacklistedFates= {}
         }
