@@ -586,7 +586,7 @@ FatesData = {
                 { fateName="It's the Moogle, Reinvented", npcName="Mouthing-off Moogle" },
                 { fateName="Coin Toss", npcName="Modish Moogle" },
                 { fateName="Waiting for Fjalar to Stall", npcName="Fjalar" },
-                },
+            },
             fatesWithContinuations = {},
             blacklistedFates= {}
         }
