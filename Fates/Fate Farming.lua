@@ -509,7 +509,9 @@ FatesData = {
             collectionsFates= {
                 { fateName="Obey their Thirst", npcName="Nat'leii Zundu"},
             },
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Mint Condition", npcName="Rose Knight"},
+            },
             fatesWithContinuations = {},
             specialFates = {
                 "On Dangerous Ground", --Groundseater
@@ -525,7 +527,9 @@ FatesData = {
         fatesList= {
             collectionsFates= {},
             otherNpcFates= {},
-            fatesWithContinuations = {},
+            fatesWithContinuations = {
+                { fateName="A Bug's Death", npcName="Verification Node" },
+            },
             specialFates = {
                 "Prey Online", --Noctilucale
             },
