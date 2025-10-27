@@ -486,10 +486,10 @@ FatesData = {
                 { fateName="No Ifs, Ands, or Butts", npcName="Convictor Knight" },
             },
             fatesWithContinuations = {},
-            specialFates = {},
-            blacklistedFates= {
-                "We Fought a Dzu" --long boss fight.
-            }
+            specialFates = {
+                "We Fought a Dzu", --Dzu, long boss fight.
+            },
+            blacklistedFates= {}
         }
     },
     {
@@ -511,9 +511,11 @@ FatesData = {
             },
             otherNpcFates= {},
             fatesWithContinuations = {},
+            specialFates = {
+                "On Dangerous Ground", --Groundseater
+            },
             blacklistedFates= {
                 "The Fugitive", --Escort
-                "On Dangerous Ground", --Groundseater, too long of a solo fight.
             }
         }
     },
@@ -524,20 +526,26 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {},
             fatesWithContinuations = {},
-            blacklistedFates= {
-                "Prey Online", --Noctilucale, too long/hard of a solo fight.
-            }
+            specialFates = {
+                "Prey Online", --Noctilucale
+            },
+            blacklistedFates= {}
         }
     },
     {
         zoneName = "The Dravanian Forelands",
         zoneId = 398,
         fatesList= {
-            collectionsFates= {},
-            otherNpcFates= {},
+            collectionsFates= {
+                { fateName="Birds of a Feather", npcName="Tailfeather Hunter" },
+            },
+            otherNpcFates= {
+                { fateName="Who's the Moss", npcName="Mossy Peak" },
+            },
             fatesWithContinuations = {},
             specialFates = {
-                "Coeurls Chase Boys Chase Coeurls" --coeurlregina
+                "Coeurls Chase Boys Chase Coeurls", --coeurlregina
+                "Special Tarasque Force ", --Tarasque
             },
             blacklistedFates= {}
         }
@@ -553,8 +561,10 @@ FatesData = {
                 { fateName="Metal Gears Rising", npcName="Slicktrix the Gobnanimous" },
                 { fateName="Tome Raider", npcName="Browfix Turnalot" },
             },
+            specialFates = {
+                "Metal Gears Revengeance 2", --Boss fight
+            },
             blacklistedFates= {
-                "Metal Gears Revengeance 2", --Boss fight too big for one player
                 "Poroggo Stuck", --Escort quest
             }
         }
