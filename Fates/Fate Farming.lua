@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.4
+version: 3.1.5
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
