@@ -1,12 +1,13 @@
 --[=====[
 [[SND Metadata]]
 author: 'pot0to || Updated by: Minnu'
-version: 2.0.0
+version: 2.0.1
 description: Multi Zone Farming - Companion script for Fate Farming
 plugin_dependencies:
 - Lifestream
 - vnavmesh
 - TextAdvance
+- Teleporter
 configs:
   FateMacro:
     description: Name of the primary fate macro script.
