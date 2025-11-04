@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: 'pot0to || Updated by: Minnu'
-version: 2.0.0
+version: 2.0.1
 description: Multi Zone Farming - Companion script for Fate Farming
 plugin_dependencies:
 - Lifestream
@@ -28,6 +28,7 @@ then teleport to the next zone and restart the fate farming script.
 Created by: pot0to (https://ko-fi.com/pot0to)
 Updated by: Minnu
 
+    -> 2.0.1    Switching from Teleporter to Lifestream
     -> 2.0.0    Updated for Latest SnD
     -> 1.0.1    Added check for death and unexpected combat
                 First release
@@ -80,7 +81,7 @@ function OnChatMessage()
 end
 
 function TeleportTo(aetheryteName)
-    yield("/tp " .. aetheryteName)
+    yield("/li " .. aetheryteName)
     yield("/wait 1")
     while Svc.Condition[CharacterCondition.casting] do
         yield("/wait 1")
