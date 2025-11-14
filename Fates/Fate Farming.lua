@@ -1043,14 +1043,6 @@ FatesData = {
     }
 }
 
-LANG_JP = {
-    ["Gysahl Greens"] = "ギサールの野菜",
-    ["mount roulette"] = "マウント・ルーレット",
-    ["dismount"] = "降りる",
-    ["repair"] = "修理",
-    ["aetheryte"] = "エーテライト"
-}
-
 local function GetGameLanguage()
     local language = Svc.ClientState.ClientLanguage
 
@@ -1072,19 +1064,62 @@ local function GetGameLanguage()
     end
 end
 
-local function SelectLang(lang)
-    if lang == "JP" then
-        return {
+function GetLangTable(lang)
+    local langTables = {
+        JP = {
             ["Gysahl Greens"] = "ギサールの野菜",
             ["mount roulette"] = "マウント・ルーレット",
             ["dismount"] = "降りる",
             ["repair"] = "修理",
-            ["aetheryte"] = "エーテライト"
+            ["aetheryte"] = "エーテライト",
+            ["Materia Extraction"] = "マテリア精製",
+            ["teleport"] = "テレポ",
+            ["return"] = "デジョン",
+            ["sprint"] = "スプリント"
+        },
+        EN = {
+            ["Gysahl Greens"] = "Gysahl Greens",
+            ["mount roulette"] = "Mount Roulette",
+            ["dismount"] = "dismount",
+            ["repair"] = "Repair",
+            ["aetheryte"] = "aetheryte",
+            ["Materia Extraction"] = "Materia Extraction",
+            ["teleport"] = "Teleport",
+            ["return"] = "Return",
+            ["sprint"] = "Sprint"
+        },
+        DE = {
+            ["Gysahl Greens"] = "Gysahl-Grüne",
+            ["mount roulette"] = "Reittier-Roulette",
+            ["dismount"] = "absteigen",
+            ["repair"] = "Reparatur",
+            ["aetheryte"] = "Ätheryten",
+            ["Materia Extraction"] = "Materia-Extraktion",
+            ["teleport"] = "Teleport",
+            ["return"] = "Rückführung",
+            ["sprint"] = "Sprint"
+        },
+        FR = {
+            ["Gysahl Greens"] = "Légumes gysahl",
+            ["mount roulette"] = "Monture aléatoire",
+            ["dismount"] = "descendre",
+            ["repair"] = "Réparation",
+            ["aetheryte"] = "éthérite",
+            ["Materia Extraction"] = "Matérialisation",
+            ["teleport"] = "Téléportation",
+            ["return"] = "Rapatriement",
+            ["sprint"] = "Sprint"
         }
-    elseif lang == "EN" then
+    }
 
-    end
+    return langTables[lang] or langTables["EN"]
 end
+
+-- 言語設定の初期化
+GameLanguage = GetGameLanguage()
+LANG = GetLangTable(GameLanguage)
+Dalamud.Log("[FATE] Game Language: " .. GameLanguage)
+
 --#endregion Data
 
 --#region Utils
@@ -1733,9 +1768,9 @@ function ChangeInstance()
         end
         return
     end
-    yield("/target " .. LANG_JP["aetheryte"])                                    -- search for nearby aetheryte
-    yield("/wait 1")                                                             -- search for nearby aetheryte
-    if Svc.Targets.Target == nil or GetTargetName() ~= LANG_JP["aetheryte"] then -- if no aetheryte within targeting range, teleport to it
+    yield("/target " .. LANG["aetheryte"])                                    -- search for nearby aetheryte
+    yield("/wait 1")                                                          -- search for nearby aetheryte
+    if Svc.Targets.Target == nil or GetTargetName() ~= LANG["aetheryte"] then -- if no aetheryte within targeting range, teleport to it
         Dalamud.Log("[FATE] Aetheryte not within targetable range")
         local closestAetheryte = nil
         local closestAetheryteDistance = math.maxinteger
@@ -1865,7 +1900,7 @@ function FlyBackToAetheryte()
             Dalamud.Log("[FATE] State Change: Ready")
         else
             if MountToUse == "mount roulette" then
-                yield('/action ' .. LANG_JP["roulette"])
+                yield('/action ' .. LANG["mount roulette"])
             else
                 yield('/mount "' .. MountToUse)
             end
@@ -1914,7 +1949,7 @@ end
 
 function Mount()
     if MountToUse == "mount roulette" then
-        yield('/action ' .. LANG_JP["mount roulette"])
+        yield('/action ' .. LANG["mount roulette"])
     else
         yield('/mount "' .. MountToUse)
     end
@@ -1933,7 +1968,7 @@ end
 
 function Dismount()
     if Svc.Condition[CharacterCondition.flying] then
-        yield("/ac " .. LANG_JP["dismount"])
+        yield("/ac " .. LANG["dismount"])
 
         local now = os.clock()
         if now - LastStuckCheckTime > 1 then
@@ -1952,7 +1987,7 @@ function Dismount()
             LastStuckCheckPosition = Svc.ClientState.LocalPlayer.Position
         end
     elseif Svc.Condition[CharacterCondition.mounted] then
-        yield("/ac " .. LANG_JP["dismount"])
+        yield("/ac " .. LANG["dismount"])
     end
 end
 
@@ -2271,7 +2306,7 @@ function SummonChocobo()
 
     if ShouldSummonChocobo and GetBuddyTimeRemaining() <= ResummonChocoboTimeLeft then
         if Inventory.GetItemCount(4868) > 0 then
-            yield(string.format('/item "%s"', LANG_JP["Gysahl Greens"]))
+            yield(string.format('/item "%s"', LANG["Gysahl Greens"]))
             yield("/wait 3")
             yield('/cac "' .. ChocoboStance .. ' stance"')
         elseif ShouldAutoBuyGysahlGreens then
@@ -2289,7 +2324,7 @@ function AutoBuyGysahlGreens()
         if Addons.GetAddon("Shop").Ready then
             yield("/callback Shop true -1")
         elseif Svc.ClientState.TerritoryType == SelectedZone.zoneId then
-            yield(string.format('/item "%s"', LANG_JP["Gysahl Greens"]))
+            yield(string.format('/item "%s"', LANG["Gysahl Greens"]))
         else
             State = CharacterState.ready
             Dalamud.Log("State Change: ready")
@@ -3103,7 +3138,7 @@ function Repair()
             if needsRepair.Count > 0 then
                 if not Addons.GetAddon("Repair").Ready then
                     Dalamud.Log("[FATE] Opening repair menu...")
-                    yield("/generalaction " .. LANG_JP["repair"])
+                    yield("/generalaction " .. LANG["repair"])
                 end
             else
                 State = CharacterState.ready
@@ -3308,6 +3343,9 @@ FateState                 = {
     Failed    = 7  -- fate failed
 }
 
+-- Language
+Lang                      = GetLangTable(GetGameLanguage())
+
 -- Settings Area
 -- Buffs
 Food                      = Config.Get("Food")
@@ -3369,7 +3407,6 @@ if Forlorns == "none" then
 elseif Forlorns == "small" then
     IgnoreBigForlornOnly = true
 end
-GetGameLanguage()
 -- Rotation plugin
 local configRotationPlugin = string.lower(Config.Get("Rotation Plugin"))
 if configRotationPlugin == "any" then
