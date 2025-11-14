@@ -154,7 +154,7 @@ configs:
     description: Enable to use companison scripts with main Fate Farming script.
     default: false
   Blacklist:
-    description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., "FATE Name 1, FATE Name 2, FATE Name 3")
+    description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., FATE Name 1, FATE Name 2, FATE Name 3)
     default: ""
 [[End Metadata]]
 --]=====]
@@ -1051,6 +1051,40 @@ LANG_JP = {
     ["aetheryte"] = "エーテライト"
 }
 
+local function GetGameLanguage()
+    local language = Svc.ClientState.ClientLanguage
+
+    -- 0 = Japanese
+    -- 1 = English
+    -- 2 = German
+    -- 3 = French
+
+    if language == 0 then
+        return "JP"
+    elseif language == 1 then
+        return "EN"
+    elseif language == 2 then
+        return "DE"
+    elseif language == 3 then
+        return "FR"
+    else
+        return "EN"
+    end
+end
+
+local function SelectLang(lang)
+    if lang == "JP" then
+        return {
+            ["Gysahl Greens"] = "ギサールの野菜",
+            ["mount roulette"] = "マウント・ルーレット",
+            ["dismount"] = "降りる",
+            ["repair"] = "修理",
+            ["aetheryte"] = "エーテライト"
+        }
+    elseif lang == "EN" then
+
+    end
+end
 --#endregion Data
 
 --#region Utils
@@ -3335,7 +3369,7 @@ if Forlorns == "none" then
 elseif Forlorns == "small" then
     IgnoreBigForlornOnly = true
 end
-
+GetGameLanguage()
 -- Rotation plugin
 local configRotationPlugin = string.lower(Config.Get("Rotation Plugin"))
 if configRotationPlugin == "any" then
