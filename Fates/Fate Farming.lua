@@ -153,6 +153,9 @@ configs:
   Companion Script Mode:
     description: Enable to use companison scripts with main Fate Farming script.
     default: false
+  Blacklist:
+    description: Enter the names of FATEs you want to blacklist, separated by commas (e.g., "FATE Name 1, FATE Name 2, FATE Name 3")
+    default: ""
 [[End Metadata]]
 --]=====]
 --[[
