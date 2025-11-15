@@ -1048,8 +1048,8 @@ local function trim(s)
 end
 
 local function includes(array, searchStr)
-    for i in array do
-        if i == searchStr then
+    for _, value in ipairs(array) do
+        if value ~= "" and value == searchStr then
             return true
         end
     end
@@ -1070,30 +1070,9 @@ local function split(str, ts)
     return t
 end
 
-function GetGameLanguage()
-    local language = Svc.ClientState.ClientLanguage
-
-    -- 0 = Japanese
-    -- 1 = English
-    -- 2 = German
-    -- 3 = French
-
-    if language == 0 then
-        return "JP"
-    elseif language == 1 then
-        return "EN"
-    elseif language == 2 then
-        return "DE"
-    elseif language == 3 then
-        return "FR"
-    else
-        return "EN"
-    end
-end
-
 function GetLangTable(lang)
     local langTables = {
-        JP = {
+        Japanese = {
             ["Gysahl Greens"] = "ギサールの野菜",
             ["mount roulette"] = "マウント・ルーレット",
             ["dismount"] = "降りる",
@@ -1104,7 +1083,7 @@ function GetLangTable(lang)
             ["return"] = "デジョン",
             ["sprint"] = "スプリント"
         },
-        EN = {
+        English  = {
             ["Gysahl Greens"] = "Gysahl Greens",
             ["mount roulette"] = "Mount Roulette",
             ["dismount"] = "dismount",
@@ -1115,7 +1094,7 @@ function GetLangTable(lang)
             ["return"] = "Return",
             ["sprint"] = "Sprint"
         },
-        DE = {
+        German   = {
             ["Gysahl Greens"] = "Gysahl-Grüne",
             ["mount roulette"] = "Reittier-Roulette",
             ["dismount"] = "absteigen",
@@ -1126,7 +1105,7 @@ function GetLangTable(lang)
             ["return"] = "Rückführung",
             ["sprint"] = "Sprint"
         },
-        FR = {
+        French   = {
             ["Gysahl Greens"] = "Légumes gysahl",
             ["mount roulette"] = "Monture aléatoire",
             ["dismount"] = "descendre",
@@ -1143,9 +1122,8 @@ function GetLangTable(lang)
 end
 
 -- 言語設定の初期化
-GameLanguage = GetGameLanguage()
+GameLanguage = Svc.ClientState.ClientLanguage:ToString()
 LANG = GetLangTable(GameLanguage)
-Dalamud.Log("[FATE] Game Language: " .. GameLanguage)
 
 --#endregion Data
 
@@ -1289,8 +1267,8 @@ function ShouldSkipCollectionsFate(fateName)
 end
 
 function IsUserInputBlackListedFate(fateName)
-    local array = split(fateName, ',')
-    return includes(array, fateName) or ShouldSkipCollectionsFate()
+    local array = split(Config.Get("Blacklist"), ',')
+    return includes(array, fateName)
 end
 
 function IsLiteralBlackList(fateName)
@@ -1302,8 +1280,8 @@ function IsLiteralBlackList(fateName)
     return false
 end
 
-function IsBlacklistedFate(fateName, f)
-    return f(fateName) or ShouldSkipCollectionsFate(fateName)
+function IsBlacklistedFate(fateName, checkBlackListFn)
+    return checkBlackListFn(fateName) or ShouldSkipCollectionsFate(fateName)
 end
 
 function GetFateNpcName(fateName)
@@ -2107,6 +2085,9 @@ function MoveToFate()
         State = CharacterState.ready
         Dalamud.Log("[FATE] State Change: Ready")
         return
+    elseif CurrentFate ~= nil and CurrentFate.fateId == 0 then
+        Dalamud.Log("[FATE] CurrentFate is set to 0, selecting new Fate.")
+        CurrentFate = nil
     end
 
     NextFate = SelectNextFate()
@@ -3025,7 +3006,6 @@ function ExecuteBicolorExchange()
         elseif GetDistanceToPoint(SelectedBicolorExchangeData.position) > 5 then
             Dalamud.Log("Distance to shopkeep is too far. Walking there.")
             if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
-                Dalamud.Log("Path not running")
                 IPC.vnavmesh.PathfindAndMoveTo(SelectedBicolorExchangeData.position, false)
             end
         else
@@ -3053,7 +3033,6 @@ function ExecuteBicolorExchange()
 
         State = CharacterState.ready
         Dalamud.Log("[FATE] State Change: Ready")
-        return
     end
 end
 
@@ -3200,7 +3179,7 @@ function Repair()
             elseif Addons.GetAddon("TelepotTown").Ready then
                 yield("/callback TelepotTown false -1")
             elseif GetDistanceToPoint(darkMatterVendor.position) > 5 then
-                if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+                if not (IPC.vnavmesh.IsRunning() or IPC.vnavmesh.PathfindInProgress()) then
                     IPC.vnavmesh.PathfindAndMoveTo(darkMatterVendor.position, false)
                 end
             else
@@ -3383,8 +3362,9 @@ FateState                 = {
     Failed    = 7  -- fate failed
 }
 
--- Language
-Lang                      = GetLangTable(GetGameLanguage())
+-- 言語設定の初期化
+GameLanguage              = Svc.ClientState.ClientLanguage:ToString()
+LANG                      = GetLangTable(GameLanguage)
 
 -- Settings Area
 -- Buffs
@@ -3421,7 +3401,7 @@ RangedDist                       = Config.Get("Max ranged distance")
 HitboxBuffer                     = 0.5
 --ClassForBossFates                = ""            --If you want to use a different class for boss fates, set this to the 3 letter abbreviation
 
--- Variable initialzization
+-- Variable initialzation
 StopScript                       = false
 DidFate                          = false
 GemAnnouncementLock              = false
