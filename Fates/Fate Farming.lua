@@ -1043,7 +1043,34 @@ FatesData = {
     }
 }
 
-local function GetGameLanguage()
+local function trim(s)
+    return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+end
+
+local function includes(array, searchStr)
+    for i in array do
+        if i == searchStr then
+            return true
+        end
+    end
+    return false
+end
+
+local function split(str, ts)
+    -- 引数がないときは空tableを返す
+    if ts == nil then return {} end
+
+    local t = {};
+    local i = 1
+    for s in string.gmatch(str, "([^" .. ts .. "]+)") do
+        t[i] = s
+        i = i + 1
+    end
+
+    return t
+end
+
+function GetGameLanguage()
     local language = Svc.ClientState.ClientLanguage
 
     -- 0 = Japanese
@@ -1250,12 +1277,7 @@ function IsSpecialFate(fateName)
     end
 end
 
-function IsBlacklistedFate(fateName)
-    for i, blacklistedFate in ipairs(SelectedZone.fatesList.blacklistedFates) do
-        if blacklistedFate == fateName then
-            return true
-        end
-    end
+function ShouldSkipCollectionsFate(fateName)
     if not JoinCollectionsFates then
         for i, collectionsFate in ipairs(SelectedZone.fatesList.collectionsFates) do
             if collectionsFate.fateName == fateName then
@@ -1264,6 +1286,24 @@ function IsBlacklistedFate(fateName)
         end
     end
     return false
+end
+
+function IsUserInputBlackListedFate(fateName)
+    local array = split(fateName, ',')
+    return includes(array, fateName) or ShouldSkipCollectionsFate()
+end
+
+function IsLiteralBlackList(fateName)
+    for i, blacklistedFate in ipairs(SelectedZone.fatesList.blacklistedFates) do
+        if blacklistedFate == fateName then
+            return true
+        end
+    end
+    return false
+end
+
+function IsBlacklistedFate(fateName, f)
+    return f(fateName) or ShouldSkipCollectionsFate(fateName)
 end
 
 function GetFateNpcName(fateName)
@@ -1368,7 +1408,7 @@ function BuildFateTable(fateObj)
     fateTable.isBossFate = IsBossFate(fateTable.fateObject)
     fateTable.isOtherNpcFate = IsOtherNpcFate(fateTable.fateName)
     fateTable.isSpecialFate = IsSpecialFate(fateTable.fateName)
-    fateTable.isBlacklistedFate = IsBlacklistedFate(fateTable.fateName)
+    fateTable.isBlacklistedFate = IsBlacklistedFate(fateTable.fateName, IsUserInputBlackListedFate)
 
     fateTable.continuationIsBoss = false
     fateTable.hasContinuation = false
