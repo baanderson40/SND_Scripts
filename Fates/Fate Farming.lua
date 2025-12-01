@@ -415,7 +415,7 @@ FatesData = {
         }
     },
     {
-        zoneName = "Upper La Noscea",
+        zoneName = "Eastern La Noscea",
         zoneId = 137,
         fatesList = {
             collectionsFates= {},
