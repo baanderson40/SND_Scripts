@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.5
+version: 3.1.5a
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -160,6 +160,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+           a    Added "It's Not Lupus" block
     -> 3.1.5    Added HW fate definitions
     -> 3.1.4    Modified VBM/BMR combat commands to use IPCs
     -> 3.1.3    Companion script echo logic changed to true only
@@ -413,6 +414,20 @@ FatesData = {
             blacklistedFates= {}
         }
     },
+    {
+        zoneName = "Upper La Noscea",
+        zoneId = 137,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {},
+            specialFates = {
+                "It's Not Lupus", --Boss fight
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {}
+        }
+    },
+
     {
         zoneName = "Central Thanalan",
         zoneId = 141,
