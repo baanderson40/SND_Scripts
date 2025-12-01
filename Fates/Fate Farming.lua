@@ -465,6 +465,18 @@ FatesData = {
         flying = false
     },
     {
+        zoneName = "Western Thanalan",
+        zoneId = 140,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {
+                { fateName="The Cores" , npcName="Diligent Worker" }
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {}
+        },
+    },
+    {
         zoneName = "Outer La Noscea",
         zoneId = 180,
         fatesList = {
