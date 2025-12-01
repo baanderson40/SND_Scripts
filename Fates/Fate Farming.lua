@@ -414,6 +414,18 @@ FatesData = {
         }
     },
     {
+        zoneName = "Upper La Noscea",
+        zoneId = 139,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {
+                { fateName="Peeping Ja", npcName="Storm Sergeant" }
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {}
+        }
+    },                          
+    {
         zoneName = "Central Thanalan",
         zoneId = 141,
         fatesList = {
