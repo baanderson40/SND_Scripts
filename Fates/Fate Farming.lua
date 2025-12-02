@@ -396,6 +396,7 @@ FatesData = {
                 { fateName="Thwack-a-Mole" , npcName="Troubled Tiller" },
                 { fateName="Yellow-bellied Greenbacks", npcName="Yellowjacket Drill Sergeant"},
                 { fateName="The Orange Boxes", npcName="Farmer in Need" },
+                { fateName="A Mad, Mad, Mad Sergeant", npcName="Storm Sergeant Doenfarr" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
