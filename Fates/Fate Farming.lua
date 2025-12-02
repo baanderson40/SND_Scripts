@@ -432,7 +432,9 @@ FatesData = {
             collectionsFates= {
                 { fateName="If I only Had a Soul", npcName="Nameless Conjurer" },
             },
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="The Lindwurm Has Turned", npcName="Greatloam Farmer" },
+            },
             fatesWithContinuations = {},
             blacklistedFates= {},
         }
