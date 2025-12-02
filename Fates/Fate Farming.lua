@@ -394,7 +394,7 @@ FatesData = {
             otherNpcFates= {
                 { fateName="Thwack-a-Mole" , npcName="Troubled Tiller" },
                 { fateName="Yellow-bellied Greenbacks", npcName="Yellowjacket Drill Sergeant"},
-                { fateName="The Orange Boxes", npcName="Farmer in Need" }
+                { fateName="The Orange Boxes", npcName="Farmer in Need" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -407,7 +407,7 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {
                 { fateName="Away in a Bilge Hold" , npcName="Yellowjacket Veteran" },
-                { fateName="Fight the Flower", npcName="Furious Farmer" }
+                { fateName="Fight the Flower", npcName="Furious Farmer" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -419,7 +419,7 @@ FatesData = {
         fatesList = {
             collectionsFates= {},
             otherNpcFates= {
-                { fateName="Peeping Ja", npcName="Storm Sergeant" }
+                { fateName="Peeping Ja", npcName="Storm Sergeant" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -449,7 +449,7 @@ FatesData = {
             otherNpcFates= {
                 { fateName="A Few Arrows Short of a Quiver" , npcName="Crestfallen Merchant" },
                 { fateName="Wrecked Rats", npcName="Coffer & Coffin Heavy" },
-                { fateName="Something to Prove", npcName="Cowardly Challenger" }
+                { fateName="Something to Prove", npcName="Cowardly Challenger" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -461,7 +461,7 @@ FatesData = {
         fatesList = {
             collectionsFates= {},
             otherNpcFates= {
-                { fateName="Attack on Highbridge: Denouement" , npcName="Brass Blade" }
+                { fateName="Attack on Highbridge: Denouement" , npcName="Brass Blade" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -484,7 +484,7 @@ FatesData = {
         fatesList = {
             collectionsFates= {},
             otherNpcFates= {
-                { fateName="The Cores" , npcName="Diligent Worker" }
+                { fateName="The Cores" , npcName="Diligent Worker" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -495,9 +495,13 @@ FatesData = {
         zoneId = 180,
         fatesList = {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Overlooking the Obvious", npcName="Cowering Coachman" },
+            },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "Schism", -- Doesn't automate well 
+            },
         },
         flying = false
     },
@@ -509,7 +513,7 @@ FatesData = {
             otherNpcFates= {},
             fatesWithContinuations = {},
             specialFates = {
-                "He Taketh It with His Eyes" --behemoth
+                "He Taketh It with His Eyes", --behemoth
             },
             blacklistedFates= {}
         }
