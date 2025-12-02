@@ -424,7 +424,19 @@ FatesData = {
             fatesWithContinuations = {},
             blacklistedFates= {}
         }
-    },                          
+    },
+    {
+        zoneName = "Central Shroud",
+        zoneId = 148,
+        fatesList = {
+            collectionsFates= {
+                { fateName="If I only Had a Soul", npcName="Nameless Conjurer" },
+            },
+            otherNpcFates= {},
+            fatesWithContinuations = {},
+            blacklistedFates= {},
+        }
+    },
     {
         zoneName = "Central Thanalan",
         zoneId = 141,
