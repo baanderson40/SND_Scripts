@@ -427,6 +427,19 @@ FatesData = {
         }
     },
     {
+        zoneName = "Eastern La Noscea",
+        zoneId = 137,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {},
+            specialFates = {
+                "It's Not Lupus", --Boss fight
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {}
+        }
+    },
+    {
         zoneName = "Central Shroud",
         zoneId = 148,
         fatesList = {
