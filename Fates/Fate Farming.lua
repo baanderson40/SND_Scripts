@@ -410,6 +410,7 @@ FatesData = {
                 { fateName="Away in a Bilge Hold" , npcName="Yellowjacket Veteran" },
                 { fateName="In the Name of Love", npcName="Yellowjacket" },
                 { fateName="Fight the Flower", npcName="Furious Farmer" },
+                { fateName="Man of the Flour", npcName="Miller in Need" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
