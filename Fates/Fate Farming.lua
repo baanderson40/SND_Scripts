@@ -527,10 +527,11 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {
                 { fateName="Attack on Highbridge: Denouement" , npcName="Brass Blade" },
-                { fateName="Bad Camp", npcName="Flame Scout" },
             },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "Bad Camp", -- via Flame Scout, automation can't handle simple obstacles
+            }
         }
     },
     {
