@@ -503,9 +503,12 @@ FatesData = {
             otherNpcFates= {
                 { fateName="The Cores" , npcName="Diligent Worker" },
                 { fateName="Deface the Facts" , npcName="Worried Worker" },
+                { fateName="" , npcName="" },
             },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "Tripped Up by the Fruit of Another", -- Escort quest, Mauled Merchant
+            }
         },
     },
     {
