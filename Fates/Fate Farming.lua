@@ -502,6 +502,7 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {
                 { fateName="The Cores" , npcName="Diligent Worker" },
+                { fateName="Deface the Facts" , npcName="Worried Worker" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
