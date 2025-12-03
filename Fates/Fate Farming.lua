@@ -543,7 +543,6 @@ FatesData = {
             otherNpcFates= {
                 { fateName="The Cores" , npcName="Diligent Worker" },
                 { fateName="Deface the Facts" , npcName="Worried Worker" },
-                { fateName="" , npcName="" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {
