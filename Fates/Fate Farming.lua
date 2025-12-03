@@ -498,6 +498,7 @@ FatesData = {
                 { fateName="A Few Arrows Short of a Quiver" , npcName="Crestfallen Merchant" },
                 { fateName="Wrecked Rats", npcName="Coffer & Coffin Heavy" },
                 { fateName="Something to Prove", npcName="Cowardly Challenger" },
+                { fateName="Orobon Part Two: The Spawning", npcName="Tiny Chris" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -510,6 +511,7 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {
                 { fateName="Attack on Highbridge: Denouement" , npcName="Brass Blade" },
+                { fateName="Bad Camp", npcName="Flame Scout" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -520,9 +522,16 @@ FatesData = {
         zoneId = 146,
         fatesList = {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Soul Man", npcName="Ul'dahn Naturalist" },
+                { fateName="Call Me, Mayhaps", npcName="Flame Recruit" },
+                { fateName="Diamond in the Rough", npcName="Flame Scout" },
+            },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "From Point A", -- Escort, Stone Torch
+                "Run Like a Flame",  -- Escort, Flame Scout
+            }
         },
         flying = false
     },
