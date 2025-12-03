@@ -526,11 +526,11 @@ FatesData = {
         fatesList = {
             collectionsFates= {},
             otherNpcFates= {
-                { fateName="Attack on Highbridge: Denouement" , npcName="Brass Blade" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {
                 "Bad Camp", -- via Flame Scout, automation can't handle simple obstacles
+                "Attack on Highbridge: Denouement", -- Via Brass Blade, Won't navigate through the mobs to the boss, 
             }
         }
     },
