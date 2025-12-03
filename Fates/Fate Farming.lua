@@ -443,6 +443,35 @@ FatesData = {
         }
     },
     {
+        zoneName = "East Shroud",
+        zoneId = 152,
+        fatesList = {
+            collectionsFates= {
+            },
+            otherNpcFates= {
+                { fateName="The Enemy of My Enemy", npcName="Mianne Thousandmalm" },
+                { fateName="Collecting Keepsakes", npcName="Phanaxio of the New Leaf" },
+                { fateName="What Have You Done for Mead Lately", npcName="Mead-porting Midlander" },
+                { fateName="Now I See Bees I Won", npcName="Bothered Beekeeper" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {},
+        }
+    },
+    {
+        zoneName = "North Shroud",
+        zoneId = 154,
+        fatesList = {
+            collectionsFates= {
+                { fateName="That Which Binds Us", npcName="Shifty-eyed Prospector" },
+            },
+            otherNpcFates= {
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {},
+        }
+    },
+    {
         zoneName = "Central Shroud",
         zoneId = 148,
         fatesList = {
@@ -451,6 +480,8 @@ FatesData = {
             },
             otherNpcFates= {
                 { fateName="The Lindwurm Has Turned", npcName="Greatloam Farmer" },
+                { fateName="Training Day", npcName="Serpent Recruit" },
+                { fateName="What's Your Poison", npcName="Wood Wailer Lance" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {},
