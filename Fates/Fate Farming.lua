@@ -403,6 +403,22 @@ FatesData = {
         }
     },
     {
+        zoneName = "Western La Noscea",
+        zoneId = 138,
+        fatesList = {
+            collectionsFates= {
+                { fateName="Iron Contra Affair" , npcName="Yellowjacket Captain" },
+            },
+            otherNpcFates= {
+                { fateName="Between Aurochs" , npcName="Hysterical Hawker" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {
+                "Absolutely, Positively", -- Escort quest, Storm Courier
+            }
+        }
+    },
+    {
         zoneName = "Lower La Noscea",
         zoneId = 135,
         fatesList = {
