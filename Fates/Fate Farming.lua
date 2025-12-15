@@ -252,8 +252,6 @@ This Plugins are Optional and not needed unless you have it enabled in the setti
 ]]
 
 import("System.Numerics")
-
-
 --#region Data
 
 CharacterCondition = {
@@ -313,81 +311,7 @@ ClassList =
     pct = { classId = 42, className = "Pictomancer", isMelee = false, isTank = false }
 }
 
-BicolorExchangeData =
-{
-    {
-        shopKeepName = "Gadfrid",
-        zoneName = "Old Sharlayan",
-        zoneId = 962,
-        aetheryteName = "Old Sharlayan",
-        position = Vector3(78, 5, -37),
-        shopItems =
-        {
-            { itemName = "Bicolor Gemstone Voucher", itemIndex = 8,  price = 100 },
-            { itemName = "Ovibos Milk",              itemIndex = 9,  price = 2 },
-            { itemName = "Hamsa Tenderloin",         itemIndex = 10, price = 2 },
-            { itemName = "Yakow Chuck",              itemIndex = 11, price = 2 },
-            { itemName = "Bird of Elpis Breast",     itemIndex = 12, price = 2 },
-            { itemName = "Egg of Elpis",             itemIndex = 13, price = 2 },
-            { itemName = "Amra",                     itemIndex = 14, price = 2 },
-            { itemName = "Dynamis Crystal",          itemIndex = 15, price = 2 },
-            { itemName = "Almasty Fur",              itemIndex = 16, price = 2 },
-            { itemName = "Gaja Hide",                itemIndex = 17, price = 2 },
-            { itemName = "Luncheon Toad Skin",       itemIndex = 18, price = 2 },
-            { itemName = "Saiga Hide",               itemIndex = 19, price = 2 },
-            { itemName = "Kumbhira Skin",            itemIndex = 20, price = 2 },
-            { itemName = "Ophiotauros Hide",         itemIndex = 21, price = 2 },
-            { itemName = "Berkanan Sap",             itemIndex = 22, price = 2 },
-            { itemName = "Dynamite Ash",             itemIndex = 23, price = 2 },
-            { itemName = "Lunatender Blossom",       itemIndex = 24, price = 2 },
-            { itemName = "Mousse Flesh",             itemIndex = 25, price = 2 },
-            { itemName = "Petalouda Scales",         itemIndex = 26, price = 2 },
-        }
-    },
-    {
-        shopKeepName = "Beryl",
-        zoneName = "Solution Nine",
-        zoneId = 1186,
-        aetheryteName = "Solution Nine",
-        position = Vector3(-198.47, 0.92, -6.95),
-        miniAethernet = {
-            name = "Nexus Arcade",
-            position = Vector3(-157.74, 0.29, 17.43)
-        },
-        shopItems =
-        {
-            { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 6,  price = 100 },
-            { itemName = "Alpaca Fillet",                   itemIndex = 7,  price = 3 },
-            { itemName = "Swampmonk Thigh",                 itemIndex = 8,  price = 3 },
-            { itemName = "Rroneek Chuck",                   itemIndex = 9,  price = 3 },
-            { itemName = "Megamaguey Pineapple",            itemIndex = 10, price = 3 },
-            { itemName = "Branchbearer Fruit",              itemIndex = 11, price = 3 },
-            { itemName = "Nopalitender Tuna",               itemIndex = 12, price = 3 },
-            { itemName = "Rroneek Fleece",                  itemIndex = 13, price = 3 },
-            { itemName = "Silver Lobo Hide",                itemIndex = 14, price = 3 },
-            { itemName = "Hammerhead Crocodile Skin",       itemIndex = 15, price = 3 },
-            { itemName = "Br'aax Hide",                     itemIndex = 16, price = 3 },
-            { itemName = "Gomphotherium Skin",              itemIndex = 17, price = 3 },
-            { itemName = "Gargantua Hide",                  itemIndex = 18, price = 3 },
-            { itemName = "Ty'aitya Wingblade",              itemIndex = 19, price = 3 },
-            { itemName = "Poison Frog Secretions",          itemIndex = 20, price = 3 },
-            { itemName = "Alexandrian Axe Beak Wing",       itemIndex = 21, price = 3 },
-            { itemName = "Lesser Apollyon Shell",           itemIndex = 22, price = 3 },
-            { itemName = "Tumbleclaw Weeds",                itemIndex = 23, price = 3 },
-        }
-    },
-    {
-        shopKeepName = "Rral Wuruq",
-        zoneName = "Yak T'el",
-        zoneId = 1189,
-        aetheryteName = "Iq Br'aax",
-        position = Vector3(-381, 23, -436),
-        shopItems =
-        {
-            { itemName = "Ut'ohmu Siderite", itemIndex = 8, price = 600 }
-        }
-    }
-}
+
 
 FatesData = {
     {
@@ -1043,9 +967,16 @@ FatesData = {
     }
 }
 
-local function trim(s)
-    return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+local function find(array, f)
+    for _, v in ipairs(array) do
+        if ~f(v) then
+            return v
+        end
+    end
+    return nil
 end
+
+
 
 local function includes(array, searchStr)
     for _, value in ipairs(array) do
@@ -1073,57 +1004,64 @@ end
 function GetLangTable(lang)
     local langTables = {
         Japanese = {
-            ["Gysahl Greens"] = "ギサールの野菜",
-            ["mount roulette"] = "マウント・ルーレット",
-            ["dismount"] = "降りる",
-            ["repair"] = "修理",
-            ["aetheryte"] = "エーテライト",
-            ["Materia Extraction"] = "マテリア精製",
-            ["teleport"] = "テレポ",
-            ["return"] = "デジョン",
-            ["sprint"] = "スプリント"
+            actions = {
+                ["Gysahl Greens"] = "ギサールの野菜",
+                ["mount roulette"] = "マウント・ルーレット",
+                ["dismount"] = "降りる",
+                ["repair"] = "修理",
+                ["aetheryte"] = "エーテライト",
+                ["Materia Extraction"] = "マテリア精製",
+                ["teleport"] = "テレポート",
+                ["sprint"] = "スプリント"
+            },
+            bitColorExchangeData = {
+                {
+                    shopKeepName = "広域交易商 ガドフリッド",
+                    zoneName = "オールド・シャーレアン",
+                    zoneId = 962,
+                    aetheryteName = "オールド・シャーレアン",
+                    position = Vector3(78, 5, -37),
+                    shopItems = {
+                        ["Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品書", itemIndex = 8, price = 100 },
+                        ["Turali Bicolor Gemstone Voucher"] = { itemName = "バイカラージェム納品書", itemIndex = 9, price = 100 },
+                    }
+                }
+            }
         },
-        English  = {
-            ["Gysahl Greens"] = "Gysahl Greens",
-            ["mount roulette"] = "Mount Roulette",
-            ["dismount"] = "dismount",
-            ["repair"] = "Repair",
-            ["aetheryte"] = "aetheryte",
-            ["Materia Extraction"] = "Materia Extraction",
-            ["teleport"] = "Teleport",
-            ["return"] = "Return",
-            ["sprint"] = "Sprint"
-        },
-        German   = {
-            ["Gysahl Greens"] = "Gysahl-Grüne",
-            ["mount roulette"] = "Reittier-Roulette",
-            ["dismount"] = "absteigen",
-            ["repair"] = "Reparatur",
-            ["aetheryte"] = "Ätheryten",
-            ["Materia Extraction"] = "Materia-Extraktion",
-            ["teleport"] = "Teleport",
-            ["return"] = "Rückführung",
-            ["sprint"] = "Sprint"
-        },
-        French   = {
-            ["Gysahl Greens"] = "Légumes gysahl",
-            ["mount roulette"] = "Monture aléatoire",
-            ["dismount"] = "descendre",
-            ["repair"] = "Réparation",
-            ["aetheryte"] = "éthérite",
-            ["Materia Extraction"] = "Matérialisation",
-            ["teleport"] = "Téléportation",
-            ["return"] = "Rapatriement",
-            ["sprint"] = "Sprint"
+        English = {
+            actions = {
+                ["Gysahl Greens"] = "Gysahl Greens",
+                ["mount roulette"] = "Mount Roulette",
+                ["dismount"] = "dismount",
+                ["repair"] = "Repair",
+                ["aetheryte"] = "aetheryte",
+                ["Materia Extraction"] = "Materia Extraction",
+                ["teleport"] = "Teleport",
+                ["sprint"] = "Sprint"
+            },
+            bitColorExchangeData = {
+                {
+                    shopKeepName = "Gadfrid",
+                    zoneName = "Old Sharlayan",
+                    zoneId = 962,
+                    aetheryteName = "Old Sharlayan",
+                    position = Vector3(78, 5, -37),
+                    shopItems = {
+                        ["Bicolor Gemstone Voucher"] = { itemName = "Bicolor Gemstone Voucher", itemIndex = 7, price = 100 },
+                        ["Turali Bicolor Gemstone Voucher"] = { itemName = "Turali Bicolor Gemstone Voucher", itemIndex = 8, price = 100 },
+                    }
+                }
+            }
         }
     }
 
-    return langTables[lang] or langTables["EN"]
+    return langTables[lang] or langTables["English"]
 end
 
 -- 言語設定の初期化
 GameLanguage = Svc.ClientState.ClientLanguage:ToString()
-LANG = GetLangTable(GameLanguage)
+Lang = GetLangTable(GameLanguage)
+BicolorExchangeData = Lang.bitColorExchangeData
 
 --#endregion Data
 
@@ -1527,7 +1465,10 @@ function SelectNextFate()
 
     Dalamud.Log("[FATE] Finished considering all fates")
     if nextFate == nil then
-        Dalamud.Log("[FATE] .>H N found.")
+        local playerPos = GetPlayerPosition()
+        Dalamud.Log("[FATE] No fates found. Player position: X=" ..
+            playerPos.X .. ", Y=" .. playerPos.Y .. ", Z=" .. playerPos.Z)
+        --TeleportTo("メワヘイゾーン")
         if Echo == "all" then
             yield("/echo [FATE] No eligible fates found.")
         end
@@ -1553,6 +1494,10 @@ end
 
 --#region Movement Functions
 
+function GetPlayerPosition()
+    return Svc.ClientState.LocalPlayer.Position
+end
+
 function DistanceBetween(pos1, pos2)
     local dx = pos1.X - pos2.X
     local dy = pos1.Y - pos2.Y
@@ -1561,6 +1506,14 @@ function DistanceBetween(pos1, pos2)
 end
 
 function GetDistanceToPoint(vec3)
+    if vec3 == nil then
+        Dalamud.Log("[FATE] Warning: GetDistanceToPoint called with nil vec3")
+        return 0
+    end
+    if type(vec3) ~= "userdata" then
+        Dalamud.Log("[FATE] Warning: GetDistanceToPoint called with non-Vector3: " .. type(vec3))
+        return 0
+    end
     return DistanceBetween(Svc.ClientState.LocalPlayer.Position, vec3)
 end
 
@@ -1708,7 +1661,11 @@ end
 function AcceptTeleportOfferLocation(destinationAetheryte)
     if Addons.GetAddon("_NotificationTelepo").Ready then
         local location = GetNodeText("_NotificationTelepo", 3, 4)
-        yield("/callback _Notification true 0 16 " .. location)
+        if type(location) == "string" then
+            yield("/callback _Notification true 0 16 " .. location)
+        else
+            Dalamud.Log("[FATE] Warning: location is not a string, got: " .. tostring(type(location)))
+        end
         yield("/wait 1")
     end
 
@@ -1786,9 +1743,9 @@ function ChangeInstance()
         end
         return
     end
-    yield("/target " .. LANG["aetheryte"])                                    -- search for nearby aetheryte
-    yield("/wait 1")                                                          -- search for nearby aetheryte
-    if Svc.Targets.Target == nil or GetTargetName() ~= LANG["aetheryte"] then -- if no aetheryte within targeting range, teleport to it
+    yield("/target " .. LANG.actions["aetheryte"])                                    -- search for nearby aetheryte
+    yield("/wait 1")                                                                  -- search for nearby aetheryte
+    if Svc.Targets.Target == nil or GetTargetName() ~= LANG.actions["aetheryte"] then -- if no aetheryte within targeting range, teleport to it
         Dalamud.Log("[FATE] Aetheryte not within targetable range")
         local closestAetheryte = nil
         local closestAetheryteDistance = math.maxinteger
@@ -1904,7 +1861,7 @@ function FlyBackToAetheryte()
         return
     end
 
-    yield("/target aetheryte")
+    yield("/target " .. LANG.actions["aetheryte"])
 
     if Svc.Targets.Target ~= nil and GetTargetName() == "aetheryte" and GetDistanceToTarget() <= 20 then
         if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
@@ -1912,13 +1869,13 @@ function FlyBackToAetheryte()
         end
 
         if Svc.Condition[CharacterCondition.flying] then
-            yield("/ac " .. LANG_JP["dismount"]) -- land but dont actually dismount, to avoid running chocobo timer
+            yield("/ac " .. LANG.actions["dismount"]) -- land but dont actually dismount, to avoid running chocobo timer
         elseif Svc.Condition[CharacterCondition.mounted] then
             State = CharacterState.ready
             Dalamud.Log("[FATE] State Change: Ready")
         else
             if MountToUse == "mount roulette" then
-                yield('/action ' .. LANG["mount roulette"])
+                yield('/action ' .. LANG.actions["mount roulette"])
             else
                 yield('/mount "' .. MountToUse)
             end
@@ -1967,7 +1924,7 @@ end
 
 function Mount()
     if MountToUse == "mount roulette" then
-        yield('/action ' .. LANG["mount roulette"])
+        yield('/action ' .. LANG.actions["mount roulette"])
     else
         yield('/mount "' .. MountToUse)
     end
@@ -1986,7 +1943,7 @@ end
 
 function Dismount()
     if Svc.Condition[CharacterCondition.flying] then
-        yield("/ac " .. LANG["dismount"])
+        yield("/ac " .. LANG.actions["dismount"])
 
         local now = os.clock()
         if now - LastStuckCheckTime > 1 then
@@ -2005,7 +1962,7 @@ function Dismount()
             LastStuckCheckPosition = Svc.ClientState.LocalPlayer.Position
         end
     elseif Svc.Condition[CharacterCondition.mounted] then
-        yield("/ac " .. LANG["dismount"])
+        yield("/ac " .. LANG.actions["dismount"])
     end
 end
 
@@ -2327,7 +2284,7 @@ function SummonChocobo()
 
     if ShouldSummonChocobo and GetBuddyTimeRemaining() <= ResummonChocoboTimeLeft then
         if Inventory.GetItemCount(4868) > 0 then
-            yield(string.format('/item "%s"', LANG["Gysahl Greens"]))
+            yield(string.format('/item "%s"', LANG.actions["Gysahl Greens"]))
             yield("/wait 3")
             yield('/cac "' .. ChocoboStance .. ' stance"')
         elseif ShouldAutoBuyGysahlGreens then
@@ -2345,7 +2302,7 @@ function AutoBuyGysahlGreens()
         if Addons.GetAddon("Shop").Ready then
             yield("/callback Shop true -1")
         elseif Svc.ClientState.TerritoryType == SelectedZone.zoneId then
-            yield(string.format('/item "%s"', LANG["Gysahl Greens"]))
+            yield(string.format('/item "%s"', LANG.actions["Gysahl Greens"]))
         else
             State = CharacterState.ready
             Dalamud.Log("State Change: ready")
@@ -2810,7 +2767,7 @@ function Ready()
 
     if not GemAnnouncementLock and (Echo == "all" or Echo == "gems") then
         GemAnnouncementLock = true
-        if BicolorGemCount >= 1400 then
+        if BicolorGemCount >= BicolorGemExchangeThreshold then
             yield("/echo [FATE] You're almost capped with " .. tostring(BicolorGemCount) .. "/1500 gems! <se.3>")
             if ShouldExchangeBicolorGemstones and not shouldWaitForBonusBuff and Player.IsLevelSynced ~= true then
                 State = CharacterState.exchangingVouchers
@@ -2976,7 +2933,7 @@ end
 function ExecuteBicolorExchange()
     CurrentFate = nil
 
-    if BicolorGemCount >= 1400 then
+    if BicolorGemCount >= BicolorGemExchangeThreshold then
         if Addons.GetAddon("SelectYesno").Ready then
             yield("/callback SelectYesno true 0")
             return
@@ -3016,6 +2973,7 @@ function ExecuteBicolorExchange()
 
             if Svc.Targets.Target == nil or GetTargetName() ~= SelectedBicolorExchangeData.shopKeepName then
                 yield("/target " .. SelectedBicolorExchangeData.shopKeepName)
+                yield("/wait 0.5")
             elseif not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
                 yield("/interact")
             end
@@ -3157,7 +3115,7 @@ function Repair()
             if needsRepair.Count > 0 then
                 if not Addons.GetAddon("Repair").Ready then
                     Dalamud.Log("[FATE] Opening repair menu...")
-                    yield("/generalaction " .. LANG["repair"])
+                    yield("/generalaction " .. LANG.actions["repair"])
                 end
             else
                 State = CharacterState.ready
@@ -3243,7 +3201,7 @@ function ExtractMateria()
 
     if Inventory.GetSpiritbondedItems().Count > 0 and Inventory.GetFreeInventorySlots() > 1 then
         if not Addons.GetAddon("Materialize").Ready then
-            yield("/generalaction \"Materia Extraction\"")
+            yield("/generalaction \"" .. LANG.actions["extract materia"] .. "\"")
             yield("/wait .25")
             return
         end
@@ -3417,6 +3375,7 @@ LastStuckCheckTime               = os.clock()
 LastStuckCheckPosition           = Player.Entity.Position
 MainClass                        = Player.Job
 BossFatesClass                   = nil
+BicolorGemExchangeThreshold      = 1400
 
 --Forlorns
 IgnoreForlorns                   = false
@@ -3546,18 +3505,20 @@ end
 Dalamud.Log("[FATE] Farming Start for " .. SelectedZone.zoneName)
 
 if ShouldExchangeBicolorGemstones ~= false then
+    Dalamud.Log("[FATE] Looking for item: " .. ItemToPurchase)
+    Dalamud.Log("[FATE] BicolorExchangeData count: " .. tostring(#BicolorExchangeData))
     for _, shop in ipairs(BicolorExchangeData) do
-        for _, item in ipairs(shop.shopItems) do
-            if item.itemName == ItemToPurchase then
-                SelectedBicolorExchangeData = {
-                    shopKeepName = shop.shopKeepName,
-                    zoneId = shop.zoneId,
-                    aetheryteName = shop.aetheryteName,
-                    miniAethernet = shop.miniAethernet,
-                    position = shop.position,
-                    item = item
-                }
-            end
+        if shop.shopItems[ItemToPurchase] ~= nil then
+            SelectedBicolorExchangeData = {
+                shopKeepName = shop.shopKeepName,
+                zoneId = shop.zoneId,
+                aetheryteName = shop.aetheryteName,
+                miniAethernet = shop.miniAethernet,
+                position = shop.position,
+                item = shop.shopItems[ItemToPurchase]
+            }
+            Dalamud.Log("[FATE] Found item in shop: " .. shop.shopKeepName)
+            break
         end
     end
     if SelectedBicolorExchangeData == nil then
