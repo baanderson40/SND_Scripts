@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: 'pot0to || Updated by: baanderson40'
-version: 2.0.1
+version: 2.0.2
 description: Zodiac Atma Farming - Companion script for Fate Farming
 plugin_dependencies:
 - Lifestream
@@ -26,13 +26,15 @@ configs:
 ********************************************************************************
 
 Atma farming script meant to be used with `Fate Farming.lua`. This will go down
-the list of atma farming zones and farm fates until you have 12 of the required
-atmas in your inventory, then teleport to the next zone and restart the fate
-farming script.
+the list of atma farming zones and farm fates until you have the desired number 
+of atmas in your inventory, then teleport to the next zone and restart the 
+fate farming script.
 
 Created by: pot0to (https://ko-fi.com/pot0to)
 Updated by: baanderson40 (https://ko-fi.com/baanderson40)
 
+    -> 2.0.2    Convert from Teleporter to Lifestream, adjust order of main loop
+                to move to zone before starting Fate Farming loop 
     -> 2.0.1    Updated CharacterCondition
     -> 2.0.0    Updated for Latest SnD
     -> 1.0.1    Added check for death and unexpected combat
@@ -107,7 +109,7 @@ function GetNextAtmaTable()
 end
 
 function TeleportTo(aetheryteName)
-    yield("/tp "..aetheryteName)
+    yield("/li "..aetheryteName)
     yield("/wait 1") -- wait for casting to begin
     while Svc.Condition[CharacterCondition.casting] do
         Dalamud.Log("[Atma Farm] Casting teleport...")
@@ -125,20 +127,18 @@ yield("/at y")
 NextAtmaTable = GetNextAtmaTable()
 while NextAtmaTable ~= nil do
     if not Player.IsBusy and not FateMacroRunning then
-        Dalamud.Log("[Atma Farm] Starting FateMacro")
-        yield("/snd run " .. FateMacro)
-        FateMacroRunning = true
-
-        while FateMacroRunning do
-            yield("/wait 3")
-        end
-
         if Inventory.GetItemCount(NextAtmaTable.itemId) >= NumberToFarm then
             NextAtmaTable = GetNextAtmaTable()
-        elseif not Svc.ClientState.LocalPlayer.TerritoryType == (NextAtmaTable.zoneId) then
-            TeleportTo(GetAetheryteName(NextAtmaTable.zoneId)[0])
+        elseif Svc.ClientState.TerritoryType ~= NextAtmaTable.zoneId then
+            Dalamud.Log("[Atma Farm] Teleport to "..NextAtmaTable.zoneName)
+            TeleportTo(GetAetheryteName(NextAtmaTable.zoneId))
         else
+            Dalamud.Log("[Atma Farm] Starting FateMacro")
             yield("/snd run "..FateMacro)
+            FateMacroRunning = true
+        end
+        while FateMacroRunning do
+            yield("/wait 3")
         end
     end
     yield("/wait 1")
