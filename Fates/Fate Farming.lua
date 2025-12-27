@@ -18,6 +18,11 @@ plugin_dependencies:
 - vnavmesh
 - TextAdvance
 configs:
+  Count:
+    description: How many fates to do before stopping
+    default: 0
+    min: 0
+    max: 500
   Rotation Plugin:
     description: What roation plugin to use?
     default: "Any"
@@ -2627,6 +2632,14 @@ function HandleUnexpectedCombat()
     yield("/wait 1")
 end
 
+
+Remaining = -1
+Count = Config.Get("Count")
+if Count > 0 then
+  Remaining = Count
+  yield("/echo [FATE] " .. Remaining .. " loops remaining")
+end
+
 function DoFate()
     Dalamud.Log("[FATE] DoFate")
     if WaitingForFateRewards == nil or WaitingForFateRewards.fateId ~= CurrentFate.fateId then
@@ -2657,6 +2670,15 @@ function DoFate()
     elseif not IsFateActive(CurrentFate.fateObject) or CurrentFate.fateObject.Progress == 100 then
         yield("/vnav stop")
         ClearTarget()
+        if Remaining ~= -1 then
+          Remaining = Remaining - 1
+          if Remaining <= 0 then
+            yield("/echo [FATE] Loop finished")
+            StopScript = true
+          else
+            yield("/echo [FATE] " .. Remaining .. " loops remaining")
+          end
+        end
         if not Dalamud.Log("[FATE] HasContintuation check") and CurrentFate.hasContinuation then
             LastFateEndTime = os.clock()
             State = CharacterState.waitForContinuation
