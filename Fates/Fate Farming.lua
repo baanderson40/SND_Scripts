@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40 || orginially pot0to
-version: 3.1.5
+version: 3.1.6
 description: |
   Support via https://ko-fi.com/baanderson40
   Fate farming script with the following features:
@@ -160,6 +160,7 @@ configs:
 ********************************************************************************
 *                                  Changelog                                   *
 ********************************************************************************
+    -> 3.1.6    Added multiple ARR fate definitions
     -> 3.1.5    Added HW fate definitions
     -> 3.1.4    Modified VBM/BMR combat commands to use IPCs
     -> 3.1.3    Companion script echo logic changed to true only
@@ -394,10 +395,27 @@ FatesData = {
             otherNpcFates= {
                 { fateName="Thwack-a-Mole" , npcName="Troubled Tiller" },
                 { fateName="Yellow-bellied Greenbacks", npcName="Yellowjacket Drill Sergeant"},
-                { fateName="The Orange Boxes", npcName="Farmer in Need" }
+                { fateName="The Orange Boxes", npcName="Farmer in Need" },
+                { fateName="A Mad, Mad, Mad Sergeant", npcName="Storm Sergeant Doenfarr" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
+        }
+    },
+    {
+        zoneName = "Western La Noscea",
+        zoneId = 138,
+        fatesList = {
+            collectionsFates= {
+                { fateName="Iron Contra Affair" , npcName="Yellowjacket Captain" },
+            },
+            otherNpcFates= {
+                { fateName="Between Aurochs" , npcName="Hysterical Hawker" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {
+                "Absolutely, Positively", -- Escort quest, Storm Courier
+            }
         }
     },
     {
@@ -407,10 +425,82 @@ FatesData = {
             collectionsFates= {},
             otherNpcFates= {
                 { fateName="Away in a Bilge Hold" , npcName="Yellowjacket Veteran" },
-                { fateName="Fight the Flower", npcName="Furious Farmer" }
+                { fateName="In the Name of Love", npcName="Yellowjacket" },
+                { fateName="Fight the Flower", npcName="Furious Farmer" },
+                { fateName="Man of the Flour", npcName="Miller in Need" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
+        }
+    },
+    {
+        zoneName = "Upper La Noscea",
+        zoneId = 139,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {
+                { fateName="Peeping Ja", npcName="Storm Sergeant" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {}
+        }
+    },
+    {
+        zoneName = "Eastern La Noscea",
+        zoneId = 137,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {},
+            specialFates = {
+                "It's Not Lupus", --Boss fight
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {}
+        }
+    },
+    {
+        zoneName = "East Shroud",
+        zoneId = 152,
+        fatesList = {
+            collectionsFates= {
+            },
+            otherNpcFates= {
+                { fateName="The Enemy of My Enemy", npcName="Mianne Thousandmalm" },
+                { fateName="Collecting Keepsakes", npcName="Phanaxio of the New Leaf" },
+                { fateName="What Have You Done for Mead Lately", npcName="Mead-porting Midlander" },
+                { fateName="Now I See Bees I Won", npcName="Bothered Beekeeper" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {},
+        }
+    },
+    {
+        zoneName = "North Shroud",
+        zoneId = 154,
+        fatesList = {
+            collectionsFates= {
+                { fateName="That Which Binds Us", npcName="Shifty-eyed Prospector" },
+            },
+            otherNpcFates= {
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {},
+        }
+    },
+    {
+        zoneName = "Central Shroud",
+        zoneId = 148,
+        fatesList = {
+            collectionsFates= {
+                { fateName="If I only Had a Soul", npcName="Nameless Conjurer" },
+            },
+            otherNpcFates= {
+                { fateName="The Lindwurm Has Turned", npcName="Greatloam Farmer" },
+                { fateName="Training Day", npcName="Serpent Recruit" },
+                { fateName="What's Your Poison", npcName="Wood Wailer Lance" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {},
         }
     },
     {
@@ -423,7 +513,8 @@ FatesData = {
             otherNpcFates= {
                 { fateName="A Few Arrows Short of a Quiver" , npcName="Crestfallen Merchant" },
                 { fateName="Wrecked Rats", npcName="Coffer & Coffin Heavy" },
-                { fateName="Something to Prove", npcName="Cowardly Challenger" }
+                { fateName="Something to Prove", npcName="Cowardly Challenger" },
+                { fateName="Orobon Part Two: The Spawning", npcName="Tiny Chris" },
             },
             fatesWithContinuations = {},
             blacklistedFates= {}
@@ -435,10 +526,12 @@ FatesData = {
         fatesList = {
             collectionsFates= {},
             otherNpcFates= {
-                { fateName="Attack on Highbridge: Denouement" , npcName="Brass Blade" }
             },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "Bad Camp", -- via Flame Scout, automation can't handle simple obstacles
+                "Attack on Highbridge: Denouement", -- Via Brass Blade, Won't navigate through the mobs to the boss, 
+            }
         }
     },
     {
@@ -446,20 +539,46 @@ FatesData = {
         zoneId = 146,
         fatesList = {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Soul Man", npcName="Ul'dahn Naturalist" },
+                { fateName="Call Me, Mayhaps", npcName="Flame Recruit" },
+                { fateName="Diamond in the Rough", npcName="Flame Scout" },
+            },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "From Point A", -- Escort, Stone Torch
+                "Run Like a Flame",  -- Escort, Flame Scout
+            }
         },
         flying = false
+    },
+    {
+        zoneName = "Western Thanalan",
+        zoneId = 140,
+        fatesList = {
+            collectionsFates= {},
+            otherNpcFates= {
+                { fateName="The Cores" , npcName="Diligent Worker" },
+                { fateName="Deface the Facts" , npcName="Worried Worker" },
+            },
+            fatesWithContinuations = {},
+            blacklistedFates= {
+                "Tripped Up by the Fruit of Another", -- Escort quest, Mauled Merchant
+            }
+        },
     },
     {
         zoneName = "Outer La Noscea",
         zoneId = 180,
         fatesList = {
             collectionsFates= {},
-            otherNpcFates= {},
+            otherNpcFates= {
+                { fateName="Overlooking the Obvious", npcName="Cowering Coachman" },
+            },
             fatesWithContinuations = {},
-            blacklistedFates= {}
+            blacklistedFates= {
+                "Schism", -- Doesn't automate well 
+            },
         },
         flying = false
     },
@@ -471,7 +590,7 @@ FatesData = {
             otherNpcFates= {},
             fatesWithContinuations = {},
             specialFates = {
-                "He Taketh It with His Eyes" --behemoth
+                "He Taketh It with His Eyes", --behemoth
             },
             blacklistedFates= {}
         }
