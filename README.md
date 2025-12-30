@@ -21,10 +21,7 @@ Collection of various SND scripts
   - Helio Farm
     
 - Fate
-  - Fate Farming
-  - Multi Zone Farming
-  - Occult Demiatma Farming
-  - Zodiac Atma Farming
+  - Moved to public archive
     
 - Guild Company Seals
   - Sigmascape Parts Trade
