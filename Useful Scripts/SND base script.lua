@@ -457,62 +457,68 @@ end
 -- =========================================================
 -- VNAV Helpers
 -- =========================================================
-local function _safe_vnav(method, ...)
-    local ok, res = pcall(method, ...)
-    if not ok then
-        Log("VNAV error: %s", tostring(res))
-        return false, nil
-    end
-    return true, res
-end
-
 function PathandMoveVnav(dest, fly)
     fly = (fly == true)
-    local okReady = WaitUntil(function()
-        local ok, res = _safe_vnav(IPC.vnavmesh.IsReady, IPC.vnavmesh)
-        return ok and res
-    end, TIME.TIMEOUT, TIME.POLL, 0.0)
-    if not okReady then Log("VNAV not ready (timeout)"); return false end
-
-    local okMove, moveRes = _safe_vnav(IPC.vnavmesh.PathfindAndMoveTo, IPC.vnavmesh, dest, fly)
-    if not okMove or not moveRes then
-        Log("VNAV pathfind failed")
+    local t, timeout = 0, TIME.TIMEOUT
+    while not IPC.vnavmesh.IsReady() and t < timeout do
+        sleep(TIME.POLL); t = t + TIME.POLL
+    end
+    if not IPC.vnavmesh.IsReady() then
+        log("%s VNAV not ready (timeout)", PREFIX)
         return false
     end
-    return true
+
+    local ok = IPC.vnavmesh.PathfindAndMoveTo(dest, fly)
+    if not ok then
+        log("%s VNAV pathfind failed", PREFIX)
+    end
+
+    if ok then
+        local me = Entity and Entity.Player
+        if me and me.Position and Vector3.Distance(me.Position, dest) > 25 then
+            Mount()
+        end
+    end
+    return ok and true or false
 end
 
 function StopCloseVnav(dest, stopDistance)
-    if not (dest and dest.X and dest.Y and dest.Z) then
-        Log("StopCloseVnav: invalid destination"); return false
+    stopDistance = tonumber(stopDistance) or 3.0
+    if not dest then return false end
+
+    local t, timeout = 0, TIME.TIMEOUT
+    while not IPC.vnavmesh.IsRunning() and t < timeout do
+        sleep(TIME.POLL); t = t + TIME.POLL
     end
-    stopDistance = toNumberSafe(stopDistance, 3.0, 0.01)
+    if not IPC.vnavmesh.IsRunning() then
+        log("%s VNAV not running (timeout)", PREFIX)
+        return false
+    end
 
-    local okRun = WaitUntil(function()
-        local ok, res = _safe_vnav(IPC.vnavmesh.IsRunning, IPC.vnavmesh)
-        return ok and res
-    end, TIME.TIMEOUT, TIME.POLL, 0.0)
-    if not okRun then Log("VNAV not running (timeout)"); return false end
-
-    while true do
-        local okRunLoop, running = _safe_vnav(IPC.vnavmesh.IsRunning, IPC.vnavmesh)
-        if not okRunLoop then return false end
-        if not running then return true end
-
-        local me  = Entity and Entity.Player
-        local pos = me and me.Position
-        if pos and IsWithinDistance(pos, dest, stopDistance) then
-            local okStop = _safe_vnav(IPC.vnavmesh.Stop, IPC.vnavmesh)
-            return okStop and true or false
+    while IPC.vnavmesh.IsRunning() do
+        local me = Entity and Entity.Player
+        if me and me.Position then
+            if Vector3.Distance(me.Position, dest) < 10
+                and GetCharacterCondition(CharacterCondition.mounted) then
+                Dismount()
+            end
+            if Vector3.Distance(me.Position, dest) < stopDistance then
+                IPC.vnavmesh.Stop()
+                return true
+            end
         end
         sleep(TIME.POLL)
     end
+
+    return true
 end
 
 function MoveNearVnav(dest, stopDistance, fly)
-    stopDistance = toNumberSafe(stopDistance, 3.0, 0.01)
-    if not PathandMoveVnav(dest, fly) then return false end
-    return StopCloseVnav(dest, stopDistance) == true
+    stopDistance = tonumber(stopDistance) or 3.0
+    if PathandMoveVnav(dest, fly) then
+        return StopCloseVnav(dest, stopDistance)
+    end
+    return false
 end
 
 -- =========================================================
