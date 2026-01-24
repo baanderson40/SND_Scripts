@@ -7,7 +7,7 @@ PVP centered SND lua scripts.
 
 ## Scripts
 - Causal Match PVP
-  - Automatically queues, completes, and requeses causal PVP matchs. Works with any job, but ranaged DD best suited.
+  - Automatically queues, completes, and requeues causal PVP matchs. Works with any job, but ranaged DD best suited.
 
 ## Installation
 - Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
