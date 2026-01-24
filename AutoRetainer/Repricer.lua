@@ -1,32 +1,34 @@
 --[=====[
 [[SND Metadata]]
 version: 1.0.0
-description: |
+description: >-
   This is a custom Lua macro script for Repricer. It is NOT supported by the
+
   plugin author(s) or by the official Dalamud / XIVLauncher / Puni.sh Discord communities.
+
   DO NOT ask for help with this script in Discord or support chats!
+
   No support will be provided by developers and will lead to a ban.
+
   Use at your own risk
 triggers:
 - onterritorychange
-configs:
-  GatherBuddy:
-    default: false
 
 [[End Metadata]]
-]=====]--
+--]=====]
+--
 
 ------------------------------------------------------------
 -- CONFIG
 ------------------------------------------------------------
 local CFG = {
-  DEBUG = true,                 -- Enable verbose dbg() logging to Dalamud log.
+  DEBUG = false,                 -- Set to false when not debugging
 
   UNDERCUT = 1,                 -- Undercut amount. If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
 
   FAST = {                      -- Market board read timing behavior.
-    maxWaitSec      = 5,        -- Max seconds to wait for first row of ItemSearchResult to become readable.
-    refreshAfterSec = 3,        -- If row not readable after this many seconds, trigger one refresh.
+    maxWaitSec      = 15,        -- Max seconds to wait for first row of ItemSearchResult to become readable.
+    refreshAfterSec = 5,        -- If row not readable after this many seconds, trigger one refresh.
   },
 
   OpenBell = {                  -- Summoning Bell open timing.
@@ -58,7 +60,8 @@ local CFG = {
     enabled      = true,        -- Master toggle for all new-sale actions.
 
     -- Define items here with per-retainer stack limits.
-    items = { --[item#] = { minQty = 99, defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, -- 
+    items = {
+      [#####] = { minQty = 1,  defaultPrice = 4000000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, -- 
 },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
@@ -76,7 +79,7 @@ local CFG = {
 local TARGET_RETAINERS = {
    "Retainer1",
    "Retainer2",
-   "Retainer3",
+   "Retainer3", 
 }
 
 -- Your own retainers—don’t undercut these names
@@ -107,8 +110,15 @@ local N = {
 ------------------------------------------------------------
 -- ADDON / UTIL HELPERS
 ------------------------------------------------------------
-local function dbg(msg) if CFG.DEBUG then Dalamud.Log("[Repricer][DBG] "..tostring(msg)) end end
-local function echo(msg) yield("/echo [Repricer] "..tostring(msg)) end
+local function dbg(msg)
+  if CFG.DEBUG then
+    Dalamud.Log("[Repricer][DBG] "..tostring(msg))
+  end
+end
+
+local function echo(msg)
+  yield("/echo [Repricer] "..tostring(msg))
+end
 
 local function addon(name)
   local ok,res = pcall(function() return Addons.GetAddon(name) end)
@@ -223,22 +233,6 @@ local function AR_IsBusy()
   return busy and true or false
 end
 
-local function AD_IsBusy()
-  return IPC and IPC.AutoDuty and IPC.AutoDuty.IsStopped and not IPC.AutoDuty.IsStopped()
-end
-
-local function GBR_AutoOff()
-    yield("/wait 0.1")
-    yield("/gbr auto off")
-    yield("/wait 0.1")
-end
-
-local function GBR_AutoOn()
-    yield("/wait 0.1")
-    yield("/gbr auto on")
-    yield("/wait 0.1")
-end
-
 function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
   if not CFG.AutoRetainer.enabled then return true end
   if not AR_IsAvailable() then return true end
@@ -271,79 +265,6 @@ function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
     return false
   end
   return true
-end
-
-import("System.Numerics")
-local function DistanceBetweenPositions(pos1, pos2) local distance = Vector3.Distance(pos1, pos2) return distance end
-
--- Stall Watchdog: abort AutoRetainer if player is "stuck"
-local _stall_last_pos     = nil
-local _stall_last_move_t  = now_s()
-local STALL_TIMEOUT_SEC   = 15.0
-local STALL_EPSILON_DIST  = 0.02
-
-local function AutoRetainerAvailableForThisChara()
-  return IPC and IPC.AutoRetainer
-     and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara
-     and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
-end
-
-function CheckPlayerStallAndResetAR()
-  local cs = Svc and Svc.ClientState
-  local lp = cs and cs.LocalPlayer or nil
-  if not lp then return end
-
-  local pos  = lp.Position
-  local terr = cs.TerritoryType or 0
-
-  if not _stall_last_pos then
-    _stall_last_pos    = pos
-    _stall_last_move_t = now_s()
-    return
-  end
-
-  local dist = DistanceBetweenPositions(pos, _stall_last_pos) or 0
-  if dist > STALL_EPSILON_DIST then
-    _stall_last_pos    = pos
-    _stall_last_move_t = now_s()
-    return
-  end
-
-  if (now_s() - _stall_last_move_t) >= STALL_TIMEOUT_SEC
-     and terr ~= 610
-     and AutoRetainerAvailableForThisChara()
-     and IPC and IPC.AutoRetainer and IPC.AutoRetainer.AbortAllTasks then
-    yield("/echo [Repricer] Stall detected (≥5s, terr "..tostring(terr)..") — aborting AutoRetainer tasks.")
-    IPC.AutoRetainer.AbortAllTasks()
-    _stall_last_move_t = now_s()
-    _stall_last_pos    = pos
-  end
-end
-
-local _apartment_interact_timer = 0
-local _apartment_interact_threshold = 5
-
-function InteractWithApartmentEntrance()
-  local target = Player.Entity and Player.Entity.Target
-  if target and target.Name == "Apartment Building Entrance" then
-    if _apartment_interact_timer == 0 then
-      _apartment_interact_timer = now_s()
-    elseif now_s() - _apartment_interact_timer >= _apartment_interact_threshold then
-      local e = Entity.GetEntityByName("Apartment Building Entrance")
-      if e then
-        Dalamud.Log("[Repricer] Targetting: " .. e.Name)
-        e:SetAsTarget()
-      end
-      if Entity.Target and Entity.Target.Name == "Apartment Building Entrance" then
-        Dalamud.Log("[Repricer] Interacting: " .. e.Name)
-        e:Interact()
-        yield('/wait 1')
-        _apartment_interact_timer = 0
-      end
-    end
-  else
-    _apartment_interact_timer = 0 
-  end
 end
 
 ------------------------------------------------------------
@@ -511,11 +432,13 @@ end
 
 function ApplyPrice(newPrice)
   if not (exists("RetainerSell") and ready("RetainerSell")) then
-    dbg("ApplyPrice: RetainerSell not ready."); return false end
+    dbg("ApplyPrice: RetainerSell not ready.")
+    return false
+  end
 
-  local rawCurrent = gettext("RetainerSell", {6})
+  local rawCurrent = gettext("RetainerSell", {1, 8, 10, 5})
   local current
-  if rawCurrent and rawCurrent~="" then
+  if rawCurrent and rawCurrent ~= "" then
     local cleaned = string.gsub(rawCurrent, "[,%s%.]", "")
     cleaned = string.gsub(cleaned, "[^0-9]", "")
     current = tonumber(cleaned) or -1
@@ -523,15 +446,21 @@ function ApplyPrice(newPrice)
     current = -1
   end
 
-  if not newPrice or newPrice <= 0 then
-    dbg("ApplyPrice: invalid newPrice="..tostring(newPrice)); return false end
+  if current == -1 then
+    dbg("ApplyPrice: Unable to retrieve the current price.")
+    yield("/echo [Repricer] Could not retrieve current price.")
+    return false
+  end
 
-  if current == newPrice then
-    yield("/echo [Repricer] Price already set: "..tostring(newPrice))
+  if newPrice == current then
+    yield("/echo [Repricer] Price is already set to the lowest price: " .. tostring(newPrice))
     return true
   end
 
-  yield("/echo [Repricer] Set price: "..tostring(current).." → "..tostring(newPrice))
+  -- Log the price change
+  yield("/echo [Repricer] Set price: " .. tostring(current) .. " → " .. tostring(newPrice))
+
+  -- Apply the new price to the retainer's sell list
   pcall_addon("RetainerSell", true, 2, newPrice)
   pcall_addon("RetainerSell", true, 0)
   return true
@@ -570,10 +499,11 @@ function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlo
 
   local s = math.max(1, tonumber(startSlot or 1))
   local e = math.min(total, tonumber(endSlot or total))
-  yield("/echo [Repricer] Processing slots "..s.."–"..e.." of "..total.."...")
+  yield("/echo [Repricer] Processing slots "..e.." of "..total..".")
 
   for slot = s, e do
     repeat
+      yield("/echo [Repricer] Processing slot "..slot.."–"..e..".")
       if not OpenItem(slot) then
         yield("/echo [Repricer] Slot "..slot..": open failed, skipping."); break end
       if not EnsureSearchOpen_AutoFriendly(8, 12, 90) then
@@ -925,17 +855,16 @@ function RepriceTargetsOnRetainerList()
 
   yield("/echo [Repricer] Processing "..tostring(#targets).." retainer(s)…")
   for i,t in ipairs(targets) do
-    yield(string.format("/echo [Repricer] [%d/%d] %s (slot %d)", i, #targets, t.name, t.slot))
+    yield(string.format("/echo [Repricer] [%d/%d] %s", i, #targets, t.name))
     if OpenRetainerBySlot(t.slot) then
-      ProcessThisRetainer(t.name)
+      ProcessThisRetainer(t.name)  -- pass retainer name for quotas
     end
     CloseBackToRetainerList()
     yield("/wait 0.1")
   end
+
   CloseRetainerList()
-  yield("/echo [Repricer] All target retainers processed.")
-  if GatherEnabled then GBR_AutoOn() end
-  yield("/snd stop Repricer")
+  StopScript = true
 end
 
 ------------------------------------------------------------
@@ -968,18 +897,14 @@ end
 
 function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Repricer] Auto trigger ENABLED")  end
 function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigger DISABLED") end
+local StopScript = false
 
 yield("/echo [Repricer] AutoBell polling loop started.")
-while true do
-    CheckPlayerStallAndResetAR()
-    InteractWithApartmentEntrance()
+while not StopScript do
 
     local occupied = IsBellOccupied()
-    GatherEnabled = Config.Get("GatherBuddy")
 
     if occupied then
-
-    if GatherEnabled then GBR_AutoOff() end
 
         if _bell_since == 0 then _bell_since = now_s() end
 
