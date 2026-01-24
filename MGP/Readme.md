@@ -1,9 +1,9 @@
 ### Support via [baanderson40's ko-fi](https://ko-fi.com/baanderson40)
 ---
 
-# FATE scripts
+# MGP scripts
 
-MGP centered SND2 lua scripts. 
+MGP centered SND lua scripts. 
 
 ## Scripts
 - Sell TT Cards
