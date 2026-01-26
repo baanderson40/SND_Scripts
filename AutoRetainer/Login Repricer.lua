@@ -61,7 +61,10 @@ local CFG = {
 
     -- Define items here with per-retainer stack limits.
     items = {
-      [#####] = { minQty = 1,  defaultPrice = 4000000, maxStacks = 1, perRetainer = { ["Retainer1'"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } },
+      [48096] = { minQty = 1,  defaultPrice = 4000000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Fortune Carrot
+      [43961] = { minQty = 10, defaultPrice = 175000,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Turali Bicolor Gemstone Voucher
+      [10373] = { minQty = 99, defaultPrice = 5000,    maxStacks = 2, perRetainer = { ["Flowers'"]=2, ["Power"]=2, ["Stevie"]=2 } }, -- Magitek Repair Materials
+      [41758] = { minQty = 10, defaultPrice = 10000,   maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Heavens' Eye Materia XI
 },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
@@ -77,16 +80,16 @@ local CFG = {
 
 -- Process all retainers unless you restrict here
 local TARGET_RETAINERS = {
-   "Retainer1'",
-   "Retainer2",
-   "Retainer3", 
+   "Flowers'",
+   "Power",
+   "Stevie", 
 }
 
 -- Your own retainers—don’t undercut these names
 local MY_RETAINERS = {
-  "Retainer1'",
-  "Retainer2",
-  "Retainer3",
+  "Flowers'",
+  "Power",
+  "Stevie",
 }
 
 ------------------------------------------------------------
@@ -112,12 +115,12 @@ local N = {
 ------------------------------------------------------------
 local function dbg(msg)
   if CFG.DEBUG then
-    Dalamud.Log("[Repricer][DBG] "..tostring(msg))
+    Dalamud.Log("[Login Repricer][DBG] "..tostring(msg))
   end
 end
 
 local function echo(msg)
-  yield("/echo [Repricer] "..tostring(msg))
+  yield("/echo [Login Repricer] "..tostring(msg))
 end
 
 local function addon(name)
@@ -272,7 +275,7 @@ function SuppressAR (arg)
 end
 
 function PlayerMoving()
-    return IPC.Lifestream.IsBusy() or Player.IsMoving
+    return IPC.Lifestream.IsBusy() or Player.IsMoving or Player.IsBusy
 end
 
 ------------------------------------------------------------
@@ -872,7 +875,11 @@ function RepriceTargetsOnRetainerList()
   end
   CloseRetainerList()
 
-SuppressAR(false)
+  if IPC.AutoRetainer.GetMultiModeEnabled() == false then
+    IPC.AutoRetainer.SetMultiModeEnabled(true)
+  end
+
+  SuppressAR(false)
 end
 
 ------------------------------------------------------------
@@ -907,11 +914,13 @@ function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Repricer] Auto trigge
 function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigger DISABLED") end
 
 SuppressAR(true)
-yield("/wait 0.20")
-IPC.Lifestream.ExecuteCommand("auto")
-yield("/wait 2")
 repeat
-    yield("/wait .1")
+    yield("/wait 0.2")
+until Player.Available
+IPC.Lifestream.ExecuteCommand("auto")
+yield("/wait 3")
+repeat
+    yield("/wait .2")
 until not PlayerMoving()
-yield("/wait 0.20")
+yield("/wait 0.2")
 RepriceTargetsOnRetainerList()
