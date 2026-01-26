@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: Aniane | Modified by baanderson40
-version: 2.0.2
+version: 2.0.3
 description: >-
   Re-enter the Occult Crescent when you're booted, and spend your silver coins!
 plugin_dependencies:
@@ -195,6 +195,9 @@ local lastReturnAt = 0
 local YA_NAME = "ContentsFinderConfirm"
 local yaHadState = false
 local yaPrevEnabled = true
+
+-- NEW: timer-leave pending (do not turn off bossmod/autorotation until combat ends)
+local timerLeavePending = false
 
 -- Helper Functions
 local function Sleep(seconds)
@@ -499,6 +502,23 @@ function CharacterState.ready()
     local needsRepair = false
     local shopAddon = Addons.GetAddon("ShopExchangeCurrency")
 
+    -- If timer already expired and we're still in instance:
+    -- keep fighting if in combat; only tear down + leave once combat ends.
+    if timerLeavePending and inInstance then
+        if Svc.Condition[CharacterCondition.inCombat] then
+            -- keep BossMod behavior running, do not TurnOffOCH here
+            ApplyBossModEngageBehavior()
+            return
+        end
+
+        -- now safe to leave
+        TurnOffOCH()
+        LeaveInstanceSafely()
+        timerLeavePending = false
+        State = CharacterState.ready
+        return
+    end
+
     -- If mounted and BossMod has an active preset, clear it (requested safety)
     if Svc.Condition[CharacterCondition.mounted] then
         local active = IPC.BossMod.GetActive()
@@ -552,6 +572,7 @@ function CharacterState.ready()
         RestartBOCCHI()
 
         instanceStartTime = os.time()
+        timerLeavePending = false
         yield("/echo [OCM] Entered instance. Timer started (" .. tostring(INSTANCE_DURATION_MIN) .. "m).")
     end
 
@@ -565,6 +586,7 @@ function CharacterState.ready()
         end
 
         instanceStartTime = nil
+        timerLeavePending = false
 
         local limit = tonumber(INSTANCE_LIMIT) or 0
         if limit > 0 and completedInstances >= limit then
@@ -580,9 +602,9 @@ function CharacterState.ready()
         local elapsedSeconds = os.time() - instanceStartTime
         local limitSeconds = tonumber(INSTANCE_DURATION_MIN) * 60
         if elapsedSeconds >= limitSeconds then
-            TurnOffOCH()
-            LeaveInstanceSafely()
-            State = CharacterState.ready
+            -- DO NOT TurnOffOCH here: keep fighting until combat ends.
+            timerLeavePending = true
+            yield("/echo [OCM] Timer expired. Will leave after combat ends.")
             return
         end
     end
