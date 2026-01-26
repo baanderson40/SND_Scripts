@@ -61,10 +61,7 @@ local CFG = {
 
     -- Define items here with per-retainer stack limits.
     items = {
-      [48096] = { minQty = 1,  defaultPrice = 4000000, maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Fortune Carrot
-      [43961] = { minQty = 10, defaultPrice = 175000,  maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Turali Bicolor Gemstone Voucher
-      [10373] = { minQty = 99, defaultPrice = 5000,    maxStacks = 2, perRetainer = { ["Flowers'"]=2, ["Power"]=2, ["Stevie"]=2 } }, -- Magitek Repair Materials
-      [41758] = { minQty = 10, defaultPrice = 10000,   maxStacks = 1, perRetainer = { ["Flowers'"]=1, ["Power"]=1, ["Stevie"]=1 } }, -- Heavens' Eye Materia XI
+      [#####] = { minQty = 1,  defaultPrice = 4000000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, -- Fortune Carrot
 },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
@@ -80,16 +77,16 @@ local CFG = {
 
 -- Process all retainers unless you restrict here
 local TARGET_RETAINERS = {
-   "Flowers'",
-   "Power",
-   "Stevie", 
+   "Retainer1",
+   "Retainer2",
+   "Retainer3", 
 }
 
 -- Your own retainers—don’t undercut these names
 local MY_RETAINERS = {
-  "Flowers'",
-  "Power",
-  "Stevie",
+  "Retainer1",
+  "Retainer2",
+  "Retainer3",
 }
 
 ------------------------------------------------------------
