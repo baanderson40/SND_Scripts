@@ -2,7 +2,7 @@
 [[SND Metadata]]
 version: 1.0.0
 description: >-
-  This is a custom Lua macro script for Repricer. It is NOT supported by the
+  This is a custom Lua macro script for Login Repricer. It is NOT supported by the
 
   plugin author(s) or by the official Dalamud / XIVLauncher / Puni.sh Discord communities.
 
@@ -261,7 +261,7 @@ function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
   end
 
   if AR_IsBusy() then
-    yield("/echo [Repricer] AutoRetainer stayed busy past timeout; not starting.")
+    yield("/echo [Login Repricer] AutoRetainer stayed busy past timeout; not starting.")
     return false
   end
   return true
@@ -280,7 +280,7 @@ end
 ------------------------------------------------------------
 function EnsureRetainerListOpen()
   if exists("RetainerList") and ready("RetainerList") then return true end
-  yield("/echo [Repricer] Opening Summoning Bell…")
+  yield("/echo [Login Repricer] Opening Summoning Bell…")
 
   local tries = 0
   while not (exists("RetainerList") and ready("RetainerList")) and tries < CFG.OpenBell.maxAttempts do
@@ -292,10 +292,10 @@ function EnsureRetainerListOpen()
   end
 
   if exists("RetainerList") and ready("RetainerList") then
-    yield("/echo [Repricer] Retainer List opened.")
+    yield("/echo [Login Repricer] Retainer List opened.")
     return true
   end
-  yield("/echo [Repricer] Could not open Retainer List (Summoning Bell not found?).")
+  yield("/echo [Login Repricer] Could not open Retainer List (Summoning Bell not found?).")
   return false
 end
 
@@ -456,17 +456,17 @@ function ApplyPrice(newPrice)
 
   if current == -1 then
     dbg("ApplyPrice: Unable to retrieve the current price.")
-    yield("/echo [Repricer] Could not retrieve current price.")
+    yield("/echo [Login Repricer] Could not retrieve current price.")
     return false
   end
 
   if newPrice == current then
-    yield("/echo [Repricer] Price is already set to the lowest price: " .. tostring(newPrice))
+    yield("/echo [Login Repricer] Price is already set to the lowest price: " .. tostring(newPrice))
     return true
   end
 
   -- Log the price change
-  yield("/echo [Repricer] Set price: " .. tostring(current) .. " → " .. tostring(newPrice))
+  yield("/echo [Login Repricer] Set price: " .. tostring(current) .. " → " .. tostring(newPrice))
 
   -- Apply the new price to the retainer's sell list
   pcall_addon("RetainerSell", true, 2, newPrice)
@@ -497,25 +497,25 @@ end
 
 function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlot)
   if not (exists("RetainerSellList") and ready("RetainerSellList")) then
-    yield("/echo [Repricer] Please open the retainer's Sell List first."); return end
+    yield("/echo [Login Repricer] Please open the retainer's Sell List first."); return end
 
   maxWaitSec      = maxWaitSec      or CFG.FAST.maxWaitSec
   refreshAfterSec = refreshAfterSec or CFG.FAST.refreshAfterSec
 
   local total = CountItems()
-  if total <= 0 then yield("/echo [Repricer] No sale items to process."); return end
+  if total <= 0 then yield("/echo [Login Repricer] No sale items to process."); return end
 
   local s = math.max(1, tonumber(startSlot or 1))
   local e = math.min(total, tonumber(endSlot or total))
-  yield("/echo [Repricer] Processing slots "..e.." of "..total..".")
+  yield("/echo [Login Repricer] Processing slots "..e.." of "..total..".")
 
   for slot = s, e do
     repeat
-      yield("/echo [Repricer] Processing slot "..slot.."–"..e..".")
+      yield("/echo [Login Repricer] Processing slot "..slot.."–"..e..".")
       if not OpenItem(slot) then
-        yield("/echo [Repricer] Slot "..slot..": open failed, skipping."); break end
+        yield("/echo [Login Repricer] Slot "..slot..": open failed, skipping."); break end
       if not EnsureSearchOpen_AutoFriendly(8, 12, 90) then
-        yield("/echo [Repricer] Slot "..slot..": search failed, skipping."); CloseItem(); break end
+        yield("/echo [Login Repricer] Slot "..slot..": search failed, skipping."); CloseItem(); break end
 
       local low, seller = ReadLowestListing_Fast(maxWaitSec, refreshAfterSec)
       CloseItemPanels()
@@ -524,7 +524,7 @@ function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlo
         local want = DecideNewPrice(low, seller)
         ApplyPrice(want)
       else
-        yield("/echo [Repricer] Slot "..slot..": no market data (or timeout).")
+        yield("/echo [Login Repricer] Slot "..slot..": no market data (or timeout).")
       end
 
       CloseItem()
@@ -532,7 +532,7 @@ function RepriceAllOnThisRetainer(maxWaitSec, refreshAfterSec, startSlot, endSlo
     yield("/wait 0.05")
   end
 
-  yield("/echo [Repricer] Done with this retainer.")
+  yield("/echo [Login Repricer] Done with this retainer.")
 end
 
 ------------------------------------------------------------
@@ -760,7 +760,7 @@ end
 
 local function ReadRetainerList()
   if not (exists("RetainerList") and ready("RetainerList")) then
-    yield("/echo [Repricer] Open the Retainer List at a Summoning Bell."); return {} end
+    yield("/echo [Login Repricer] Open the Retainer List at a Summoning Bell."); return {} end
   local res = {}
   for slot=1,12 do
     local nm = RetainerNameAt(slot)
@@ -853,17 +853,17 @@ end
 function RepriceTargetsOnRetainerList()
   if not EnsureRetainerListOpen() then return end
 
-  yield("/echo [Repricer] Scanning Retainer List…")
+  yield("/echo [Login Repricer] Scanning Retainer List…")
   local entries = ReadRetainerList()
-  if #entries==0 then yield("/echo [Repricer] No retainers found on this character."); return end
+  if #entries==0 then yield("/echo [Login Repricer] No retainers found on this character."); return end
 
   local targets = {}
   for _,e in ipairs(entries) do if is_target_retainer(e.name) then table.insert(targets, e) end end
-  if #targets==0 then yield("/echo [Repricer] No retainers matched TARGET_RETAINERS on this character."); return end
+  if #targets==0 then yield("/echo [Login Repricer] No retainers matched TARGET_RETAINERS on this character."); return end
 
-  yield("/echo [Repricer] Processing "..tostring(#targets).." retainer(s)…")
+  yield("/echo [Login Repricer] Processing "..tostring(#targets).." retainer(s)…")
   for i,t in ipairs(targets) do
-    yield(string.format("/echo [Repricer] [%d/%d] %s", i, #targets, t.name))
+    yield(string.format("/echo [Login Repricer] [%d/%d] %s", i, #targets, t.name))
     if OpenRetainerBySlot(t.slot) then
       ProcessThisRetainer(t.name)  -- pass retainer name for quotas
     end
@@ -907,8 +907,8 @@ local function IsBellOccupied()
   return val and true or false
 end
 
-function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Repricer] Auto trigger ENABLED")  end
-function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigger DISABLED") end
+function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Login Repricer] Auto trigger ENABLED")  end
+function AutoDisable() AUTO_ENABLED = false; yield("/echo [Login Repricer] Auto trigger DISABLED") end
 
 SuppressAR(true)
 repeat
