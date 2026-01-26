@@ -1,0 +1,104 @@
+/**
+ * Universalis Aggregated (configurable worldId) → NQ/HQ minListing prices
+ *
+ * Sheet layout:
+ * A: Item number (start at A2, manually entered)
+ * B: Item name (manually entered)
+ * C: NQ world
+ * D: NQ DC
+ * E: NQ Region
+ * F: (skip)
+ * G: HQ world
+ * H: HQ DC
+ * I: HQ Region
+ *
+ * API: https://universalis.app/api/v2/aggregated/{worldId}/{itemId}
+ * 
+ * 1) Add this code to Apps Script in a Google Sheet and save the code.
+ * 2) Close and reopen the Google Sheet.
+ * 3) Add the item number starting in A2. 
+ * 4) Use the Universalis menu in the tool bar to pull the price of the item from Univeralis.
+ * 5) You'll have to give the app permission to run for your Google Account.
+ */
+
+function updateUniversalisAggregatedPrices() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+
+  const startRow = 2;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < startRow) return;
+
+  // World ID number
+  const UNIVERSALIS_WORLD_ID = 63; // ← change this to any world ID
+
+  // Column A: Item IDs
+  const itemCol = sheet.getRange(startRow, 1, lastRow - startRow + 1, 1).getValues();
+
+  const itemIds = [];
+  for (let i = 0; i < itemCol.length; i++) {
+    const v = itemCol[i][0];
+    if (v === "" || v === null) break;
+
+    const id = Number(v);
+    itemIds.push(Number.isFinite(id) && id > 0 ? id : null);
+  }
+
+  const rowCount = itemIds.length;
+  if (!rowCount) return;
+
+  // Output buffers
+  const outCDE = Array.from({ length: rowCount }, () => ["", "", ""]);
+  const outGHI = Array.from({ length: rowCount }, () => ["", "", ""]);
+
+  for (let i = 0; i < rowCount; i++) {
+    const itemId = itemIds[i];
+    if (!itemId) continue;
+
+    const url = `https://universalis.app/api/v2/aggregated/${UNIVERSALIS_WORLD_ID}/${itemId}`;
+
+    try {
+      const resp = UrlFetchApp.fetch(url, {
+        muteHttpExceptions: true,
+        headers: { Accept: "application/json" },
+      });
+
+      if (resp.getResponseCode() !== 200) continue;
+
+      const data = JSON.parse(resp.getContentText());
+      const r0 = data?.results?.[0];
+      if (!r0) continue;
+
+      const nqMin = r0.nq?.minListing ?? {};
+      const hqMin = r0.hq?.minListing ?? {};
+
+      outCDE[i] = [
+        nqMin.world?.price ?? "",
+        nqMin.dc?.price ?? "",
+        nqMin.region?.price ?? "",
+      ];
+
+      outGHI[i] = [
+        hqMin.world?.price ?? "",
+        hqMin.dc?.price ?? "",
+        hqMin.region?.price ?? "",
+      ];
+
+      Utilities.sleep(120); // polite rate limiting
+
+    } catch (_) {
+      // leave row blank on error
+    }
+  }
+
+  // Write results
+  sheet.getRange(startRow, 3, rowCount, 3).setValues(outCDE); // C–E
+  sheet.getRange(startRow, 7, rowCount, 3).setValues(outGHI); // G–I
+}
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("Universalis")
+    .addItem("Update aggregated prices", "updateUniversalisAggregatedPrices")
+    .addToUi();
+}
