@@ -1,8 +1,30 @@
 --[[
 
-Causal Match PvP script
+PvP script
 
-Largely inspired by dhog's script
+Logging policy (standardized):
+- Everything logs to Dalamud with [PVP] prefix.
+- Only echo once on script start.
+
+Queueing:
+- If not in duty and not in duty queue, open Duty Finder and callback.
+
+Gate detection (ContentTimeLeft method, hardened + fixed for requeue):
+- Do NOT treat tLeft < 5 as gate open (tLeft can be 0 while zoning / before PvP area)
+- Only capture baseline AFTER we are actually in the PvP area (pvpDisplayActive) OR in a known PvP territory
+- Detect intro/portrait band: 1 < t < 32  (sawIntroBand = true)
+- Gate open / match live when:
+    t > 100 AND (sawIntroBand OR timerMovedFromBaseline)
+
+Portrait quickchat:
+- During portraits, pick a random threshold between 5..29 seconds remaining.
+- Fire /quickchat Hello once when tLeft drops to/below that threshold (and still > 5).
+
+Match end:
+- When MKSRecord addon becomes visible at end of match, call InstancedContent.LeaveCurrentContent() to exit duty.
+
+Other:
+- /rotation auto nearest is re-applied after death/respawn because RSR disables it.
 
 --]]
 
@@ -13,7 +35,8 @@ import("System.Numerics")
 
 local UI = {
     PREFIX = "[PVP]",
-    ECHO_TO_CHAT = true,
+    ECHO_ON_START = true, -- only echo once at script start
+    ECHO_TO_CHAT = true,  -- NOTE: this echoes ALL logs; if you truly want only 1 echo, set false
 }
 
 local function _echoLine(s) yield("/echo " .. tostring(s)) end
@@ -24,7 +47,6 @@ local function _logLine(s)
 end
 local function _fmt(msg, ...) return string.format("%s %s", UI.PREFIX, string.format(msg, ...)) end
 
-function Echo(msg, ...) _echoLine(_fmt(msg, ...)) end
 function Log(msg, ...) _logLine(_fmt(msg, ...)) end
 
 TIME = {
@@ -88,6 +110,7 @@ function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     return false
 end
 
+-- REQUIRED: AwaitAddonReady
 function AwaitAddonReady(name, timeoutSec)
     local t = toNumberSafe(timeoutSec, TIME.TIMEOUT, 0.1)
     Log("AwaitAddonReady: %s", tostring(name))
@@ -101,6 +124,7 @@ function AwaitAddonReady(name, timeoutSec)
     return ok
 end
 
+-- REQUIRED: SafeCallback
 local function _quoteArg(s)
     s = tostring(s)
     s = s:gsub("\\", "\\\\"):gsub('"', '\\"')
@@ -116,6 +140,7 @@ function SafeCallback(...)
         return false
     end
 
+    -- Optional "update" argument (boolean/string). If not provided, default true.
     local update = args[idx]; idx = idx + 1
     local updateStr = "true"
     if type(update) == "boolean" then
@@ -193,6 +218,7 @@ local SAFE_ANCHORS = {
     [1294] = { 187.177, -2.000, 99.600,  11.792, -2.000, 100.139 }, -- Bayside Battleground (alt)
 }
 
+-- JobId -> Limit Break action name
 local LIMIT_BREAK_BY_JOB = {
     { job = 19, name = "Phalanx" },
     { job = 21, name = "Primal Scream" },
@@ -378,6 +404,10 @@ dutyBaselineTime = nil
 baselineCaptured = false
 timerMovedFromBaseline = false
 
+-- NEW: portrait quickchat threshold state
+portraitHelloThreshold = nil   -- number in [5..29]
+portraitHelloSent = false
+
 local function inPvPArea()
     local terr = Svc and Svc.ClientState and Svc.ClientState.TerritoryType
     if terr and SAFE_ANCHORS[terr] ~= nil then return true end
@@ -401,18 +431,20 @@ local function resetAllState(reason)
     baselineCaptured = false
     timerMovedFromBaseline = false
 
+    -- reset portrait hello
+    portraitHelloThreshold = nil
+    portraitHelloSent = false
+
     if reason then Log("reset: %s", tostring(reason)) end
 end
 
 -- =========================================================
 -- One-time start banner
 -- =========================================================
-if UI.ECHO_TO_CHAT then
-    Log("script starting")
-else
-    Log("script starting")
-    Echo("script starting")
+if UI.ECHO_ON_START then
+    _echoLine(_fmt("script starting"))
 end
+Log("script starting")
 
 -- =========================================================
 -- Optional title flips
@@ -424,9 +456,8 @@ if SET_GARO_TITLES then
 end
 
 -- =========================================================
--- Set DutyFinder 
+-- Initial DF clicks (as you had)
 -- =========================================================
-Log("Setting Duty Finder to Casual PVP Match")
 yield("/dutyfinder")
 AwaitAddonReady("ContentsFinder")
 SafeCallback("ContentsFinder", 12, 1)
@@ -513,7 +544,12 @@ while RUN_LOOP do
         ranSafetyMoveThisDuty = false
         hasEnabledRotationThisLife = false
 
-        Log("Duty entry baseline ContentTimeLeft -> %s", tostring(dutyBaselineTime))
+        -- NEW: pick hello threshold for this duty (5..29 inclusive) and reset sent flag
+        portraitHelloThreshold = randInt(5, 29)
+        portraitHelloSent = false
+
+        Log("duty entry baseline ContentTimeLeft -> %s", tostring(dutyBaselineTime))
+        Log("portrait hello threshold set -> %ds", tostring(portraitHelloThreshold))
     end
 
     -- =====================================================
@@ -523,7 +559,7 @@ while RUN_LOOP do
         checkDeathAndReapplyRotation()
 
         if not announcedEntered then
-            Log("Entered PvP match; waiting for portraits + gate (ContentTimeLeft)")
+            Log("entered PvP match; waiting for portraits + gate (ContentTimeLeft)")
             yield("/vnav stop")
             announcedEntered = true
         end
@@ -542,6 +578,18 @@ while RUN_LOOP do
                 Log("Intro/portraits phase detected (timer ~31s)")
                 announcedPortrait = true
             end
+
+            -- NEW: during portraits, send Hello once when timer drops to/below threshold, but still above 5
+            if (not portraitHelloSent)
+                and portraitHelloThreshold ~= nil
+                and tLeft <= portraitHelloThreshold
+                and tLeft > 5
+            then
+                yield("/quickchat Hello")
+                portraitHelloSent = true
+                Log("quickchat Hello sent at tLeft=%.1f (threshold=%ds)", tonumber(tLeft) or 0, tonumber(portraitHelloThreshold) or 0)
+            end
+
             yield("/vnav stop")
             Sleep(1.0)
         else
