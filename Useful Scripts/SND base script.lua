@@ -13,9 +13,9 @@ import("System.Numerics")
 echoLog = true
 PREFIX  = "[SND]"
 
--- =========================================================
+-- ==============================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
--- =========================================================
+-- ==============================================================
 local function _echo(s)
     yield("/echo " .. tostring(s))
 end
@@ -67,6 +67,18 @@ function toNumberSafe(s, default, min, max)
     if min ~= nil and n < min then n = min end
     if max ~= nil and n > max then n = max end
     return n
+end
+
+-- =========================================================
+-- Inventory / Item Helper
+-- =========================================================
+local function ItemCount(itemId)
+    return tonumber(Inventory.GetItemCount(itemId)) or 0
+end
+
+local function ItemUse(itemId)
+    local it = Inventory.GetInventoryItem(itemId)
+    if it then it:Use() end
 end
 
 -- =========================================================
@@ -290,7 +302,7 @@ function GetMyNode(addonName, index)
 end
 
 -- =========================================================
--- Character / Target / Position Helpers
+-- Character / Mount / Target / Position Helpers
 -- =========================================================
 function GetCharacterName()
     return (Entity and Entity.Player and Entity.Player.Name)
@@ -313,6 +325,18 @@ end
 function GetZoneId()
     local cs = Svc and Svc.ClientState
     return cs and cs.TerritoryType or nil
+end
+
+function Mount()
+    if not Svc.Condition[CharacterCondition.mounted] then
+        yield('/gaction "mount roulette"')
+    end
+end
+
+function Dismount()
+    if Svc.Condition[CharacterCondition.mounted] then
+        yield('/ac dismount')
+    end
 end
 
 -- =========================================================
@@ -498,7 +522,7 @@ function StopCloseVnav(dest, stopDistance)
     while IPC.vnavmesh.IsRunning() do
         local me = Entity and Entity.Player
         if me and me.Position then
-            if Vector3.Distance(me.Position, dest) < 10
+            if Vector3.Distance(me.Position, dest) < 15
                 and GetCharacterCondition(CharacterCondition.mounted) then
                 Dismount()
             end
