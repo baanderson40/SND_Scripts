@@ -3,6 +3,10 @@
 author: baanderson40
 version: 0.0.1
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
+plugin_dependencies:
+- vnavmesh
+- TextAdvance
+
 [[End Metadata]]
 --]=====]
 
