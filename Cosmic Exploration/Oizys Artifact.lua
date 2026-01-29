@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.3
+version: 0.0.4
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -1030,7 +1030,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
             local ok = WaitUntil(function()
                 return IsAddonReady("SelectYesno") or artifactActive()
-            end, 3.0, TIME.POLL, 0.2)
+            end, 10.0, TIME.POLL, 0.2)
 
             if not ok then
                 Log("MODULE_USE: neither SelectYesno nor Artifact appeared")
