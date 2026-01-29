@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.2
+version: 0.0.3
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -55,7 +55,7 @@ end
 TIME = {
     POLL    = 0.10,  -- canonical polling step
     TIMEOUT = 10.0,  -- default time budget
-    STABLE  = 0.0    -- default stability window
+    STABLE  = 0.20   -- default stability window
 }
 
 local function _sleep(seconds)
@@ -567,7 +567,7 @@ function StopCloseVnav(dest, stopDistance)
     while IPC.vnavmesh.IsRunning() do
         local me = Entity and Entity.Player
         if me and me.Position then
-            if Vector3.Distance(me.Position, dest) < 10
+            if Vector3.Distance(me.Position, dest) < 20
                 and GetCharacterCondition(CharacterCondition.mounted) then
                 Dismount()
             end
@@ -903,7 +903,6 @@ local function DistanceToBase()
     return Vector3.Distance(me.Position, BASE_POS)
 end
 
-
 local function StellarReturn()
     yield('/gaction "Duty Action"')
     sleep(4)
@@ -930,8 +929,7 @@ local function AncientRecordCount()
 end
 
 local function NextAncientRecord()
-    -- priority: gold -> silver -> bronze
-    local order = { 50411, 50412, 50413 }
+    local order = { 50411, 50412, 50413 } -- gold -> silver -> bronze
     for _, id in ipairs(order) do
         if ItemCount(id) > 0 then
             return id, RECORD_TO_LISTCOL[id]
@@ -944,9 +942,7 @@ end
 -- Main Loop
 -- =========================================================
 EchoOnce("Starting Oizys Artifact script.")
-
--- Enable TextAdvance
-yield("/at y")
+yield("/at y") -- enable TextAdvance
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
@@ -962,11 +958,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             gotoState(STATE.MODULE_PURCHASE)
 
         elseif artifactActive() then
-            if shouldReturnBaseBeforeArtifact() then
-                gotoState(STATE.RETURN_BASE)
-            else
-                gotoState(STATE.ARTIFACT_INTERACT)
-            end
+            gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
+                      or STATE.ARTIFACT_INTERACT)
 
         elseif modules > 0 then
             gotoState(STATE.MODULE_USE)
@@ -983,12 +976,12 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- ======================
     elseif sm.s == STATE.RETURN_BASE then
         if StellarReturn() then
-            sleep(2)
-            gotoState(STATE.ARTIFACT_INTERACT)
+            Sleep(TIME.POLL)
         else
             MoveNearVnav(BASE_POS, 3.0, false)
-            gotoState(STATE.ARTIFACT_INTERACT)
         end
+        gotoState(STATE.ARTIFACT_INTERACT)
+        Sleep(0.3)
 
     -- ======================
     -- MODULE_PURCHASE
@@ -1006,17 +999,21 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
             if purchase > 0 and AwaitAddonReady("ShopExchangeCurrency", 5) then
                 SafeCallback("ShopExchangeCurrency", 0, 0, purchase)
+                Sleep(TIME.STABLE)
             end
 
             if purchase > 0 and AwaitAddonReady("SelectYesno", 5) then
                 SafeCallback("SelectYesno", 0)
+                Sleep(TIME.STABLE)
             end
 
             if AwaitAddonReady("ShopExchangeCurrency", 5) then
                 SafeCallback("ShopExchangeCurrency", -1)
+                Sleep(TIME.STABLE)
             end
 
             gotoState(STATE.READY)
+            Sleep(0.5)
         elseif timedOut(8) then
             gotoState(STATE.FAIL)
         end
@@ -1031,15 +1028,24 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         else
             ItemUse(oizysDroneModule.itemId)
 
-            if not AwaitAddonReady("SelectYesno", 5) then
+            local ok = WaitUntil(function()
+                return IsAddonReady("SelectYesno") or artifactActive()
+            end, 3.0, TIME.POLL, 0.2)
+
+            if not ok then
+                Log("MODULE_USE: neither SelectYesno nor Artifact appeared")
                 gotoState(STATE.FAIL)
             else
-                SafeCallback("SelectYesno", 0)
+                if IsAddonReady("SelectYesno") then
+                    SafeCallback("SelectYesno", 0)
+                end
 
-                if WaitEntityByName("Artifact", 6.0) then
+                if WaitEntityByName("Artifact", 10.0) then
+                    Sleep(0.3)
                     gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
                               or STATE.ARTIFACT_INTERACT)
                 else
+                    Log("MODULE_USE: Artifact did not spawn in time")
                     gotoState(STATE.FAIL)
                 end
             end
@@ -1053,10 +1059,11 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         if not ent then
             gotoState(STATE.READY)
         else
-            MoveNearVnav(ent.Position)
+            MoveNearVnav(ent.Position, 3.0, false)
 
             if InteractByName("Artifact", 5) then
                 WaitEntityGone("Artifact", 6.0)
+                Sleep(0.5)
                 gotoState(STATE.READY)
             elseif timedOut(8) then
                 gotoState(STATE.FAIL)
@@ -1072,51 +1079,55 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             if not StellarReturn() then
                 gotoState(STATE.FAIL)
             else
+                Sleep(1.5)
                 gotoState(STATE.TURNIN_FLOW)
             end
-        end
+        else
+            MoveNearVnav(artifactNPC.position, 3.0, false)
+            InteractByName(artifactNPC.name)
 
-        MoveNearVnav(artifactNPC.position, 3.0, false)
-        InteractByName(artifactNPC.name)
+            if AwaitAddonReady("SelectString", 5) then
+                SafeCallback("SelectString", 1)
 
-        if AwaitAddonReady("SelectString", 5) then
-            SafeCallback("SelectString", 1)
+                local lastTotal = AncientRecordCount()
+                local stuck = 0
 
-            local lastTotal = AncientRecordCount()
-            local stuck = 0
+                while AncientRecordCount() > 0 do
+                    local id, col = NextAncientRecord()
+                    if not id then break end
 
-            while AncientRecordCount() > 0 do
-                local id, col = NextAncientRecord()
-                if not id then break end
+                    if not AwaitAddonReady("ItemInspectionList", 5) then gotoState(STATE.FAIL); break end
+                    SafeCallback("ItemInspectionList", 0, col)
 
-                if not AwaitAddonReady("ItemInspectionList", 5) then gotoState(STATE.FAIL); break end
-                SafeCallback("ItemInspectionList", 0, col)
+                    if not AwaitAddonReady("SelectYesno", 5) then gotoState(STATE.FAIL); break end
+                    SafeCallback("SelectYesno", 0)
 
-                if not AwaitAddonReady("SelectYesno", 5) then gotoState(STATE.FAIL); break end
-                SafeCallback("SelectYesno", 0)
+                    if not AwaitAddonReady("ItemInspectionResult", 5) then gotoState(STATE.FAIL); break end
+                    SafeCallback("ItemInspectionResult", -1)
 
-                if not AwaitAddonReady("ItemInspectionResult", 5) then gotoState(STATE.FAIL); break end
-                SafeCallback("ItemInspectionResult", -1)
+                    Sleep(0.3)
 
-                Sleep(0.3)
-
-                local now = AncientRecordCount()
-                if now >= lastTotal then
-                    stuck = stuck + 1
-                    if stuck >= 5 then gotoState(STATE.FAIL); break end
-                else
-                    stuck = 0
-                    lastTotal = now
+                    local now = AncientRecordCount()
+                    if now >= lastTotal then
+                        stuck = stuck + 1
+                        if stuck >= 5 then gotoState(STATE.FAIL); break end
+                    else
+                        stuck = 0
+                        lastTotal = now
+                    end
                 end
-            end
 
-            if IsAddonReady("ItemInspectionList") then
-                SafeCallback("ItemInspectionList", -1)
-            end
+                if IsAddonReady("ItemInspectionList") then
+                    SafeCallback("ItemInspectionList", -1)
+                end
 
-            if sm.s ~= STATE.FAIL then gotoState(STATE.READY) end
-        elseif timedOut(10) then
-            gotoState(STATE.FAIL)
+                if sm.s ~= STATE.FAIL then
+                    gotoState(STATE.READY)
+                    Sleep(0.5)
+                end
+            elseif timedOut(10) then
+                gotoState(STATE.FAIL)
+            end
         end
     end
 
