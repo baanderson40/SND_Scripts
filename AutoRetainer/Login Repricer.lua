@@ -27,7 +27,7 @@ local CFG = {
   UNDERCUT = 1,                 -- Undercut amount. If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
 
   FAST = {                      -- Market board read timing behavior.
-    maxWaitSec      = 15,       -- Max seconds to wait for first row of ItemSearchResult to become readable.
+    maxWaitSec      = 15,        -- Max seconds to wait for first row of ItemSearchResult to become readable.
     refreshAfterSec = 5,        -- If row not readable after this many seconds, trigger one refresh.
   },
 
@@ -61,7 +61,7 @@ local CFG = {
 
     -- Define items here with per-retainer stack limits.
     items = {
-      [#####] = { minQty = 1,  defaultPrice = 4000000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, -- Fortune Carrot
+      [#####] = { minQty = 1,  defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, --
 },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
@@ -79,7 +79,7 @@ local CFG = {
 local TARGET_RETAINERS = {
    "Retainer1",
    "Retainer2",
-   "Retainer3", 
+   "Retainer3",
 }
 
 -- Your own retainers—don’t undercut these names
@@ -606,10 +606,27 @@ function SellNewItem(itemId, perItemCfg)
   local minQty       = tonumber(perItemCfg and perItemCfg.minQty) or tonumber(CFG.NEW_SALES.defaultMinQty) or 1
   local defaultPrice = tonumber(perItemCfg and perItemCfg.defaultPrice) or tonumber(CFG.NEW_SALES.defaultPrice)
 
+  -- Normalize Inventory.GetInventoryItem(...) return shapes across wrapper versions.
+  -- Some builds return (count, itemRecord) or (slot, itemRecord) or just itemRecord.
+  local function NormalizeInvItemResult(r1, r2, r3, r4)
+    if type(r1) == "table" or type(r1) == "userdata" then return r1 end
+    if type(r2) == "table" or type(r2) == "userdata" then return r2 end
+    if type(r3) == "table" or type(r3) == "userdata" then return r3 end
+    if type(r4) == "table" or type(r4) == "userdata" then return r4 end
+    return nil
+  end
+
   while true do
-    local ok,res = pcall(function() return Inventory.GetInventoryItem(itemId) end)
-    if not ok or not res then
-      dbg(("SellNewItem: helper found no stack for %d; stop."):format(itemId))
+    -- Capture all returns; some wrappers return (count, record) instead of just record.
+    local ok, r1, r2, r3, r4 = pcall(function()
+      return Inventory.GetInventoryItem(itemId)
+    end)
+
+    local res = ok and NormalizeInvItemResult(r1, r2, r3, r4) or nil
+    if not res then
+      dbg(("SellNewItem: no item record for %d (ret1=%s ret2=%s)"):format(
+        itemId, tostring(r1), tostring(r2)
+      ))
       return false
     end
 
@@ -621,7 +638,14 @@ function SellNewItem(itemId, perItemCfg)
     end
 
     local slot0 = tonumber(res.Slot) or 0
-    local qty   = tonumber(res.Quantity or res.Count or res.StackSize or res.Amount or 0) or 0
+
+    -- Qty: prefer record fields; fall back to first return if that was a count.
+    local qty = tonumber(res.Quantity)
+             or tonumber(res.Count)
+             or tonumber(res.StackSize)
+             or tonumber(res.Amount)
+             or tonumber(r1)
+             or 0
 
     -- Respect min quantity threshold.
     if qty < minQty then
@@ -870,13 +894,8 @@ function RepriceTargetsOnRetainerList()
     CloseBackToRetainerList()
     yield("/wait 0.1")
   end
+
   CloseRetainerList()
-
-  if IPC.AutoRetainer.GetMultiModeEnabled() == false then
-    IPC.AutoRetainer.SetMultiModeEnabled(true)
-  end
-
-  SuppressAR(false)
 end
 
 ------------------------------------------------------------
@@ -910,14 +929,20 @@ end
 function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Login Repricer] Auto trigger ENABLED")  end
 function AutoDisable() AUTO_ENABLED = false; yield("/echo [Login Repricer] Auto trigger DISABLED") end
 
+yield("/echo [Login Repricer] AutoBell polling loop started.")
+
 SuppressAR(true)
+
 repeat
     yield("/wait 0.2")
 until Player.Available
+
 IPC.Lifestream.ExecuteCommand("auto")
 yield("/wait 3")
+
 repeat
     yield("/wait .2")
 until not PlayerMoving()
 yield("/wait 0.2")
+
 RepriceTargetsOnRetainerList()
