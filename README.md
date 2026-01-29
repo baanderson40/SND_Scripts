@@ -8,14 +8,11 @@ Collection of various SND scripts
 ## Scripts
 - Auto Retainer
   - Auto Repricer
+  - Login Repricer
   - Process AutoRetainer
-  - Repricer
     
 - Cosmic Exploration
-  - Cosmic Batanist
-  - Cosmic Fisher
-  - Cosmic Helper
-  - Cosmic Miner
+  - Oizys Artifact
     
 - Dungeons
   - Helio Farm
@@ -29,7 +26,13 @@ Collection of various SND scripts
 - Manderville Gold Saucer Point
   - Sell TT Cards
   - Triple Triad Farm
-    
+
+- Occult Cresent
+   - South Horn - Silver.lua
+
+- PVP
+   - Causal Match PVP
+
 - Useful Scripts
   - Random scripts for different testing in snd
 
