@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.4
+version: 0.0.5
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -1013,7 +1013,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             end
 
             gotoState(STATE.READY)
-            Sleep(0.5)
+            Sleep(TIME.STABLE)
         elseif timedOut(8) then
             gotoState(STATE.FAIL)
         end
@@ -1022,28 +1022,45 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- MODULE_USE
     -- ======================
     elseif sm.s == STATE.MODULE_USE then
+        -- If an artifact is already active, do NOT try to use another module
         if artifactActive() then
             gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
-                      or STATE.ARTIFACT_INTERACT)
+                    or STATE.ARTIFACT_INTERACT)
         else
-            ItemUse(oizysDroneModule.itemId)
+            local usedOk = false
 
-            local ok = WaitUntil(function()
-                return IsAddonReady("SelectYesno") or artifactActive()
-            end, 10.0, TIME.POLL, 0.2)
-
-            if not ok then
-                Log("MODULE_USE: neither SelectYesno nor Artifact appeared")
-                gotoState(STATE.FAIL)
+            local count = ItemCount(oizysDroneModule.itemId)
+            if count <= 0 then
+                gotoState(STATE.READY)
             else
-                if IsAddonReady("SelectYesno") then
-                    SafeCallback("SelectYesno", 0)
+                -- Retry use until SelectYesno appears (animation-lock safe)
+                for i = 1, 10 do
+                    ItemUse(oizysDroneModule.itemId)
+
+                    if WaitUntil(function()
+                        return IsAddonReady("SelectYesno") and IsAddonVisible("SelectYesno")
+                    end, 0.6, TIME.POLL, 0.1) then
+                        usedOk = true
+                        break
+                    end
+
+                    Sleep(TIME.STABLE)
                 end
 
+                if not usedOk then
+                    Log("MODULE_USE: SelectYesno never appeared (animation lock)")
+                    gotoState(STATE.FAIL)
+                end
+            end
+
+            -- Proceed only if we successfully triggered the confirmation dialog
+            if sm.s == STATE.MODULE_USE and usedOk then
+                SafeCallback("SelectYesno", 0)
+
                 if WaitEntityByName("Artifact", 10.0) then
-                    Sleep(0.3)
+                    Sleep(TIME.STABLE)
                     gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
-                              or STATE.ARTIFACT_INTERACT)
+                            or STATE.ARTIFACT_INTERACT)
                 else
                     Log("MODULE_USE: Artifact did not spawn in time")
                     gotoState(STATE.FAIL)
@@ -1056,17 +1073,30 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- ======================
     elseif sm.s == STATE.ARTIFACT_INTERACT then
         local ent = artifactEntity()
-        if not ent then
+        if not (ent and ent.Position) then
             gotoState(STATE.READY)
         else
-            MoveNearVnav(ent.Position, 3.0, false)
+            local targetPos = ent.Position
 
-            if InteractByName("Artifact", 5) then
-                WaitEntityGone("Artifact", 6.0)
-                Sleep(0.5)
-                gotoState(STATE.READY)
-            elseif timedOut(8) then
-                gotoState(STATE.FAIL)
+            MoveNearVnav(targetPos, 3.0, false)
+
+            local mePos = GetCharacterPosition()
+            ent = artifactEntity()
+
+            if not (mePos and ent and ent.Position) then
+                Sleep(TIME.POLL)
+            else
+                if not IsWithinDistance(mePos, ent.Position, 3.2) then
+                    Sleep(TIME.POLL)
+                else
+                    if InteractByName("Artifact", 5) then
+                        WaitEntityGone("Artifact", 6.0)
+                        Sleep(TIME.STABLE)
+                        gotoState(STATE.READY)
+                    elseif timedOut(8) then
+                        gotoState(STATE.FAIL)
+                    end
+                end
             end
         end
 
