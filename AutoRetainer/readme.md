@@ -14,7 +14,7 @@ Retainer centered SND lua scripts.
 - Login Repricer.lua
   - Automatically reprices sale items after logging in. Combine with AutoRetainer MultiMode and "Wait on login screen" setting.
 - Repricer.lua
-  - Manual version of repricer. Start script then interact with Summoning Bell.  
+  - Moved to Old directory  
 
 ## Installation
 - Copy script's Github URL and paste into SND GitHub URL option to import and update.
