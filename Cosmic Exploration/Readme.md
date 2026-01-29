@@ -6,22 +6,14 @@
 Cosmic Exploration centered SND2 lua scripts. 
 
 ## Scripts
-- Cosmic Botanist
-  - Automatically collect research and submit for relic on Phaenna.
+- Oizys Artifact
+  - Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 
-- Cosmic Fisher
-  - Automatically collect research and submit for relic on Phaenna.
-
-- Cosmic Helper
-  - Automatically jump if you get stuck while moving.
-  - Switch between jobs when EXP or class score goals are met (based on ICE settings).
-  - Pause missions once the Lunar Credits limit is reached and spend them on Gamba.
-  - Optionally wait at random spot for a set time before moving.
-  - Pause Cosmic missions when retainers’ ventures are ready.
-  - Automatically turn in research points for relic.
-    
-- Cosmic Miner
-  - Automatically collect research and submit for relic on Phaenna.
+- Moved to Old directory
+  - Cosmic Botanist
+  - Cosmic Fisher
+  - Cosmic Helper
+  - Cosmic Miner
 
 ## Installation
 - Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
