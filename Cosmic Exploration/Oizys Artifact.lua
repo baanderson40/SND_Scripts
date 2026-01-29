@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
+version: 0.0.2
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -39,6 +39,15 @@ function Echof(msg, ...)  _echo(_fmt(msg, ...)) end
 
 Log,  log  = Logf,  Logf
 Echo, echo = Echof, Echof
+
+function EchoOnce(msg, ...)
+    if echoLog then
+        Log(msg, ...)
+    else
+        Echo(msg, ...)
+        Log(msg, ...)
+    end
+end
 
 -- =========================================================
 -- Timing constants + Sleep
@@ -160,7 +169,7 @@ function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
 end
 
 function AwaitAddonReady(name, timeoutSec)
-    Echo("awaiting ready: %s", tostring(name))
+    Log("awaiting ready: %s", tostring(name))
     local ok = WaitUntil(function()
         local addon = _get_addon(name)
         return addon and addon.Ready
@@ -170,7 +179,7 @@ function AwaitAddonReady(name, timeoutSec)
 end
 
 function AwaitAddonVisible(name, timeoutSec)
-    Echo("awaiting visible: %s", tostring(name))
+    Log("awaiting visible: %s", tostring(name))
     local ok = WaitUntil(function()
         local addon = _get_addon(name)
         return addon and addon.Exists
@@ -232,7 +241,7 @@ function AwaitAddonNodeVisible(addonName, timeoutSec, path, expectedOrMatcher, m
     if type(path) ~= "table" or #path == 0 then
         Log("AwaitAddonNodeVisible: invalid path for %s", addonName); return false
     end
-    Echo("awaiting node visible: %s", addonName)
+    Log("awaiting node visible: %s", addonName)
 
     if type(expectedOrMatcher) == "function" then
         local ok = WaitUntil(function()
@@ -308,6 +317,38 @@ end
 -- =========================================================
 -- Character / Mount / Target / Position Helpers
 -- =========================================================
+function GetCharacterCondition(i, bool)
+    if bool == nil then bool = true end
+    return Svc and Svc.Condition and (Svc.Condition[i] == bool) or false
+end
+
+function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
+    want       = (want ~= false)
+    stableSec  = tonumber(stableSec)  or 2.0
+    timeoutSec = tonumber(timeoutSec) or 15.0
+    pollSec    = tonumber(pollSec)    or TIME.POLL
+
+    if not (Svc and Svc.Condition) then
+        log("WaitConditionStable: Svc.Condition unavailable"); return false
+    end
+
+    local t, startHold = 0.0, nil
+    while t < timeoutSec do
+        local ok = GetCharacterCondition(idx, want)
+        if ok then
+            if not startHold then startHold = t end
+            if (t - startHold) >= stableSec then return true end
+        else
+            startHold = nil
+        end
+        sleep(pollSec); t = t + pollSec
+    end
+
+    Log(string.format("WaitConditionStable timeout (idx=%s want=%s stable=%.2fs)",
+        tostring(idx), tostring(want), stableSec))
+    return false
+end
+
 function GetCharacterName()
     return (Entity and Entity.Player and Entity.Player.Name)
 end
@@ -449,7 +490,7 @@ function SafeCallback(...)
         end
     end
 
-    Echo("calling: %s", call)
+    Log("calling: %s", call)
     if IsAddonReady(addon) and IsAddonVisible(addon) then
         yield(call)
         return true
@@ -787,14 +828,12 @@ CharacterCondition = {
 -- =========================================================
 -- Variable States
 -- =========================================================
-
 oizysDroneModule = {name = "Oizys Drone Module", itemId = 50414, price = 200 }
 artifactNPC = { name = "Kaede", position = Vector3(-206.378, 0.500, 131.090) }
 
 -- =========================================================
 -- STATE MACHINE
 -- =========================================================
-
 STATE = {
     READY              = "READY",
     RETURN_BASE        = "RETURN_BASE",
@@ -858,6 +897,19 @@ local function shouldReturnBaseBeforeArtifact()
          > Vector3.Distance(BASE_POS, art.Position)
 end
 
+local function DistanceToBase()
+    local me = Entity and Entity.Player
+    if not (me and me.Position) then return math.huge end
+    return Vector3.Distance(me.Position, BASE_POS)
+end
+
+
+local function StellarReturn()
+    yield('/gaction "Duty Action"')
+    sleep(4)
+    return WaitConditionStable(45, false, 2, 10)
+end
+
 -- =========================================================
 -- Ancient Record helpers
 -- =========================================================
@@ -891,7 +943,7 @@ end
 -- =========================================================
 -- Main Loop
 -- =========================================================
-echo("Starting Oizys Artifact script.")
+EchoOnce("Starting Oizys Artifact script.")
 
 -- Enable TextAdvance
 yield("/at y")
@@ -930,8 +982,13 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- RETURN_BASE
     -- ======================
     elseif sm.s == STATE.RETURN_BASE then
-        MoveNearVnav(BASE_POS, 3.0, false)
-        gotoState(STATE.ARTIFACT_INTERACT)
+        if StellarReturn() then
+            sleep(2)
+            gotoState(STATE.ARTIFACT_INTERACT)
+        else
+            MoveNearVnav(BASE_POS, 3.0, false)
+            gotoState(STATE.ARTIFACT_INTERACT)
+        end
 
     -- ======================
     -- MODULE_PURCHASE
@@ -1010,6 +1067,15 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- TURNIN_FLOW
     -- ======================
     elseif sm.s == STATE.TURNIN_FLOW then
+        if DistanceToBase() >= 75 then
+            Log("TURNIN: far from base, using StellarReturn")
+            if not StellarReturn() then
+                gotoState(STATE.FAIL)
+            else
+                gotoState(STATE.TURNIN_FLOW)
+            end
+        end
+
         MoveNearVnav(artifactNPC.position, 3.0, false)
         InteractByName(artifactNPC.name)
 
@@ -1057,4 +1123,4 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     Sleep(0.1)
 end
 
-Log("STATE MACHINE EXIT: %s", sm.s)
+EchoOnce("STATE MACHINE EXIT: %s", sm.s)
