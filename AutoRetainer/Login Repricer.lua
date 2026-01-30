@@ -897,7 +897,7 @@ function RepriceTargetsOnRetainerList()
 
   CloseRetainerList()
 
-  SuppressAR(true)
+  SuppressAR(false)
 end
 
 ------------------------------------------------------------
