@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.6
+version: 0.0.7
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -654,6 +654,11 @@ function StopCloseVnav(dest, stopDistance)
     while IPC.vnavmesh.IsRunning() do
         local me = Entity and Entity.Player
         if me and me.Position then
+            if OnCosmoLiner() then
+                IPC.vnavmesh.Stop()
+                return false
+            end
+
             if Vector3.Distance(me.Position, dest) < 20
                 and GetCharacterCondition(CharacterCondition.mounted) then
                 Dismount()
@@ -926,6 +931,8 @@ CharacterCondition = {
 oizysDroneModule = {name = "Oizys Drone Module", itemId = 50414, price = 200 }
 artifactNPC = { name = "Kaede", position = Vector3(-206.378, 0.500, 131.090) }
 
+local cosmoWasOn = false
+
 -- =========================================================
 -- STATE MACHINE
 -- =========================================================
@@ -1004,6 +1011,11 @@ local function StellarReturn()
     return WaitConditionStable(45, false, 2, 10)
 end
 
+function OnCosmoLiner()
+    return GetCharacterCondition(CharacterCondition.watchingCutscene)
+       and GetCharacterCondition(CharacterCondition.unknown101)
+end
+
 -- =========================================================
 -- Ancient Record helpers
 -- =========================================================
@@ -1038,9 +1050,17 @@ end
 -- =========================================================
 EchoOnce("Starting Oizys Artifact script.")
 ToggleTextAdvance("enable") -- Enable TextAdvance if not
-if HasPlugin("YesAlready") then ToggleYesAlready("disable") end -- Disable YesAlready is installed and enabled
+if HasPlugin("YesAlready") then ToggleYesAlready("disable") end -- Disable YesAlready if installed
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
+    if OnCosmoLiner() then
+        cosmoWasOn = true
+        Sleep(TIME.POLL)
+        goto continue
+    elseif cosmoWasOn then
+        cosmoWasOn = false
+        Sleep(TIME.STABLE)
+    end
 
     -- ======================
     -- READY
@@ -1118,7 +1138,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- MODULE_USE
     -- ======================
     elseif sm.s == STATE.MODULE_USE then
-        -- If an artifact is already active, do NOT try to use another module
         if artifactActive() then
             gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
                     or STATE.ARTIFACT_INTERACT)
@@ -1129,7 +1148,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             if count <= 0 then
                 gotoState(STATE.READY)
             else
-                -- Retry use until SelectYesno appears (animation-lock safe)
                 for i = 1, 10 do
                     ItemUse(oizysDroneModule.itemId)
 
@@ -1149,7 +1167,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 end
             end
 
-            -- Proceed only if we successfully triggered the confirmation dialog
             if sm.s == STATE.MODULE_USE and usedOk then
                 SafeCallback("SelectYesno", 0)
 
@@ -1172,27 +1189,16 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         if not (ent and ent.Position) then
             gotoState(STATE.READY)
         else
-            local targetPos = ent.Position
+            if not MoveNearVnav(ent.Position, 3.0, false) then
+                goto continue
+            end
 
-            MoveNearVnav(targetPos, 3.0, false)
-
-            local mePos = GetCharacterPosition()
-            ent = artifactEntity()
-
-            if not (mePos and ent and ent.Position) then
-                Sleep(TIME.POLL)
-            else
-                if not IsWithinDistance(mePos, ent.Position, 3.2) then
-                    Sleep(TIME.POLL)
-                else
-                    if InteractByName("Artifact", 5) then
-                        WaitEntityGone("Artifact", 6.0)
-                        Sleep(TIME.STABLE)
-                        gotoState(STATE.READY)
-                    elseif timedOut(8) then
-                        gotoState(STATE.FAIL)
-                    end
-                end
+            if InteractByName("Artifact", 5) then
+                WaitEntityGone("Artifact", 6.0)
+                Sleep(TIME.STABLE)
+                gotoState(STATE.READY)
+            elseif timedOut(8) then
+                gotoState(STATE.FAIL)
             end
         end
 
@@ -1258,6 +1264,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     end
 
     Sleep(0.1)
+    ::continue::
 end
 
 EchoOnce("STATE MACHINE EXIT: %s", sm.s)
