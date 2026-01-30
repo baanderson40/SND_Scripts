@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.5
+version: 0.0.6
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -55,7 +55,7 @@ end
 TIME = {
     POLL    = 0.10,  -- canonical polling step
     TIMEOUT = 10.0,  -- default time budget
-    STABLE  = 0.20   -- default stability window
+    STABLE  = 0.30   -- default stability window
 }
 
 local function _sleep(seconds)
@@ -523,6 +523,93 @@ function GetPlugins()
     end
 end
 
+changedTextAdvance = false
+textAdvanceOriginalState = nil
+function ToggleTextAdvance(wanted)
+    local desired = nil
+
+    if wanted == "enable" then
+        desired = true
+    elseif wanted == "disable" then
+        desired = false
+    elseif wanted == "restore" then
+        if changedTextAdvance and textAdvanceOriginalState ~= nil then
+            local current = IPC.TextAdvance.IsEnabled()
+            if current ~= textAdvanceOriginalState then
+                Log("TextAdvance: restoring enabled=%s", tostring(textAdvanceOriginalState))
+                yield(textAdvanceOriginalState and "/at yes" or "/at no")
+            else
+                Log("TextAdvance: already in original state")
+            end
+        end
+
+        changedTextAdvance = false
+        textAdvanceOriginalState = nil
+        return
+    else
+        Log("TextAdvance: invalid wanted=%s (use enable|disable|restore)", tostring(wanted))
+        return
+    end
+
+    local current = IPC.TextAdvance.IsEnabled()
+
+    if textAdvanceOriginalState == nil then
+        textAdvanceOriginalState = current
+    end
+
+    if current ~= desired then
+        Log("TextAdvance: setting enabled=%s (script-owned)", tostring(desired))
+        yield(desired and "/at yes" or "/at no")
+        changedTextAdvance = true
+    else
+        Log("TextAdvance: already enabled=%s (no change)", tostring(desired))
+    end
+end
+
+changedYesAlready = false
+yesAlreadyOriginalState = nil
+function ToggleYesAlready(wanted)
+    local desired = nil
+
+    if wanted == "enable" then
+        desired = true
+    elseif wanted == "disable" then
+        desired = false
+    elseif wanted == "restore" then
+        -- restore only if we changed it
+        if changedYesAlready and yesAlreadyOriginalState ~= nil then
+            local current = IPC.YesAlready.IsPluginEnabled()
+            if current ~= yesAlreadyOriginalState then
+                Log("YesAlready: restoring enabled=%s", tostring(yesAlreadyOriginalState))
+                IPC.YesAlready.SetPluginEnabled(yesAlreadyOriginalState)
+            else
+                Log("YesAlready: already in original state")
+            end
+        end
+
+        changedYesAlready = false
+        yesAlreadyOriginalState = nil
+        return
+    else
+        Log("YesAlready: invalid wanted=%s (use enable|disable|restore)", tostring(wanted))
+        return
+    end
+
+    local current = IPC.YesAlready.IsPluginEnabled()
+
+    if yesAlreadyOriginalState == nil then
+        yesAlreadyOriginalState = current
+    end
+
+    if current ~= desired then
+        Log("YesAlready: setting enabled=%s (script-owned)", tostring(desired))
+        IPC.YesAlready.SetPluginEnabled(desired)
+        changedYesAlready = true
+    else
+        Log("YesAlready: already enabled=%s (no change)", tostring(desired))
+    end
+end
+
 -- =========================================================
 -- VNAV Helpers
 -- =========================================================
@@ -723,6 +810,14 @@ function InvalidateGearsetCache()
     _gearsetCache = nil
     _gearsetStamp = nil
     Log("Gearset cache invalidated")
+end
+
+-- =========================================================
+-- Trigger Events
+-- =========================================================
+function OnStop()
+    ToggleTextAdvance("restore")
+    ToggleYesAlready("restore")
 end
 
 -- =========================================================
@@ -942,7 +1037,8 @@ end
 -- Main Loop
 -- =========================================================
 EchoOnce("Starting Oizys Artifact script.")
-yield("/at y") -- enable TextAdvance
+ToggleTextAdvance("enable") -- Enable TextAdvance if not
+if HasPlugin("YesAlready") then ToggleYesAlready("disable") end -- Disable YesAlready is installed and enabled
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
@@ -1007,7 +1103,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 Sleep(TIME.STABLE)
             end
 
-            if AwaitAddonReady("ShopExchangeCurrency", 5) then
+            if AwaitAddonVisible("ShopExchangeCurrency", 5) then
                 SafeCallback("ShopExchangeCurrency", -1)
                 Sleep(TIME.STABLE)
             end
