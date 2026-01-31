@@ -1,18 +1,16 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.8
+version: 0.0.9
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
 - TextAdvance
 configs:
-  Artifact Name:
-    description: Input the name of the artifact in your client's launage
-    default: "Artifact"
-  Artifact NPC Name:
-    description: Input the name of the artifact NPC in your client's launage
-    default: "Kaede"
+  Mount:
+    description: Input the name of the mount to use. Leave empty to use mount roulette
+    default: ""
+
 [[End Metadata]]
 --]=====]
 
@@ -379,14 +377,19 @@ function GetZoneId()
 end
 
 function Mount()
+    useMount = Config.Get("Mount")
     if not Svc.Condition[CharacterCondition.mounted] then
-        yield('/gaction "mount roulette"')
+        if useMount ~= nil and useMount ~= "" then
+            yield("/mount "..useMount)
+        else
+            Actions.ExecuteGeneralAction(9) -- Mount Roulette
+        end
     end
 end
 
 function Dismount()
     if Svc.Condition[CharacterCondition.mounted] then
-        yield('/ac dismount')
+        Actions.ExecuteGeneralAction(23) -- Dismount
     end
 end
 
@@ -677,7 +680,7 @@ function StopCloseVnav(dest, stopDistance)
         sleep(TIME.POLL)
     end
 
-    return true
+    return false
 end
 
 function MoveNearVnav(dest, stopDistance, fly)
@@ -688,6 +691,9 @@ function MoveNearVnav(dest, stopDistance, fly)
     return false
 end
 
+function StopVNAV()
+    if IPC.vnavmesh.BuildProgress() or IPC.vnavmesh.IsRunning() then IPC.vnavmesh.Stop() end
+end
 -- =========================================================
 -- Excel Sheet Lookups (guarded, return {ok,value|err})
 -- =========================================================
@@ -708,6 +714,36 @@ function GetENpcResidentName(dataId)
     if not name or name == "" then return err("ENpcResident: name missing for id "..tostring(id)) end
 
     return ok({ name = tostring(name), source = "ENpcResident", id = id })
+end
+
+function GetEObjName(dataId)
+    local id = toNumberSafe(dataId, nil)
+    if not id then
+        return err("EObjName: invalid id '" .. tostring(dataId) .. "'")
+    end
+
+    local sheet = Excel.GetSheet("EObjName")
+    if not sheet then
+        return err("EObjName sheet not available")
+    end
+
+    local row = sheet:GetRow(id)
+    if not row then
+        return err("EObjName: no row for id " .. tostring(id))
+    end
+
+    -- EObjName uses Singular as the primary display string
+    local name = row.Singular
+    if not name or name == "" then
+        return err("EObjName: Singular missing for id " .. tostring(id))
+    end
+
+    return ok({
+        id     = id,
+        name   = tostring(name),
+        plural = row.Plural and tostring(row.Plural) or nil,
+        source = "EObjName",
+    })
 end
 
 function BuildJobTable(firstId, lastId)
@@ -829,6 +865,7 @@ end
 function OnStop()
     ToggleTextAdvance("restore")
     ToggleYesAlready("restore")
+    StopVNAV()
 end
 
 -- =========================================================
@@ -934,12 +971,24 @@ CharacterCondition = {
 -- =========================================================
 -- Variable States
 -- =========================================================
-artifactName     = Config.Get("Artifact Name")
-
-oizysDroneModule = {name = "Oizys Drone Module", itemId = 50414, price = 200 }
-artifactNPC      = { name = Config.Get("Artifact NPC Name"), position = Vector3(-206.378, 0.500, 131.090) }
-
 local cosmoWasOn = false
+oizysDroneModule = { itemId = 50414, price = 200 }
+
+local okRes, objresult = GetEObjName(2015138)
+if not okRes then
+    Log("Object lookup failed: %s", objresult)
+else
+    Log("Object name: %s (id=%d)", objresult.name, objresult.id)
+    artifactName = objresult.name
+end
+
+local okRes2, npcresult = GetENpcResidentName(1052654)
+if not okRes2 then
+    Log("NPC lookup failed: %s", npcresult)
+else
+    Log("NPC name: %s (id=%d)", npcresult.name, npcresult.id)
+    artifactNPC = npcresult.name
+end
 
 -- =========================================================
 -- STATE MACHINE
@@ -970,7 +1019,7 @@ end
 -- =========================================================
 -- Helpers specific to this flow
 -- =========================================================
-local BASE_POS = artifactNPC.position
+local BASE_POS = Vector3(-181.960, 0.740, 135.718)
 
 local function getBits()
     return toNumberSafe(GetNodeText("WKSHud", {1,15,18,3}), 0, 0)
@@ -982,6 +1031,10 @@ end
 
 local function artifactActive()
     return artifactEntity() ~= nil
+end
+
+local function artifactNPCEntity()
+    return Entity.GetEntityByName(artifactNPC)
 end
 
 local function WaitEntityByName(name, timeoutSec)
@@ -1014,7 +1067,7 @@ local function DistanceToBase()
 end
 
 local function StellarReturn()
-    yield('/gaction "Duty Action"')
+    Actions.ExecuteAction(42149) -- Stellar Return
     sleep(4)
     return WaitConditionStable(45, false, 2, 10)
 end
@@ -1111,8 +1164,9 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- MODULE_PURCHASE
     -- ======================
     elseif sm.s == STATE.MODULE_PURCHASE then
-        MoveNearVnav(artifactNPC.position, 3.0, false)
-        InteractByName(artifactNPC.name)
+        local entnpc = artifactNPCEntity()
+        MoveNearVnav(entnpc.Position, 3.0, false)
+        InteractByName(entnpc.Name)
 
         local bits  = getBits()
         local price = toNumberSafe(oizysDroneModule.price, 0, 0)
@@ -1200,9 +1254,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             if not MoveNearVnav(ent.Position, 3.0, false) then
                 goto continue
             end
-
-            if InteractByName(artifactName, 5) then
-                WaitEntityGone(artifactName, 6.0)
+            if InteractByName(ent.Name, 5) then
+                WaitEntityGone(ent.Name, 6.0)
                 Sleep(TIME.STABLE)
                 gotoState(STATE.READY)
             elseif timedOut(8) then
@@ -1214,6 +1267,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- TURNIN_FLOW
     -- ======================
     elseif sm.s == STATE.TURNIN_FLOW then
+        local entnpc = artifactNPCEntity()
+
         if DistanceToBase() >= 75 then
             Log("TURNIN: far from base, using StellarReturn")
             if not StellarReturn() then
@@ -1223,8 +1278,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 gotoState(STATE.TURNIN_FLOW)
             end
         else
-            MoveNearVnav(artifactNPC.position, 3.0, false)
-            InteractByName(artifactNPC.name)
+            MoveNearVnav(entnpc.Position, 3.0, false)
+            InteractByName(entnpc.Name)
 
             if AwaitAddonReady("SelectString", 5) then
                 SafeCallback("SelectString", 1)
