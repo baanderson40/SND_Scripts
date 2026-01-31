@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.0
+version: 0.1.1
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -1352,8 +1352,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         end
     end
 
-    Sleep(0.1)
     ::continue::
+    Sleep(0.1)
 end
 
 EchoOnce("STATE MACHINE EXIT: %s", sm.s)
