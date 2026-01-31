@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.9
+version: 0.1.0
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -10,6 +10,23 @@ configs:
   Mount:
     description: Input the name of the mount to use. Leave empty to use mount roulette
     default: ""
+  Spend Dronebits:
+    description:
+    default: true
+  Dronebit Limit:
+    description:
+    default: 0
+    max: 5000
+    min: 0
+  Use Drone Module:
+    description:
+    default: true
+  Retrive Artifact:
+    description: 
+    default: true
+  Appraise Artifact:
+    description:
+    default: true
 
 [[End Metadata]]
 --]=====]
@@ -380,7 +397,7 @@ function Mount()
     useMount = Config.Get("Mount")
     if not Svc.Condition[CharacterCondition.mounted] then
         if useMount ~= nil and useMount ~= "" then
-            yield("/mount "..useMount)
+            yield('/mount "'..useMount..'"')
         else
             Actions.ExecuteGeneralAction(9) -- Mount Roulette
         end
@@ -972,7 +989,13 @@ CharacterCondition = {
 -- Variable States
 -- =========================================================
 local cosmoWasOn = false
-oizysDroneModule = { itemId = 50414, price = 200 }
+local oizysDroneModule = { itemId = 50414, price = 200 }
+
+local spendDroneBits    = Config.Get("Spend Dronebits")
+local droneBitLimit     = Config.Get("Dronebit Limit")
+local useDroneModule    = Config.Get("Use Drone Module")
+local retriveArtifact   = Config.Get("Retrive Artifact")
+local appraiseArtifact  = Config.Get("Appraise Artifact")
 
 local okRes, objresult = GetEObjName(2015138)
 if not okRes then
@@ -1131,17 +1154,20 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         local price   = toNumberSafe(oizysDroneModule.price, 0, 0)
         local modules = ItemCount(oizysDroneModule.itemId)
 
-        if price > 0 and bits >= price then
+        if price > 0
+           and bits >= price
+           and bits >= droneBitLimit
+           and spendDroneBits then
             gotoState(STATE.MODULE_PURCHASE)
 
-        elseif artifactActive() then
+        elseif artifactActive() and useDroneModule then
             gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
                       or STATE.ARTIFACT_INTERACT)
 
-        elseif modules > 0 then
+        elseif modules > 0 and retriveArtifact then
             gotoState(STATE.MODULE_USE)
 
-        elseif AncientRecordCount() > 0 then
+        elseif AncientRecordCount() > 0 and appraiseArtifact then
             gotoState(STATE.TURNIN_FLOW)
 
         else
