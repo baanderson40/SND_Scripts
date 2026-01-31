@@ -1,12 +1,18 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.7
+version: 0.0.8
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
 - TextAdvance
-
+configs:
+  Artifact Name:
+    description: Input the name of the artifact in your client's launage
+    default: "Artifact"
+  Artifact NPC Name:
+    description: Input the name of the artifact NPC in your client's launage
+    default: "Kaede"
 [[End Metadata]]
 --]=====]
 
@@ -928,8 +934,10 @@ CharacterCondition = {
 -- =========================================================
 -- Variable States
 -- =========================================================
+artifactName     = Config.Get("Artifact Name")
+
 oizysDroneModule = {name = "Oizys Drone Module", itemId = 50414, price = 200 }
-artifactNPC = { name = "Kaede", position = Vector3(-206.378, 0.500, 131.090) }
+artifactNPC      = { name = Config.Get("Artifact NPC Name"), position = Vector3(-206.378, 0.500, 131.090) }
 
 local cosmoWasOn = false
 
@@ -969,7 +977,7 @@ local function getBits()
 end
 
 local function artifactEntity()
-    return Entity.GetEntityByName("Artifact")
+    return Entity.GetEntityByName(artifactName)
 end
 
 local function artifactActive()
@@ -1170,7 +1178,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             if sm.s == STATE.MODULE_USE and usedOk then
                 SafeCallback("SelectYesno", 0)
 
-                if WaitEntityByName("Artifact", 10.0) then
+                if WaitEntityByName(artifactName, 10.0) then
                     Sleep(TIME.STABLE)
                     gotoState(shouldReturnBaseBeforeArtifact() and STATE.RETURN_BASE
                             or STATE.ARTIFACT_INTERACT)
@@ -1193,8 +1201,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 goto continue
             end
 
-            if InteractByName("Artifact", 5) then
-                WaitEntityGone("Artifact", 6.0)
+            if InteractByName(artifactName, 5) then
+                WaitEntityGone(artifactName, 6.0)
                 Sleep(TIME.STABLE)
                 gotoState(STATE.READY)
             elseif timedOut(8) then
