@@ -1,8 +1,8 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
-description: Somewhat intergrate AutoRetain into ICE
+version: 0.0.3
+description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
 - AutoRetainer
@@ -115,6 +115,34 @@ end
 -- =========================================================
 -- WaitUntil Helper
 -- =========================================================
+-- Usage Recap:
+-- WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
+--
+--   predicateFn : function() -> true/false  (checked each poll)
+--   timeoutSec  : max seconds before giving up (default 10)
+--   pollSec     : seconds between checks (default 0.10)
+--   stableSec   : must remain true for this many seconds
+--                 continuously before success (default 0)
+--
+-- Returns: true if condition satisfied, false on timeout
+--
+-- Examples:
+--   Wait until addon "Talk" is ready (10s max):
+--     WaitUntil(function()
+--         local addon = _get_addon("Talk")
+--         return addon and addon.Ready
+--     end, 10.0)
+--
+--   Wait until crafting condition holds for 2s (15s max):
+--     WaitUntil(function()
+--         return GetCharacterCondition(CharacterCondition.crafting, true)
+--     end, 15.0, 0.10, 2.0)
+--
+--   Quick one-off wait (target = "NPC Bob"):
+--     WaitUntil(function()
+--         return Entity.Target and Entity.Target.Name == "NPC Bob"
+--     end, 5.0, 0.10)
+--
 function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     timeoutSec = toNumberSafe(timeoutSec, TIME.TIMEOUT, 0.1)
     pollSec    = toNumberSafe(pollSec,    TIME.POLL,   0.01)
@@ -134,6 +162,55 @@ function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
         sleep(pollSec)
     end
     return false
+end
+
+function AwaitAddonReady(name, timeoutSec)
+    Log("awaiting ready: %s", tostring(name))
+    local ok = WaitUntil(function()
+        local addon = _get_addon(name)
+        return addon and addon.Ready
+    end, timeoutSec or TIME.TIMEOUT, TIME.POLL, 0.0)
+    if not ok then Log("AwaitAddonReady timeout: %s", tostring(name)) end
+    return ok
+end
+
+function AwaitAddonVisible(name, timeoutSec)
+    Log("awaiting visible: %s", tostring(name))
+    local ok = WaitUntil(function()
+        local addon = _get_addon(name)
+        return addon and addon.Exists
+    end, timeoutSec or TIME.TIMEOUT, TIME.POLL, 0.0)
+    if not ok then Log("AwaitAddonVisible timeout: %s", tostring(name)) end
+    return ok
+end
+
+function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
+    return WaitUntil(function()
+        local addon = _get_addon(addonName)
+        return addon and addon.Exists
+    end, timeoutSec or TIME.TIMEOUT, pollSec or TIME.POLL, stableSec or 2.0)
+end
+
+function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
+    want       = (want ~= false)
+    stableSec  = toNumberSafe(stableSec,  2.0,   0.0)
+    timeoutSec = toNumberSafe(timeoutSec, 15.0,  0.1)
+    pollSec    = toNumberSafe(pollSec,    TIME.POLL, 0.01)
+
+    if not (Svc and Svc.Condition) then
+        Log("WaitConditionStable: Svc.Condition unavailable")
+        return false
+    end
+
+    local ok = WaitUntil(function()
+        return GetCharacterCondition(idx, want)
+    end, timeoutSec, pollSec, stableSec)
+
+    if not ok then
+        Log("WaitConditionStable: timeout (idx=%s want=%s stable=%.2fs)",
+            tostring(idx), tostring(want), stableSec)
+    end
+    return ok
 end
 
 -- =========================================================
@@ -555,18 +632,18 @@ local function CloseRetainerList()
 
     if IsAddonVisible("RetainerSellList") then
         SafeCallback("RetainerSellList", true, -1)
-        sleep(0.05)
+        sleep(TIME.STABLE)
     end
 
     if IsAddonVisible("SelectString") then
         SafeCallback("SelectString", true, -1)
-        sleep(0.05)
+        sleep(TIME.STABLE)
     end
 
     local tries = 0
     while IsAddonVisible("RetainerList") and tries < 80 do
         SafeCallback("RetainerList", true, -1)
-        sleep(0.05)
+        sleep(TIME.STABLE)
         tries = tries + 1
     end
 
@@ -583,7 +660,6 @@ end
 -- Trigger Events
 -- =========================================================
 function OnStop()
-    StopVNAV()
 end
 
 -- =========================================================
@@ -640,10 +716,18 @@ local function Main()
         return
     end
 
+    if not WaitAddonStable("RetainerList", TIME.STABLE, 5, TIME.POLL) then
+        Log("failed to open bell '%s'", tostring(bell.Name))
+        return
+    end
+
     EnableAutoRetainer()
 
-    Log("waiting for occupiedSummoningBell to clear")
-    WaitConditionStable(CharacterCondition.occupiedSummoningBell, false, 0.5, 30.0, TIME.POLL)
+    Log("waiting for AutoRetainer to finish")
+    while IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara() do
+        sleep(TIME.STABLE)
+    end
+    Log("AutoRetainer finished")
 
     if closeRetainerList then
         CloseRetainerList()
