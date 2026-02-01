@@ -478,7 +478,7 @@ local function RunsToGo()
 end
 
 local function StartAutoDuty()
-    IPC.AutoDuty.Run(DungeonToDo, RunsToGo(), true)
+    IPC.AutoDuty.Run(DungeonToDo, RunsToGo(), false)
     sleep(TIME.POLL)
 end
 
