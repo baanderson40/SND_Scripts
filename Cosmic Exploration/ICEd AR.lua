@@ -274,7 +274,7 @@ function GetZoneId()
 end
 
 local function IsCrafterJob()
-    return (Player and Player.Job and Player.Job.IsCrafter) or false
+    return Player.Job.IsCrafter
 end
 
 -- =========================================================
