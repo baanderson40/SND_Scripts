@@ -1,7 +1,15 @@
+--[=====[
+[[SND Metadata]]
+author: baanderson40
+version: 0.0.5
+description: PvP script - Inspired by Dhog
+plugin_dependencies:
+- vnavmesh
+- RotationSolver
+
+[[End Metadata]]
+--]=====]
 --[[
-
-PvP script
-
 Logging policy (standardized):
 - Everything logs to Dalamud with [PVP] prefix.
 - Only echo once on script start.
@@ -36,7 +44,7 @@ import("System.Numerics")
 local UI = {
     PREFIX = "[PVP]",
     ECHO_ON_START = true, -- only echo once at script start
-    ECHO_TO_CHAT = true,  -- NOTE: this echoes ALL logs; if you truly want only 1 echo, set false
+    ECHO_TO_CHAT = false,  -- NOTE: this echoes ALL logs; if you truly want only 1 echo, set false
 }
 
 local function _echoLine(s) yield("/echo " .. tostring(s)) end
@@ -517,6 +525,10 @@ while RUN_LOOP do
             else
                 Log("ERROR: ContentsFinder not ready after /dutyfinder")
             end
+        else
+            if AwaitAddonReady("ContentsFinderConfirm", 30) then
+                SafeCallback("ContentsFinderConfirm", 8)
+            end
         end
 
         Sleep(0.5)
@@ -599,6 +611,8 @@ while RUN_LOOP do
                 inMatchLive = true
                 enemyNames = refreshEnemyNames()
 
+                yield("/rotation Settings TargetingTypes add Nearest")
+                Sleep(TIME.POLL)
                 yield("/rotation auto nearest")
                 hasEnabledRotationThisLife = true
                 rotationNeedsReset = false
