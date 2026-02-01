@@ -1,10 +1,9 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.3
+version: 0.0.4
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
-  Open AutoDuty and pick your trust party to run dungeons with then close it.
 plugin_dependencies:
 - AutoDuty
 - Lifestream
@@ -174,10 +173,11 @@ CharacterCondition = {
     casting               = 27,
     occupiedInQuestEvent  = 32,
     betweenAreas          = 45,
-    betweenAreasForDuty   = 51,
     occupiedSummoningBell = 50,
+    betweenAreasForDuty   = 51,
+    boundByDuty34         = 34,
+    boundByDuty56         = 56,
 }
-
 
 function GetCharacterCondition(i, bool)
     if bool == nil then bool = true end
@@ -200,6 +200,15 @@ function WaitZoneChange()
     end
     sleep(1.0)
     return true
+end
+
+local function InDuty()
+    return GetCharacterCondition(CharacterCondition.boundByDuty34, true)
+        or GetCharacterCondition(CharacterCondition.boundByDuty56, true)
+end
+
+local function AtSummoningBell()
+    return GetCharacterCondition(CharacterCondition.occupiedSummoningBell, true)
 end
 
 -- =========================================================
@@ -404,7 +413,6 @@ local arcanitePick        = tostring(Config.Get("Arcanite type") or "Waning Arca
 local dungeonPick         = tostring(Config.Get("Dungeon") or "Mistwake")
 local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
 
-
 local ItemToBuy           = (ArcaniteMap[arcanitePick] or 0)
 local DungeonToDo         = (DungMap[dungeonPick] and DungMap[dungeonPick].id or 0)
 local MathematicsFromDung = (DungMap[dungeonPick] and DungMap[dungeonPick].amount or 0)
@@ -436,10 +444,15 @@ end
 -- AutoDuty + Lifestream helpers
 -- =========================================================
 local function IsAutoDutyRunning()
-    if IPC and IPC.AutoDuty and IPC.AutoDuty.IsStopped then
-        return not IPC.AutoDuty.IsStopped()
+    return IPC and IPC.AutoDuty and (not IPC.AutoDuty.IsStopped())
+end
+
+local function StopAutoDuty()
+    if IPC and IPC.AutoDuty and IPC.AutoDuty.Stop then
+        IPC.AutoDuty.Stop()
+        sleep(TIME.POLL)
     end
-    return false
+    return true
 end
 
 local function EnablePreLoopActions()
@@ -483,38 +496,32 @@ local function ReturnToInn()
     TravelToZone("Inn", INN_TERRITORY_ID)
 end
 
-local function MoveToPhantomCity()
+local function MoveToPhantomVillage()
     TravelToZone("Phantom Village", PHANTOM_VILLAGE_ID)
 end
 
-local function AtSummoningBell()
-    return GetCharacterCondition(CharacterCondition.occupiedSummoningBell, true)
+-- =========================================================
+-- AutoRetainer readiness (retainer fix)
+-- =========================================================
+local function RetainerWorkPending()
+    return IPC
+        and IPC.AutoRetainer
+        and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara
+        and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
 end
-
-local function StopAutoDuty()
-    if IPC and IPC.AutoDuty and IPC.AutoDuty.Stop then
-        IPC.AutoDuty.Stop()
-    else
-        yield("/autoduty stop")
-    end
-    sleep(TIME.POLL)
-    return true
-end
-
 
 -- =========================================================
 -- STATE MACHINE
 -- =========================================================
 STATE = {
-    READY           = "READY",
-    RETURN_BASE     = "RETURN_BASE",
-    RUN_AUTODUTY    = "RUN_AUTODUTY",
-    SPEND_TOMES     = "SPEND_TOMES",
-    WAIT_BELL       = "WAIT_BELL",
-    DONE            = "DONE",
-    FAIL            = "FAIL",
+    READY        = "READY",
+    RETURN_BASE  = "RETURN_BASE",
+    RUN_AUTODUTY = "RUN_AUTODUTY",
+    SPEND_TOMES  = "SPEND_TOMES",
+    WAIT_BELL    = "WAIT_BELL",
+    DONE         = "DONE",
+    FAIL         = "FAIL",
 }
-
 
 local sm = { s = STATE.READY, t0 = os.clock() }
 
@@ -534,8 +541,27 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- READY
     -- ======================
     if sm.s == STATE.READY then
+        -- If a bell is already active, sit in WAIT_BELL
         if AtSummoningBell() then
             Log("READY: summoning bell active; entering WAIT_BELL")
+            gotoState(STATE.WAIT_BELL)
+            goto continue
+        end
+
+        -- Option A + retainer fix:
+        -- Do NOT even *check* AutoRetainer work while duty flags are set.
+        if InDuty() then
+            Log("READY: in duty (34/56); waiting for duty flags to clear")
+            while InDuty() do
+                Sleep(TIME.POLL)
+            end
+            Sleep(TIME.STABLE)
+            goto continue
+        end
+
+        -- If AutoRetainer has work pending, stop AutoDuty (if somehow running) and wait
+        if RetainerWorkPending() then
+            Log("READY: AutoRetainer work pending; entering WAIT_BELL")
             gotoState(STATE.WAIT_BELL)
             goto continue
         end
@@ -582,8 +608,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- SPEND_TOMES
     -- ======================
     elseif sm.s == STATE.SPEND_TOMES then
-        Log("Moving to Phantom City to spend tomes")
-        MoveToPhantomCity()
+        Log("Moving to Phantom Village to spend tomes")
+        MoveToPhantomVillage()
 
         if not TomeExchange.name or TomeExchange.name == "" then
             Log("SPEND_TOMES: TomeExchange.name missing (Excel lookup failed)")
@@ -591,6 +617,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
+        -- GetEntityByName resolves the true in-game casing; InteractByName must use ent.Name
         local ent = (Entity and Entity.GetEntityByName) and Entity.GetEntityByName(TomeExchange.name) or nil
         if not (ent and ent.Position and ent.Name and ent.Name ~= "") then
             Log("SPEND_TOMES: TomeExchange entity not found/invalid (sheetName='%s')", tostring(TomeExchange.name))
@@ -618,6 +645,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
         while MathematicsOnHand() >= 500 do
             SafeCallback("ShopExchangeCurrency", 0, ItemToBuy, 1)
+
             if not AwaitAddonReady("SelectYesno", 5.0) then
                 Log("SPEND_TOMES: SelectYesno missing")
                 gotoState(STATE.FAIL)
@@ -641,28 +669,40 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             until not AwaitAddonVisible("ShopExchangeCurrency", 0.1)
 
             Sleep(TIME.STABLE)
+
+            -- per your current plan: stop after spending
             gotoState(STATE.DONE)
         end
 
     -- ======================
-    -- Summoning Bell
+    -- WAIT_BELL
     -- ======================
     elseif sm.s == STATE.WAIT_BELL then
+        -- If AutoDuty is running, stop it so it won't fight with your post-retainer script
         if IsAutoDutyRunning() then
             Log("WAIT_BELL: AutoDuty running; stopping it")
             StopAutoDuty()
-            sleep(TIME.STABLE)
+            Sleep(TIME.STABLE)
         end
 
-        if AtSummoningBell() then
+        -- If duty flags are set, just wait (Option A: never fail here)
+        if InDuty() then
+            Log("WAIT_BELL: in duty (34/56); waiting for duty flags to clear")
+            while InDuty() do
+                Sleep(TIME.POLL)
+            end
+            Sleep(TIME.STABLE)
+        end
+
+        -- Pause loop: wait while either the bell is active OR AutoRetainer says work pending
+        if AtSummoningBell() or RetainerWorkPending() then
             Sleep(TIME.POLL)
             goto continue
         end
 
-        Log("WAIT_BELL: bell condition cleared; returning to READY")
+        Log("WAIT_BELL: cleared (no bell, no retainer work); returning to READY")
         Sleep(TIME.STABLE)
         gotoState(STATE.READY)
-
     end
 
     ::continue::
