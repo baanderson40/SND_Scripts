@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.3
+version: 0.0.4
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -351,7 +351,7 @@ function GetZoneId()
 end
 
 local function IsCrafterJob()
-    return Player.Job.IsCrafter
+    return Player and Player.Job and Player.Job.IsCrafter or false
 end
 
 -- =========================================================
@@ -613,11 +613,49 @@ local function ResolveSummoningBellEntity()
 
     local ent = Entity.GetEntityByName(sheetName)
     if not (ent and ent.Position and ent.Name) then
-        Log("bell entity not found by name '%s'", sheetName)
+        Log("bell not found locally by name '%s'", sheetName)
         return nil
     end
 
     return ent
+end
+
+local function ResolveBellOrReturnOnce(maxDist)
+    maxDist = tonumber(maxDist) or MAX_BELL_DISTANCE_BEFORE_STELLAR
+
+    local function distTo(ent)
+        local me = GetCharacterPosition()
+        if not (me and ent and ent.Position) then return math.huge end
+        return DistanceBetweenPositions(me, ent.Position)
+    end
+
+    local bell = ResolveSummoningBellEntity()
+    if bell then
+        local d = distTo(bell)
+        Log("distance to bell (current): %.2f", d)
+        if d <= maxDist then
+            return bell, false
+        end
+        Log("bell too far (%.2f > %.2f) -> Stellar Return", d, maxDist)
+    else
+        Log("bell not resolved -> Stellar Return")
+    end
+
+    if not StellarReturn() then
+        Log("Stellar Return failed")
+        return nil, true
+    end
+    sleep(TIME.STABLE)
+
+    bell = ResolveSummoningBellEntity()
+    if not bell then
+        Log("bell still not resolved after Stellar Return")
+        return nil, true
+    end
+
+    local d2 = distTo(bell)
+    Log("distance to bell after return (current): %.2f", d2)
+    return bell, false
 end
 
 local function EnableAutoRetainer()
@@ -688,22 +726,10 @@ local function Main()
         return
     end
 
-    local bell = ResolveSummoningBellEntity()
-    if not bell then return end
-
-    local distToBell = DistanceBetweenPositions(origin, bell.Position)
-    Log("distance to bell: %.2f", distToBell)
-
-    if distToBell > MAX_BELL_DISTANCE_BEFORE_STELLAR then
-        Log("distance > %.2f; using Stellar Return", MAX_BELL_DISTANCE_BEFORE_STELLAR)
-        if not StellarReturn() then
-            Log("Stellar Return failed")
-            return
-        end
-        sleep(TIME.STABLE)
-
-        bell = ResolveSummoningBellEntity()
-        if not bell then return end
+    local bell = ResolveBellOrReturnOnce(MAX_BELL_DISTANCE_BEFORE_STELLAR)
+    if not bell then
+        Log("failed to resolve summoning bell")
+        return
     end
 
     if not MoveNearVnav(bell.Position, MOVE_STOP_DISTANCE, false) then
@@ -724,9 +750,9 @@ local function Main()
     EnableAutoRetainer()
 
     Log("waiting for AutoRetainer to finish")
-    while IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara() do
-        sleep(TIME.STABLE)
-    end
+    WaitUntil(function()
+        return not IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+    end, 999999, TIME.POLL, 1)
     Log("AutoRetainer finished")
 
     if closeRetainerList then
