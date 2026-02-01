@@ -742,11 +742,6 @@ local function Main()
         return
     end
 
-    if not AwaitAddonVisible("RetainerList", 5) then
-        Log("failed to open bell '%s'", tostring(bell.Name))
-        return
-    end
-
     EnableAutoRetainer()
 
     Log("waiting for AutoRetainer to finish")
