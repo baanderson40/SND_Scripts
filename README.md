@@ -15,7 +15,7 @@ Collection of various SND scripts
   - Oizys Artifact
     
 - Dungeons
-  - Helio Farm
+  - Mathematics Farm
     
 - Fate
   - Moved to public archive
