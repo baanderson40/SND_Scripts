@@ -1,9 +1,10 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.4
+version: 0.0.5
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
+  Open AutoDuty and pick your trust party to run dungeons with then close it.
 plugin_dependencies:
 - AutoDuty
 - Lifestream
@@ -455,16 +456,6 @@ local function StopAutoDuty()
     return true
 end
 
-local function EnablePreLoopActions()
-    yield("/autoduty cfg EnablePreLoopActions true")
-    sleep(TIME.POLL)
-end
-
-local function EnableBetweenLoopActions()
-    yield("/autoduty cfg EnableBetweenLoopActions true")
-    sleep(TIME.POLL)
-end
-
 local function MathematicsOnHand()
     return tonumber(Inventory.GetItemCount(MATHEMATICS_ITEM_ID)) or 0
 end
@@ -596,8 +587,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     elseif sm.s == STATE.RUN_AUTODUTY then
         Log("Starting AutoDuty: dungeon=%s runs=%d", dungeonPick, RunsToGo())
         StartAutoDuty()
-        EnablePreLoopActions()
-        EnableBetweenLoopActions()
         Sleep(TIME.STABLE)
         gotoState(STATE.READY)
 
@@ -660,9 +649,10 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
         if sm.s ~= STATE.FAIL then
             Log("Closing shop window")
-            repeat
+            if AwaitAddonVisible("ShopExchangeCurrency", 5) then
                 SafeCallback("ShopExchangeCurrency", -1)
-            until not AwaitAddonVisible("ShopExchangeCurrency", 0.1)
+                Sleep(TIME.STABLE)
+            end
 
             Sleep(TIME.STABLE)
 
