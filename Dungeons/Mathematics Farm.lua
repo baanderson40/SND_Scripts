@@ -548,8 +548,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
-        -- Option A + retainer fix:
-        -- Do NOT even *check* AutoRetainer work while duty flags are set.
         if InDuty() then
             Log("READY: in duty (34/56); waiting for duty flags to clear")
             while InDuty() do
@@ -559,7 +557,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
-        -- If AutoRetainer has work pending, stop AutoDuty (if somehow running) and wait
         if RetainerWorkPending() then
             Log("READY: AutoRetainer work pending; entering WAIT_BELL")
             gotoState(STATE.WAIT_BELL)
@@ -617,7 +614,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
-        -- GetEntityByName resolves the true in-game casing; InteractByName must use ent.Name
         local ent = (Entity and Entity.GetEntityByName) and Entity.GetEntityByName(TomeExchange.name) or nil
         if not (ent and ent.Position and ent.Name and ent.Name ~= "") then
             Log("SPEND_TOMES: TomeExchange entity not found/invalid (sheetName='%s')", tostring(TomeExchange.name))
@@ -670,7 +666,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
             Sleep(TIME.STABLE)
 
-            -- per your current plan: stop after spending
             gotoState(STATE.DONE)
         end
 
@@ -678,14 +673,12 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- WAIT_BELL
     -- ======================
     elseif sm.s == STATE.WAIT_BELL then
-        -- If AutoDuty is running, stop it so it won't fight with your post-retainer script
         if IsAutoDutyRunning() then
             Log("WAIT_BELL: AutoDuty running; stopping it")
             StopAutoDuty()
             Sleep(TIME.STABLE)
         end
 
-        -- If duty flags are set, just wait (Option A: never fail here)
         if InDuty() then
             Log("WAIT_BELL: in duty (34/56); waiting for duty flags to clear")
             while InDuty() do
@@ -694,7 +687,6 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             Sleep(TIME.STABLE)
         end
 
-        -- Pause loop: wait while either the bell is active OR AutoRetainer says work pending
         if AtSummoningBell() or RetainerWorkPending() then
             Sleep(TIME.POLL)
             goto continue
