@@ -757,6 +757,10 @@ local function Main()
 
     if closeRetainerList then
         CloseRetainerList()
+    else
+        WaitUntil(function()
+            return not GetCharacterCondition(CharacterCondition.occupiedSummoningBell)
+        end, 999999, TIME.POLL, 1)
     end
 
     if IsCrafterJob() then
