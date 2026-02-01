@@ -3,12 +3,13 @@
 
 # Dungeon scripts
 
-Dungeon centered SND2 lua scripts. 
+Dungeon centered SND lua scripts. 
 
 ## Scripts
-- Helio Farm
+- Mathematics Farm
   
-  - Automatically run Helio tome dungeons repeatly and auto purchase Phantom relic arcanite items.
+  - Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
+    - Open AutoDuty and pick your trust party to run dungeons with then close it.
 
 ## Installation
 - Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
