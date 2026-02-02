@@ -22,47 +22,47 @@ triggers:
 -- CONFIG
 ------------------------------------------------------------
 local CFG = {
-  DEBUG = false,                 -- Set to false when not debugging
+  DEBUG = false,               -- Set to false when not debugging
 
-  UNDERCUT = 1,                 -- Undercut amount. If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
+  UNDERCUT = 1,                -- Undercut amount. If lowest seller is not one of MY_RETAINERS, list at (lowest - UNDERCUT).
 
-  FAST = {                      -- Market board read timing behavior.
-    maxWaitSec      = 15,        -- Max seconds to wait for first row of ItemSearchResult to become readable.
-    refreshAfterSec = 5,        -- If row not readable after this many seconds, trigger one refresh.
+  FAST = {                     -- Market board read timing behavior.
+    maxWaitSec      = 15,      -- Max seconds to wait for first row of ItemSearchResult to become readable.
+    refreshAfterSec = 5,       -- If row not readable after this many seconds, trigger one refresh.
   },
 
-  OpenBell = {                  -- Summoning Bell open timing.
-    maxAttempts = 50,           -- Max attempts to open the Retainer List via targeting/interacting.
-    targetWait  = 0.5,          -- Delay (sec) between /target and /pinteract.
-    interactWait= 1.0,          -- Delay (sec) after /pinteract before checking UI state.
+  OpenBell = {                 -- Summoning Bell open timing.
+    maxAttempts = 50,          -- Max attempts to open the Retainer List via targeting/interacting.
+    targetWait  = 0.5,         -- Delay (sec) between /target and /pinteract.
+    interactWait= 1.0,         -- Delay (sec) after /pinteract before checking UI state.
   },
 
-  CloseBack = {                 -- When backing out to RetainerList.
-    graceWaitSec = 0.5,         -- Grace delay after closing before checking RetainerList state.
+  CloseBack = {                -- When backing out to RetainerList.
+    graceWaitSec = 0.5,        -- Grace delay after closing before checking RetainerList state.
   },
 
-  AutoRetainer = {              -- Integration with AutoRetainer plugin.
-    enabled     = true,         -- If true, wait for AutoRetainer to be idle before starting loop.
-    maxWaitSec  = 60,           -- Max wait time for AutoRetainer to go idle.
-    settleSec   = 2,            -- Seconds AutoRetainer must stay idle before considered safe.
-    pollSec     = 0.5,          -- Interval for polling AutoRetainer state.
+  AutoRetainer = {             -- Integration with AutoRetainer plugin.
+    enabled     = true,        -- If true, wait for AutoRetainer to be idle before starting loop.
+    maxWaitSec  = 60,          -- Max wait time for AutoRetainer to go idle.
+    settleSec   = 2,           -- Seconds AutoRetainer must stay idle before considered safe.
+    pollSec     = 0.5,         -- Interval for polling AutoRetainer state.
   },
 
-  Auto = {                      -- Auto polling loop for bell-occupied trigger.
-    enabled      = true,        -- Master toggle for auto polling mode.
-    debounceSec  = 3.0,         -- Debounce time to avoid double-triggers.
-    postDelaySec = 0.8,         -- Delay after finishing before next poll.
-    bellSettleSec= 0.5,         -- Delay after bell interaction before processing.
-    pollSec      = 0.5,         -- Interval for polling bell state.
+  Auto = {                     -- Auto polling loop for bell-occupied trigger.
+    enabled      = true,       -- Master toggle for auto polling mode.
+    debounceSec  = 3.0,        -- Debounce time to avoid double-triggers.
+    postDelaySec = 0.8,        -- Delay after finishing before next poll.
+    bellSettleSec= 0.5,        -- Delay after bell interaction before processing.
+    pollSec      = 0.5,        -- Interval for polling bell state.
   },
 
-  NEW_SALES = {                 -- Add new items for sale
-    enabled      = true,        -- Master toggle for all new-sale actions.
+  NEW_SALES = {                -- Add new items for sale
+    enabled      = true,       -- Master toggle for all new-sale actions.
 
     -- Define items here with per-retainer stack limits.
     items = {
-      [#####] = { minQty = 1,  defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, --
-},
+      [#####] = { minQty = 1,  defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, 
+    },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
     maxAddsPerRetainer = 20,    -- Safety cap: don’t add more than this many new listings per retainer.
@@ -77,9 +77,9 @@ local CFG = {
 
 -- Process all retainers unless you restrict here
 local TARGET_RETAINERS = {
-   "Retainer1",
-   "Retainer2",
-   "Retainer3",
+  "Retainer1",
+  "Retainer2",
+  "Retainer3",
 }
 
 -- Your own retainers—don’t undercut these names
@@ -220,6 +220,28 @@ end
 
 local function now_s() return os.clock() end
 
+-- WaitUntil compatible with your other script (no external TIME/toNumberSafe dependencies).
+function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
+  timeoutSec = tonumber(timeoutSec) or 1.5
+  pollSec    = tonumber(pollSec) or 0.05
+  stableSec  = tonumber(stableSec) or 0.0
+
+  local start     = os.clock()
+  local holdStart = nil
+
+  while (os.clock() - start) < timeoutSec do
+    local ok, res = pcall(predicateFn)
+    if ok and res then
+      if not holdStart then holdStart = os.clock() end
+      if (os.clock() - holdStart) >= stableSec then return true end
+    else
+      holdStart = nil
+    end
+    yield(string.format("/wait %.2f", pollSec))
+  end
+  return false
+end
+
 ------------------------------------------------------------
 -- AUTORETAINER IPC
 ------------------------------------------------------------
@@ -228,28 +250,20 @@ local function AR_IsAvailable()
 end
 
 local function AR_IsBusy()
-  if not (IPC and IPC.AutoRetainer) then return false end
+  local ok, busy = pcall(function() return IPC.AutoRetainer.IsBusy() end)
+  if not ok then return false end
+  return busy and true or false
+end
 
-  local hasIsBusy = (type(IPC.AutoRetainer.IsBusy) == "function")
-  local hasAny    = (type(IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara) == "function")
-
-  if hasAny then
-    local okAny, anyAvail = pcall(function()
-      return IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
-    end)
-    if okAny and (not anyAvail) then
-      return false
-    end
+-- True only when AutoRetainer reports actual retainer work available for this character.
+local function AR_HasWork()
+  if not (IPC and IPC.AutoRetainer and type(IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara) == "function") then
+    return false
   end
-
-  if hasIsBusy then
-    local okBusy, busy = pcall(function()
-      return IPC.AutoRetainer.IsBusy()
-    end)
-    if okBusy then return busy and true or false end
-  end
-
-  return false
+  local ok, any = pcall(function()
+    return IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+  end)
+  return ok and any and true or false
 end
 
 function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
@@ -476,10 +490,8 @@ function ApplyPrice(newPrice)
     return true
   end
 
-  -- Log the price change
   yield("/echo [Repricer] Set price: " .. tostring(current) .. " → " .. tostring(newPrice))
 
-  -- Apply the new price to the retainer's sell list
   pcall_addon("RetainerSell", true, 2, newPrice)
   pcall_addon("RetainerSell", true, 0)
   return true
@@ -549,7 +561,6 @@ end
 ------------------------------------------------------------
 -- SELL NEW ITEMS (consolidated: helpers + quota + runner)
 ------------------------------------------------------------
--- Convert helper container to 0..3 or 9.
 local function to_cidx(v)
   if type(v) == 'number' then
     if v >= 0 and v <= 3 then return v end
@@ -559,24 +570,19 @@ local function to_cidx(v)
   local s = tostring(v or "")
   if s == "" then return nil end
 
-  -- hard block: ignore retainer containers
   if s:match('^Retainer') or s:match('^Market') then return nil end
 
-  -- "Inventory2" -> 1
   local n = tonumber((s:gsub('%s+','')):match('[Ii]nventory(%d+)'))
   if n and n >= 1 and n <= 4 then return n - 1 end
 
-  -- "Inventory1: 0" -> 0 (trailing number often present)
   local tail = s:match(':%s*(%d+)$')
   if tail then
     local tnum = tonumber(tail)
     if tnum and tnum >= 0 and tnum <= 3 then return tnum end
   end
 
-  -- Crystal container
   if s:find("Crystal") then return 9 end
 
-  -- final numeric fallback
   local asnum = tonumber(s)
   if asnum and asnum >= 0 and asnum <= 3 then return asnum end
 
@@ -584,7 +590,6 @@ local function to_cidx(v)
 end
 
 local function OpenRetainerSellForSource(containerIndex, slot0)
-  -- Confirmed mapping: opens RetainerSell with max quantity auto-filled
   local cmd = string.format("/pcall InventoryGrid true 15 %d %d", containerIndex, slot0)
   dbg("SELL PCALL -> "..cmd)
   yield(cmd)
@@ -601,7 +606,7 @@ local function EnsureSearchOpen_Sell()
     yield("/wait 0.1")
   end
   if not exists("ItemSearchResult") then
-    pcall_addon("RetainerSell", true, 4) -- Compare Prices
+    pcall_addon("RetainerSell", true, 4)
   end
   for _=1,90 do
     if exists("ItemSearchResult") and ready("ItemSearchResult") then return true end
@@ -611,14 +616,10 @@ local function EnsureSearchOpen_Sell()
   return false
 end
 
--- Sell ONE item (by itemId), honoring per-item minQty/defaultPrice with global fallbacks.
 function SellNewItem(itemId, perItemCfg)
-  -- Per-item overrides, then global defaults, then hard fallback.
   local minQty       = tonumber(perItemCfg and perItemCfg.minQty) or tonumber(CFG.NEW_SALES.defaultMinQty) or 1
   local defaultPrice = tonumber(perItemCfg and perItemCfg.defaultPrice) or tonumber(CFG.NEW_SALES.defaultPrice)
 
-  -- Normalize Inventory.GetInventoryItem(...) return shapes across wrapper versions.
-  -- Some builds return (count, itemRecord) or (slot, itemRecord) or just itemRecord.
   local function NormalizeInvItemResult(r1, r2, r3, r4)
     if type(r1) == "table" or type(r1) == "userdata" then return r1 end
     if type(r2) == "table" or type(r2) == "userdata" then return r2 end
@@ -628,7 +629,6 @@ function SellNewItem(itemId, perItemCfg)
   end
 
   while true do
-    -- Capture all returns; some wrappers return (count, record) instead of just record.
     local ok, r1, r2, r3, r4 = pcall(function()
       return Inventory.GetInventoryItem(itemId)
     end)
@@ -641,7 +641,6 @@ function SellNewItem(itemId, perItemCfg)
       return false
     end
 
-    -- Extract container index strictly from "Inventory1..4" and Crystal.
     local cidx = to_cidx(res.Container)
     if cidx == nil then
       dbg(("SellNewItem: helper returned non-player container '%s'; stop."):format(tostring(res.Container)))
@@ -650,7 +649,6 @@ function SellNewItem(itemId, perItemCfg)
 
     local slot0 = tonumber(res.Slot) or 0
 
-    -- Qty: prefer record fields; fall back to first return if that was a count.
     local qty = tonumber(res.Quantity)
              or tonumber(res.Count)
              or tonumber(res.StackSize)
@@ -658,25 +656,23 @@ function SellNewItem(itemId, perItemCfg)
              or tonumber(r1)
              or 0
 
-    -- Respect min quantity threshold.
     if qty < minQty then
       dbg(("SellNewItem: qty %d < minQty %d for %d; skip."):format(qty, minQty, itemId))
       return false
     end
 
-    -- Open RetainerSell with max-allowed quantity (game caps at 99 per listing).
     if not OpenRetainerSellForSource(cidx, slot0) then
       dbg(("SellNewItem: failed to open RetainerSell for cidx=%d slot=%d"):format(cidx, slot0))
       return false
     end
 
-    -- Try to get market price; if none, fall back to defaultPrice (if provided).
     local priceToUse = nil
     if EnsureSearchOpen_Sell() then
       local low, seller = ReadLowestListing_Fast(CFG.FAST.maxWaitSec, CFG.FAST.refreshAfterSec)
       CloseItemPanels()
       if low then priceToUse = DecideNewPrice(low, seller) end
     end
+
     if not priceToUse then
       priceToUse = defaultPrice
       if not priceToUse or priceToUse <= 0 then
@@ -686,11 +682,9 @@ function SellNewItem(itemId, perItemCfg)
       end
     end
 
-    -- Apply price & close. Successful listing -> return true so caller counts it.
     ApplyPrice(priceToUse)
     CloseItem()
 
-    -- Yield briefly to let inventory update before the next helper call.
     yield(("/wait %.2f"):format(CFG.NEW_SALES.stepDelaySec or 0.25))
     return true
   end
@@ -699,15 +693,13 @@ end
 ------------------------------------------------------------
 -- PER-RETAINER QUOTA STATE (for new listings)
 ------------------------------------------------------------
--- Tracks current stacks listed per retainer: CURRENT_STACKS[retName][itemId] = count
 local CURRENT_STACKS = {}
 
--- Build per-retainer stack map using the RetainerMarket indexer
 local function BuildCurrentStacksForRetainer(retName)
   CURRENT_STACKS[retName] = {}
-  local cont = Inventory.RetainerMarket         -- << key change (no string arg)
+  local cont = Inventory.RetainerMarket
   for i = 0, cont.Count - 1 do
-    local slot = cont[i]                        -- use indexer; includes empty slots
+    local slot = cont[i]
     local id = tonumber(slot.ItemId)
     if id and id > 0 then
       CURRENT_STACKS[retName][id] = (CURRENT_STACKS[retName][id] or 0) + 1
@@ -733,7 +725,6 @@ local function CanListMore(retName, itemId)
   return GetCount(retName, itemId) < GetQuota(retName, itemId)
 end
 
--- Runner: add new items to current retainer respecting capacity & quotas
 function SellNewItemsOnThisRetainer(retName)
   if not (CFG.NEW_SALES and CFG.NEW_SALES.enabled) then return end
   if not (exists("RetainerSellList") and ready("RetainerSellList")) then
@@ -761,7 +752,6 @@ function SellNewItemsOnThisRetainer(retName)
       end
 
       if not SellNewItem(itemId, perCfg) then
-        -- Could be: below minQty, no player stack, or no price path; move on to next itemId.
         break
       end
 
@@ -875,13 +865,8 @@ local function ProcessThisRetainer(retName)
   if not (exists("RetainerSellList") and ready("RetainerSellList")) then
     echo("RetainerSellList not ready; aborting retainer process."); return end
 
-  -- Snapshot current stacks from RetainerMarket so we can enforce quotas.
   BuildCurrentStacksForRetainer(retName)
-
-  -- Phase A: reprice existing listings
   RepriceAllOnThisRetainer()
-
-  -- Phase B: add new items with quota enforcement
   SellNewItemsOnThisRetainer(retName)
 end
 
@@ -900,7 +885,7 @@ function RepriceTargetsOnRetainerList()
   for i,t in ipairs(targets) do
     yield(string.format("/echo [Repricer] [%d/%d] %s", i, #targets, t.name))
     if OpenRetainerBySlot(t.slot) then
-      ProcessThisRetainer(t.name)  -- pass retainer name for quotas
+      ProcessThisRetainer(t.name)
     end
     CloseBackToRetainerList()
     yield("/wait 0.1")
@@ -918,6 +903,9 @@ local AUTO_POST_DELAY    = CFG.Auto.postDelaySec
 local BELL_SETTLE_SEC    = CFG.Auto.bellSettleSec
 local POLL_INTERVAL_SEC  = CFG.Auto.pollSec
 
+local _ar_last_work_t     = 0.0
+local AR_WORK_WINDOW_SEC  = 3.0  -- how long after AR reports real work we still consider it "AR-driven"
+
 local _auto_in_progress  = false
 local _auto_last_fire_t  = 0.0
 local _bell_since        = 0.0
@@ -929,50 +917,66 @@ local function _auto_can_fire()
   return true
 end
 
+-- Bell occupied: rely on condition only. Target name is not stable while interacting.
 local function IsBellOccupied()
   local ok, val = pcall(function()
-    return Svc and Svc.Condition and Svc.Condition[50] and Entity.Target and Entity.Target.Name == "Summoning Bell"
+    return Svc and Svc.Condition and Svc.Condition[50]
   end)
-  if not ok then return false end
-  return val and true or false
+  return ok and val and true or false
 end
 
 function AutoEnable()  AUTO_ENABLED = true;  yield("/echo [Repricer] Auto trigger ENABLED")  end
 function AutoDisable() AUTO_ENABLED = false; yield("/echo [Repricer] Auto trigger DISABLED") end
 
+local function AR_WaitDone()
+  -- Prefer “available retainers” if present; it’s the most direct “AR has work remaining” signal.
+  if IPC and IPC.AutoRetainer and type(IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara) == "function" then
+    WaitUntil(function()
+      local ok, any = pcall(function()
+        return IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+      end)
+      return ok and (not any)
+    end, 999999, CFG.AutoRetainer.pollSec or 0.5, 1.0)
+    return true
+  end
+
+  -- Fallback: wait for IsBusy to go false (older IPC)
+  return EnsureAutoRetainerIdle()
+end
+
 yield("/echo [Repricer] AutoBell polling loop started.")
 while true do
+  if AR_IsBusy() then
+    _ar_last_work_t = now_s()
+  end
 
-    local occupied = IsBellOccupied()
+  local occupied = IsBellOccupied()
+  local work_recent = (_ar_last_work_t > 0) and ((now_s() - _ar_last_work_t) <= AR_WORK_WINDOW_SEC)
 
-    if occupied and AR_IsBusy() then
+  if occupied and work_recent then
+    if _bell_since == 0 then _bell_since = now_s() end
 
-        if _bell_since == 0 then _bell_since = now_s() end
+    if _auto_can_fire() and (now_s() - _bell_since) >= BELL_SETTLE_SEC then
+      _auto_in_progress = true
+      yield("/echo [Repricer] Auto: Bell occupied (AR work detected) — preparing to start…")
 
-        if _auto_can_fire() and (now_s() - _bell_since) >= BELL_SETTLE_SEC then
-        _auto_in_progress = true
-        yield("/echo [Repricer] Auto: Bell occupied — preparing to start…")
+      yield(string.format("/wait %.2f", AUTO_POST_DELAY))
 
-        yield(string.format("/wait %.2f", AUTO_POST_DELAY))
+      AR_WaitDone()
+      RepriceTargetsOnRetainerList()
 
-        if not EnsureAutoRetainerIdle() then
-            _auto_in_progress = false
-            yield("/echo [Repricer] Auto: aborted — AutoRetainer busy.")
-        else
-            RepriceTargetsOnRetainerList()
-            _auto_last_fire_t = now_s()
-            _auto_in_progress = false
-            yield("/echo [Repricer] Auto: run finished.")
-        end
+      _auto_last_fire_t = now_s()
+      _auto_in_progress = false
+      yield("/echo [Repricer] Auto: run finished.")
 
-        repeat
-            yield("/wait 0.20")
-        until not IsBellOccupied()
-        _bell_since = 0.0
-        end
-    else
-        _bell_since = 0.0
+      repeat
+        yield("/wait 0.20")
+      until not IsBellOccupied()
+      _bell_since = 0.0
     end
+  else
+    _bell_since = 0.0
+  end
 
-    yield(string.format("/wait %.2f", POLL_INTERVAL_SEC))
+  yield(string.format("/wait %.2f", POLL_INTERVAL_SEC))
 end
