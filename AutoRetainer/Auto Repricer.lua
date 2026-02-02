@@ -61,7 +61,7 @@ local CFG = {
 
     -- Define items here with per-retainer stack limits.
     items = {
-      [#####] = { minQty = 1,  defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } },
+      [#####] = { minQty = 1,  defaultPrice = 1000, maxStacks = 1, perRetainer = { ["Retainer1"]=1, ["Retainer2"]=1, ["Retainer3"]=1 } }, --
 },
 
     containers         = { "Inventory1","Inventory2","Inventory3","Inventory4","Crystal" }, -- Player inventories to check for saleable items (used for new sales).
@@ -228,9 +228,28 @@ local function AR_IsAvailable()
 end
 
 local function AR_IsBusy()
-  local ok, busy = pcall(function() return IPC.AutoRetainer.IsBusy() end)
-  if not ok then return false end
-  return busy and true or false
+  if not (IPC and IPC.AutoRetainer) then return false end
+
+  local hasIsBusy = (type(IPC.AutoRetainer.IsBusy) == "function")
+  local hasAny    = (type(IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara) == "function")
+
+  if hasAny then
+    local okAny, anyAvail = pcall(function()
+      return IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+    end)
+    if okAny and (not anyAvail) then
+      return false
+    end
+  end
+
+  if hasIsBusy then
+    local okBusy, busy = pcall(function()
+      return IPC.AutoRetainer.IsBusy()
+    end)
+    if okBusy then return busy and true or false end
+  end
+
+  return false
 end
 
 function EnsureAutoRetainerIdle(maxWaitSec, settleSec, pollSec)
