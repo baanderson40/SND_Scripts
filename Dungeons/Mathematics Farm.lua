@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.5
+version: 0.0.6
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -506,7 +506,6 @@ end
 -- =========================================================
 STATE = {
     READY        = "READY",
-    RETURN_BASE  = "RETURN_BASE",
     RUN_AUTODUTY = "RUN_AUTODUTY",
     SPEND_TOMES  = "SPEND_TOMES",
     WAIT_BELL    = "WAIT_BELL",
@@ -532,24 +531,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- READY
     -- ======================
     if sm.s == STATE.READY then
-        -- If a bell is already active, sit in WAIT_BELL
-        if AtSummoningBell() then
-            Log("READY: summoning bell active; entering WAIT_BELL")
-            gotoState(STATE.WAIT_BELL)
-            goto continue
-        end
-
-        if InDuty() then
-            Log("READY: in duty (34/56); waiting for duty flags to clear")
-            while InDuty() do
-                Sleep(TIME.POLL)
-            end
-            Sleep(TIME.STABLE)
-            goto continue
-        end
-
-        if RetainerWorkPending() then
-            Log("READY: AutoRetainer work pending; entering WAIT_BELL")
+        if AtSummoningBell() or RetainerWorkPending() then
+            Log("READY: bell/retainer active; entering WAIT_BELL")
             gotoState(STATE.WAIT_BELL)
             goto continue
         end
@@ -562,24 +545,12 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         if MathematicsOnHand() >= mathematicsLimit then
             gotoState(STATE.SPEND_TOMES)
 
-        elseif RunsToGo() > 0 and (GetZoneId() or 0) ~= INN_TERRITORY_ID then
-            gotoState(STATE.RETURN_BASE)
-
-        elseif RunsToGo() > 0 and (GetZoneId() or 0) == INN_TERRITORY_ID then
+        elseif RunsToGo() > 0 then
             gotoState(STATE.RUN_AUTODUTY)
 
         else
             gotoState(STATE.DONE)
         end
-
-    -- ======================
-    -- RETURN_BASE
-    -- ======================
-    elseif sm.s == STATE.RETURN_BASE then
-        Log("Returning to Inn")
-        ReturnToInn()
-        Sleep(TIME.STABLE)
-        gotoState(STATE.READY)
 
     -- ======================
     -- RUN_AUTODUTY
@@ -649,7 +620,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
         if sm.s ~= STATE.FAIL then
             Log("Closing shop window")
-            if AwaitAddonVisible("ShopExchangeCurrency", 5) then
+            for i = 1, 10 do
+                if not IsAddonVisible("ShopExchangeCurrency") then break end
                 SafeCallback("ShopExchangeCurrency", -1)
                 Sleep(TIME.STABLE)
             end
@@ -663,17 +635,17 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- WAIT_BELL
     -- ======================
     elseif sm.s == STATE.WAIT_BELL then
-        if IsAutoDutyRunning() then
-            Log("WAIT_BELL: AutoDuty running; stopping it")
-            StopAutoDuty()
-            Sleep(TIME.STABLE)
-        end
-
         if InDuty() then
             Log("WAIT_BELL: in duty (34/56); waiting for duty flags to clear")
             while InDuty() do
                 Sleep(TIME.POLL)
             end
+            Sleep(TIME.STABLE)
+        end
+
+        if IsAutoDutyRunning() then
+            Log("WAIT_BELL: AutoDuty running; stopping it")
+            StopAutoDuty()
             Sleep(TIME.STABLE)
         end
 
