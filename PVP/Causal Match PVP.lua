@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.5
+version: 0.0.6
 description: PvP script - Inspired by Dhog
 plugin_dependencies:
 - vnavmesh
@@ -118,7 +118,6 @@ function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     return false
 end
 
--- REQUIRED: AwaitAddonReady
 function AwaitAddonReady(name, timeoutSec)
     local t = toNumberSafe(timeoutSec, TIME.TIMEOUT, 0.1)
     Log("AwaitAddonReady: %s", tostring(name))
@@ -132,7 +131,6 @@ function AwaitAddonReady(name, timeoutSec)
     return ok
 end
 
--- REQUIRED: SafeCallback
 local function _quoteArg(s)
     s = tostring(s)
     s = s:gsub("\\", "\\\\"):gsub('"', '\\"')
@@ -148,7 +146,6 @@ function SafeCallback(...)
         return false
     end
 
-    -- Optional "update" argument (boolean/string). If not provided, default true.
     local update = args[idx]; idx = idx + 1
     local updateStr = "true"
     if type(update) == "boolean" then
@@ -308,18 +305,17 @@ local function distToName(name)
     return distToXYZ(x2,y2,z2)
 end
 
-local function statusRemaining(statusId)
+local function hasStatus(statusId)
     local lp = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
-    if not lp then return 0 end
-    local list = lp.StatusList
-    if not list then return 0 end
-    for i = 0, list.Length - 1 do
-        local s = list[i]
+    if not lp or not lp.StatusList then return false end
+
+    for i = 0, lp.StatusList.Length - 1 do
+        local s = lp.StatusList[i]
         if s and s.StatusId == statusId then
-            return s.RemainingTime or 0
+            return true
         end
     end
-    return 0
+    return false
 end
 
 local function contentTimeLeft()
@@ -412,7 +408,7 @@ dutyBaselineTime = nil
 baselineCaptured = false
 timerMovedFromBaseline = false
 
--- NEW: portrait quickchat threshold state
+-- portrait quickchat threshold state
 portraitHelloThreshold = nil   -- number in [5..29]
 portraitHelloSent = false
 
@@ -464,7 +460,7 @@ if SET_GARO_TITLES then
 end
 
 -- =========================================================
--- Initial DF clicks (as you had)
+-- Initial DF clicks
 -- =========================================================
 yield("/dutyfinder")
 AwaitAddonReady("ContentsFinder")
@@ -526,7 +522,7 @@ while RUN_LOOP do
                 Log("ERROR: ContentsFinder not ready after /dutyfinder")
             end
         else
-            if AwaitAddonReady("ContentsFinderConfirm", 30) then
+            if AwaitAddonReady("ContentsFinderConfirm", 15) then
                 SafeCallback("ContentsFinderConfirm", 8)
             end
         end
@@ -556,8 +552,7 @@ while RUN_LOOP do
         ranSafetyMoveThisDuty = false
         hasEnabledRotationThisLife = false
 
-        -- NEW: pick hello threshold for this duty (5..29 inclusive) and reset sent flag
-        portraitHelloThreshold = randInt(5, 29)
+        portraitHelloThreshold = randInt(1, 29)
         portraitHelloSent = false
 
         Log("duty entry baseline ContentTimeLeft -> %s", tostring(dutyBaselineTime))
@@ -565,7 +560,7 @@ while RUN_LOOP do
     end
 
     -- =====================================================
-    -- Waiting phase: portraits + gate (ContentTimeLeft method)
+    -- Waiting phase: portraits + gate
     -- =====================================================
     while inDuty and not inMatchLive do
         checkDeathAndReapplyRotation()
@@ -591,11 +586,10 @@ while RUN_LOOP do
                 announcedPortrait = true
             end
 
-            -- NEW: during portraits, send Hello once when timer drops to/below threshold, but still above 5
             if (not portraitHelloSent)
                 and portraitHelloThreshold ~= nil
                 and tLeft <= portraitHelloThreshold
-                and tLeft > 5
+                and tLeft > 1
             then
                 yield("/quickchat Hello")
                 portraitHelloSent = true
@@ -661,9 +655,9 @@ while RUN_LOOP do
         end
 
         local spawnSide = -1
-        while (statusRemaining(895) > 0.1) and inDuty and spawnSide == -1 and inMatchLive do
+        while hasStatus(895) and inDuty and spawnSide == -1 and inMatchLive do
             checkDeathAndReapplyRotation()
-            yield("/pvpac sprint")
+            if not hasStatus(1342) then yield("/pvpac sprint") end
             yield("/vnav stop")
 
             local anchors = SAFE_ANCHORS[territoryId]
@@ -684,7 +678,7 @@ while RUN_LOOP do
                 end
             end
 
-            Sleep(0.10)
+            Sleep(0.30)
             inDuty = GetCondition(CharacterCondition.boundByDuty34, true)
         end
 
