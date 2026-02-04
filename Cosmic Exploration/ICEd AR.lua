@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.5
+version: 0.0.6
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -742,6 +742,11 @@ local function Main()
         return
     end
 
+    if not AwaitAddonVisible("RetainerList", 5) then
+        Log("failed to open bell '%s'", tostring(bell.Name))
+        return
+    end
+
     EnableAutoRetainer()
 
     Log("waiting for AutoRetainer to finish")
@@ -750,7 +755,8 @@ local function Main()
     end, 999999, TIME.POLL, 1)
     Log("AutoRetainer finished")
 
-    if closeRetainerList then
+    Log("Checking RetainerList stable")
+    if closeRetainerList and WaitAddonStable("RetainerList", TIME.STABLE, 1, TIME.POLL) then
         CloseRetainerList()
     else
         WaitUntil(function()
