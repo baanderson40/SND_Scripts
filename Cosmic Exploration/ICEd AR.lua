@@ -756,7 +756,7 @@ local function Main()
     Log("AutoRetainer finished")
 
     Log("Checking RetainerList stable")
-    if closeRetainerList and WaitAddonStable("RetainerList", TIME.STABLE, 1, TIME.POLL) then
+    if closeRetainerList and WaitAddonStable("RetainerList", TIME.STABLE, 3, TIME.POLL) then
         CloseRetainerList()
     else
         WaitUntil(function()
