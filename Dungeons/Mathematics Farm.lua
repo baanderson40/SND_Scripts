@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.6
+version: 0.1.0
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -11,24 +11,31 @@ plugin_dependencies:
 - vnavmesh
 configs:
   Mathematics Tome Limit:
-    description: Maximum number of Mathematics tomes before spending.
+    description: The number of Mathematics tomes to gather before spending them.
     default: 1500
     min: 500
     max: 2000
+  Max Purchase Cycles:
+    description: How many times the script should spend tomes before stopping.
+    default: 1
   Dungeon:
-    description: Select dungeon to run.
+    description: The dungeon AutoDuty should run..
     default: "Mistwake"
     is_choice: true
     choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria"]
   Arcanite type:
-    description: Select arcanite to purchase.
+    description: The type of arcanite to purchase with tomes.
     default: "Waning Arcanite"
     is_choice: true
     choices: ["Waning Arcanite", "Waxing Arcanite", "Arcanite"]
-  Enable AutoRetainer MultiMode:
+  Pause for AutoRetainer:
+    description: |
+      Pause the script while AutoRetainer handles retainer interactions.
+      This script does not interact with retainers; AutoRetainer MultiMode or RetainerSense must be enabled for processing.
     default: true
-    description: Enable AutoRetainer MultiMode only when the script reaches instance limit.
-
+  Enable AutoRetainer MultiMode:
+    description: Enable AutoRetainer MultiMode when the script completes.
+    default: true
 [[End Metadata]]
 --]=====]
 
@@ -38,6 +45,7 @@ configs:
 import("System.Numerics")
 echoLog = false
 PREFIX  = "[Mathematics Farmer]"
+closeRetainer = true
 
 -- ==============================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
@@ -165,6 +173,13 @@ function AwaitAddonVisible(name, timeoutSec)
     end, timeoutSec or TIME.TIMEOUT, TIME.POLL, 0.0)
     if not ok then Log("AwaitAddonVisible timeout: %s", tostring(name)) end
     return ok
+end
+
+function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
+    return WaitUntil(function()
+        local addon = _get_addon(addonName)
+        return addon and addon.Exists
+    end, timeoutSec or TIME.TIMEOUT, pollSec or TIME.POLL, stableSec or 2.0)
 end
 
 -- =========================================================
@@ -351,6 +366,46 @@ function StopVNAV()
 end
 
 -- =========================================================
+-- Plugin Helpers
+-- =========================================================
+
+local function EnableAutoRetainer()
+    Log("enabling AutoRetainer")
+    yield("/ays e")
+    sleep(TIME.STABLE)
+    return true
+end
+
+local function CloseRetainerList()
+    Log("CloseRetainerList: begin")
+
+    if IsAddonVisible("RetainerSellList") then
+        SafeCallback("RetainerSellList", true, -1)
+        sleep(TIME.STABLE)
+    end
+
+    if IsAddonVisible("SelectString") then
+        SafeCallback("SelectString", true, -1)
+        sleep(TIME.STABLE)
+    end
+
+    local tries = 0
+    while IsAddonVisible("RetainerList") and tries < 80 do
+        SafeCallback("RetainerList", true, -1)
+        sleep(TIME.STABLE)
+        tries = tries + 1
+    end
+
+    if IsAddonVisible("RetainerList") then
+        Log("CloseRetainerList: RetainerList still open after attempts")
+        return false
+    end
+
+    Log("CloseRetainerList: done (RetainerList closed)")
+    return true
+end
+
+-- =========================================================
 -- Trigger Events
 -- =========================================================
 function OnStop()
@@ -410,13 +465,16 @@ end
 
 -- Config reads
 local mathematicsLimit    = toNumberSafe(Config.Get("Mathematics Tome Limit"), 1500, 0)
+local maxPurchases        = toNumberSafe(Config.Get("Max Purchase Cycles"), 0, 0)
 local arcanitePick        = tostring(Config.Get("Arcanite type") or "Waning Arcanite")
 local dungeonPick         = tostring(Config.Get("Dungeon") or "Mistwake")
+local pauseAutoRetainer   = (Config.Get("Pause for AutoRetainer") ~= false)
 local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
 
 local ItemToBuy           = (ArcaniteMap[arcanitePick] or 0)
 local DungeonToDo         = (DungMap[dungeonPick] and DungMap[dungeonPick].id or 0)
 local MathematicsFromDung = (DungMap[dungeonPick] and DungMap[dungeonPick].amount or 0)
+local purchaseCounter     = 0
 
 -- IDs / locations
 local INN_TERRITORY_ID     = 177
@@ -469,8 +527,14 @@ local function RunsToGo()
 end
 
 local function StartAutoDuty()
+    if not (IPC and IPC.AutoDuty and IPC.AutoDuty.Run) then
+        Log("StartAutoDuty: AutoDuty IPC missing")
+        gotoState(STATE.FAIL)
+        return false
+    end
     IPC.AutoDuty.Run(DungeonToDo, RunsToGo(), false)
     sleep(TIME.POLL)
+    return true
 end
 
 local function TravelToZone(command, targetZoneId)
@@ -495,10 +559,11 @@ end
 -- AutoRetainer readiness (retainer fix)
 -- =========================================================
 local function RetainerWorkPending()
-    return IPC
-        and IPC.AutoRetainer
-        and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara
-        and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+    Log("waiting for AutoRetainer to finish")
+    WaitUntil(function()
+        return not IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+    end, 999999, TIME.POLL, 1)
+    Log("AutoRetainer finished")
 end
 
 -- =========================================================
@@ -531,7 +596,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- READY
     -- ======================
     if sm.s == STATE.READY then
-        if AtSummoningBell() or RetainerWorkPending() then
+        if (AtSummoningBell() or RetainerWorkPending()) and pauseAutoRetainer then
             Log("READY: bell/retainer active; entering WAIT_BELL")
             gotoState(STATE.WAIT_BELL)
             goto continue
@@ -628,7 +693,14 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
             Sleep(TIME.STABLE)
 
-            gotoState(STATE.DONE)
+            purchaseCounter = purchaseCounter + 1
+            Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
+
+            if maxPurchases == 0 or purchaseCounter < maxPurchases then
+                gotoState(STATE.READY)
+            else
+                gotoState(STATE.DONE)
+            end
         end
 
     -- ======================
@@ -649,9 +721,16 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             Sleep(TIME.STABLE)
         end
 
-        if AtSummoningBell() or RetainerWorkPending() then
+        if RetainerWorkPending() then
             Sleep(TIME.POLL)
             goto continue
+        end
+
+        Log("Checking RetainerList stable")
+        if closeRetainer and WaitAddonStable("RetainerList", TIME.STABLE, 3, TIME.POLL) then
+            CloseRetainerList()
+        elseif not closeRetainer then
+            WaitUntil(function() return not AtSummoningBell() end, 999999, TIME.POLL, 1)
         end
 
         Log("WAIT_BELL: cleared (no bell, no retainer work); returning to READY")
