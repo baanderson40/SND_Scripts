@@ -16,7 +16,7 @@ configs:
     min: 500
     max: 2000
   Max Purchase Cycles:
-    description: How many times the script should spend tomes before stopping.
+    description: How many times the script should spend tomes before stopping. Set to 0 for unlimited.
     default: 1
   Dungeon:
     description: The dungeon AutoDuty should run..
