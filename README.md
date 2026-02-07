@@ -5,6 +5,16 @@
 
 Collection of various SND scripts
 
+## Version numbering
+- 0.0.x — Alpha
+  - Early, rough version. It works for my setup and plugins, but it may not work out of the box for others. Expect to tweak things if you use it.
+
+- 0.x.0 — Beta
+  - More complete and generally usable by others without modification, but it may still contain bugs or edge cases that haven’t been found yet.
+
+- x.0.0 — Stable
+  - Used by multiple users and known to work reliably, though minor bugs or unexpected issues are still possible.
+
 ## Scripts
 - Auto Retainer
   - Auto Repricer
