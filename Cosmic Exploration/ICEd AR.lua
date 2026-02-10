@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.6
+version: 0.1.0
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -415,7 +415,7 @@ function Mount()
     local useMount = Config.Get("Mount")
     if not Svc.Condition[CharacterCondition.mounted] then
         if useMount ~= nil and useMount ~= "" then
-            yield("/mount " .. useMount)
+            yield('/mount "'..useMount..'"')
         else
             Actions.ExecuteGeneralAction(9) -- Mount Roulette
         end
