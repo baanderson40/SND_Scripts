@@ -730,6 +730,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         end
 
         if IsRetainerWorkPending() then
+            WaitRetainersFinished()
             Sleep(TIME.POLL)
             goto continue
         end
