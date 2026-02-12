@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.0
+version: 0.1.1
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -558,12 +558,20 @@ end
 -- =========================================================
 -- AutoRetainer readiness (retainer fix)
 -- =========================================================
-local function RetainerWorkPending()
+local function IsRetainerWorkPending()
+    if not (IPC and IPC.AutoRetainer and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara) then
+        return false
+    end
+    return IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara() == true
+end
+
+local function WaitRetainersFinished()
     Log("waiting for AutoRetainer to finish")
     WaitUntil(function()
-        return not IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+        return not IsRetainerWorkPending()
     end, 999999, TIME.POLL, 1)
     Log("AutoRetainer finished")
+    return true
 end
 
 -- =========================================================
@@ -596,7 +604,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- READY
     -- ======================
     if sm.s == STATE.READY then
-        if (AtSummoningBell() or RetainerWorkPending()) and pauseAutoRetainer then
+        if (AtSummoningBell() or IsRetainerWorkPending()) and pauseAutoRetainer then
             Log("READY: bell/retainer active; entering WAIT_BELL")
             gotoState(STATE.WAIT_BELL)
             goto continue
@@ -665,14 +673,14 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         end
 
         while MathematicsOnHand() >= 500 do
-            SafeCallback("ShopExchangeCurrency", 0, ItemToBuy, 1)
+            SafeCallback("ShopExchangeCurrency", true, 0, ItemToBuy, 1)
 
             if not AwaitAddonReady("SelectYesno", 5.0) then
                 Log("SPEND_TOMES: SelectYesno missing")
                 gotoState(STATE.FAIL)
                 break
             end
-            SafeCallback("SelectYesno", 0)
+            SafeCallback("SelectYesno", true, 0)
 
             if not AwaitAddonReady("ShopExchangeCurrency", 5.0) then
                 Log("SPEND_TOMES: ShopExchangeCurrency not ready after confirm")
@@ -687,7 +695,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             Log("Closing shop window")
             for i = 1, 10 do
                 if not IsAddonVisible("ShopExchangeCurrency") then break end
-                SafeCallback("ShopExchangeCurrency", -1)
+                SafeCallback("ShopExchangeCurrency", true, -1)
                 Sleep(TIME.STABLE)
             end
 
@@ -721,7 +729,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             Sleep(TIME.STABLE)
         end
 
-        if RetainerWorkPending() then
+        if IsRetainerWorkPending() then
             Sleep(TIME.POLL)
             goto continue
         end
