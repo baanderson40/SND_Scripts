@@ -205,7 +205,7 @@ end
 -- =========================================================
 local RUN_LOOP = true
 
-local SET_GARO_TITLES = true
+local SET_GARO_TITLES = Config.Get("garoTitles")
 local TITLE_1 = "barago"
 local TITLE_2 = "garo"
 
