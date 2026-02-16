@@ -1,12 +1,16 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.6
-description: PvP script - Inspired by Dhog
+version: 0.1.0
+description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
 - RotationSolver
-
+configs:
+  garoTitles:
+    default: false
+    description: Set Garo Titles
+    type: bool
 [[End Metadata]]
 --]=====]
 --[[
@@ -462,15 +466,7 @@ end
 -- =========================================================
 -- Initial DF clicks
 -- =========================================================
-yield("/dutyfinder")
-AwaitAddonReady("ContentsFinder")
-SafeCallback("ContentsFinder", 12, 1)
-Sleep(1)
-SafeCallback("ContentsFinder", 1, 8)
-Sleep(.7)
-SafeCallback("ContentsFinder", 3, 1)
-Sleep(.5)
-SafeCallback("ContentsFinder", -1)
+Instances.DutyFinder:QueueRoulette(40)
 
 -- =========================================================
 -- Main loop
@@ -514,17 +510,7 @@ while RUN_LOOP do
 
         if GetCondition(CharacterCondition.inDutyQueue, true) == false then
             Log("not queued -> opening duty finder")
-            yield("/dutyfinder")
-
-            if AwaitAddonReady("ContentsFinder", 10.0) then
-                SafeCallback("ContentsFinder", 12, 0)
-            else
-                Log("ERROR: ContentsFinder not ready after /dutyfinder")
-            end
-        else
-            if AwaitAddonReady("ContentsFinderConfirm", 15) then
-                SafeCallback("ContentsFinderConfirm", 8)
-            end
+            Instances.DutyFinder:QueueRoulette(40)
         end
 
         Sleep(0.5)
