@@ -438,8 +438,8 @@ end
 -- Variable State + Tables
 -- =========================================================
 local ArcaniteTypes  = {
-    {name = "Arcanite",         id = 1},
-    {name = "Waxing Arcanite",  id = 0},
+    {name = "Arcanite",         id = 0},
+    {name = "Waxing Arcanite",  id = 1},
     {name = "Waning Arcanite",  id = 2}
 }
 
