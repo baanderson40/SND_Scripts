@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.2
+version: 0.1.3
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -736,11 +736,13 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         end
 
         Log("Checking RetainerList stable")
-        if closeRetainer and WaitAddonStable("RetainerList", TIME.STABLE, 3, TIME.POLL) then
+        if closeRetainer and WaitAddonStable("RetainerList", TIME.STABLE, 10, TIME.POLL) then
             CloseRetainerList()
         elseif not closeRetainer then
             WaitUntil(function() return not AtSummoningBell() end, 999999, TIME.POLL, 1)
         end
+
+        WaitUntil(function() return not AtSummoningBell() end, 999999, TIME.POLL, 1)
 
         Log("WAIT_BELL: cleared (no bell, no retainer work); returning to READY")
         Sleep(TIME.STABLE)
