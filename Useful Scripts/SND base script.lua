@@ -3,6 +3,10 @@
 author: baanderson40
 version: 0.0.1
 description: SND script (standardized logging/echo aliases; sleep alias usage)
+configs:
+  Mount:
+    description: Input the name of the mount to use. Leave empty to use mount roulette
+    default: ""
 [[End Metadata]]
 --]=====]
 
@@ -10,8 +14,10 @@ description: SND script (standardized logging/echo aliases; sleep alias usage)
 -- Config
 -- =========================================================
 import("System.Numerics")
-echoLog = true
-PREFIX  = "[SND]"
+local echoLog = true
+local PREFIX  = "[SND]"
+local CharacterCondition
+local GetCharacterCondition
 
 -- ==============================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
@@ -30,19 +36,25 @@ local function _fmt(msg, ...)
     return string.format("%s %s", PREFIX, string.format(msg, ...))
 end
 
-function Logf(msg, ...)   _log(_fmt(msg, ...))  end
-function Echof(msg, ...)  _echo(_fmt(msg, ...)) end
+local function Logf(msg, ...)   _log(_fmt(msg, ...))  end
+local function Echof(msg, ...)  _echo(_fmt(msg, ...)) end
 
-Log,  log  = Logf,  Logf
-Echo, echo = Echof, Echof
+local Log,  log  = Logf,  Logf
+local Echo, echo = Echof, Echof
+
+local function EchoOnce(msg, ...)
+    local line = _fmt(msg, ...)
+    Dalamud.Log(line)
+    yield("/echo " .. line)
+end
 
 -- =========================================================
--- Timing constants + Sleep
+-- Timing constants + sleep
 -- =========================================================
-TIME = {
+local TIME = {
     POLL    = 0.10,  -- canonical polling step
     TIMEOUT = 10.0,  -- default time budget
-    STABLE  = 0.0    -- default stability window
+    STABLE  = 0.30   -- default stability window
 }
 
 local function _sleep(seconds)
@@ -54,12 +66,12 @@ local function _sleep(seconds)
     yield("/wait " .. s)
 end
 
-Sleep, sleep = _sleep, _sleep
+local Sleep, sleep = _sleep, _sleep
 
 -- =========================================================
 -- Number helper (parsing + optional clamping)
 -- =========================================================
-function toNumberSafe(s, default, min, max)
+local function toNumberSafe(s, default, min, max)
     if s == nil then return default end
     local str = tostring(s):gsub("[^%d%-%.]", "")
     local n = tonumber(str)  -- force only one argument
@@ -93,14 +105,52 @@ local function _get_addon(name)
     end
 end
 
-function IsAddonReady(name)
-    local addon = _get_addon(name)
-    return addon and addon.Ready or false
+local function _addon_ready(a)
+    if not a then return false end
+    if a.Ready == true then return true end
+    if a.IsReady == true then return true end
+    if a.Loaded == true then return true end
+
+    if type(a.Ready) == "function" then
+        local ok, v = pcall(a.Ready, a); if ok and v then return true end
+    end
+    if type(a.IsReady) == "function" then
+        local ok, v = pcall(a.IsReady, a); if ok and v then return true end
+    end
+
+    return false
 end
 
-function IsAddonVisible(name)
+local function _addon_exists(a)
+    if not a then return false end
+    -- common boolean fields
+    if a.Exists == true then return true end
+    if a.Visible == true then return true end
+    if a.IsVisible == true then return true end
+    if a.IsOpen == true then return true end
+    if a.IsShown == true then return true end
+
+    -- some wrappers expose functions
+    if type(a.Exists) == "function" then
+        local ok, v = pcall(a.Exists, a); if ok and v then return true end
+    end
+    if type(a.IsVisible) == "function" then
+        local ok, v = pcall(a.IsVisible, a); if ok and v then return true end
+    end
+
+    -- fallback: if it's "Ready" it's effectively open
+    if _addon_ready(a) then return true end
+    return false
+end
+
+local function IsAddonReady(name)
     local addon = _get_addon(name)
-    return addon and addon.Exists or false
+    return _addon_ready(addon)
+end
+
+local function IsAddonVisible(name)
+    local addon = _get_addon(name)
+    return _addon_exists(addon)
 end
 
 -- =========================================================
@@ -134,10 +184,10 @@ end
 --         return Entity.Target and Entity.Target.Name == "NPC Bob"
 --     end, 5.0, 0.10)
 --
-function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
+local function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     timeoutSec = toNumberSafe(timeoutSec, TIME.TIMEOUT, 0.1)
     pollSec    = toNumberSafe(pollSec,    TIME.POLL,   0.01)
-    stableSec  = toNumberSafe(stableSec,  TIME.STABLE, 0.0)
+    stableSec  = toNumberSafe(stableSec,  0.0, 0.0)
 
     local start     = os.clock()
     local holdStart = nil
@@ -155,34 +205,34 @@ function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     return false
 end
 
-function AwaitAddonReady(name, timeoutSec)
-    Echo("awaiting ready: %s", tostring(name))
+local function AwaitAddonReady(name, timeoutSec)
+    Log("awaiting ready: %s", tostring(name))
     local ok = WaitUntil(function()
         local addon = _get_addon(name)
-        return addon and addon.Ready
+        return addon and _addon_ready(addon)
     end, timeoutSec or TIME.TIMEOUT, TIME.POLL, 0.0)
     if not ok then Log("AwaitAddonReady timeout: %s", tostring(name)) end
     return ok
 end
 
-function AwaitAddonVisible(name, timeoutSec)
-    Echo("awaiting visible: %s", tostring(name))
+local function AwaitAddonVisible(name, timeoutSec)
+    Log("awaiting visible: %s", tostring(name))
     local ok = WaitUntil(function()
         local addon = _get_addon(name)
-        return addon and addon.Exists
+        return addon and _addon_exists(addon)
     end, timeoutSec or TIME.TIMEOUT, TIME.POLL, 0.0)
     if not ok then Log("AwaitAddonVisible timeout: %s", tostring(name)) end
     return ok
 end
 
-function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
+local function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
     return WaitUntil(function()
         local addon = _get_addon(addonName)
-        return addon and addon.Exists
+        return addon and _addon_exists(addon)
     end, timeoutSec or TIME.TIMEOUT, pollSec or TIME.POLL, stableSec or 2.0)
 end
 
-function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
+local function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
     want       = (want ~= false)
     stableSec  = toNumberSafe(stableSec,  2.0,   0.0)
     timeoutSec = toNumberSafe(timeoutSec, 15.0,  0.1)
@@ -221,14 +271,14 @@ end
 -- matcher can be:
 --   1) function(text) -> true/false (preferred)
 --   2) string 'expected' + mode ('equals'|'contains'|'pattern') + caseInsensitive
-function AwaitAddonNodeVisible(addonName, timeoutSec, path, expectedOrMatcher, mode, caseInsensitive)
+local function AwaitAddonNodeVisible(addonName, timeoutSec, path, expectedOrMatcher, mode, caseInsensitive)
     if type(addonName) ~= "string" or addonName == "" then
         Log("AwaitAddonNodeVisible: invalid addonName '%s'", tostring(addonName)); return false
     end
     if type(path) ~= "table" or #path == 0 then
         Log("AwaitAddonNodeVisible: invalid path for %s", addonName); return false
     end
-    Echo("awaiting node visible: %s", addonName)
+    Log("awaiting node visible: %s", addonName)
 
     if type(expectedOrMatcher) == "function" then
         local ok = WaitUntil(function()
@@ -275,26 +325,26 @@ function AwaitAddonNodeVisible(addonName, timeoutSec, path, expectedOrMatcher, m
     return ok
 end
 
-function IsNodeVisible(addonName, path)
+local function IsNodeVisible(addonName, path)
     local node = _get_node(addonName, path)
     return node and node.IsVisible or false
 end
 
-function GetNodeText(addonName, path, waitSec)
+local function GetNodeText(addonName, path, waitSec)
     waitSec = toNumberSafe(waitSec, 0, 0)
     if waitSec > 0 and not AwaitAddonReady(addonName, waitSec) then return "" end
     local node = _get_node(addonName, path)
     return node and tostring(node.Text or "") or ""
 end
 
-function GetNodeType(addonName, path, waitSec)
+local function GetNodeType(addonName, path, waitSec)
     waitSec = toNumberSafe(waitSec, 0, 0)
     if waitSec > 0 and not AwaitAddonReady(addonName, waitSec) then return "" end
     local node = _get_node(addonName, path)
     return node and tostring(node.NodeType or "") or ""
 end
 
-function GetMyNode(addonName, index)
+local function GetMyNode(addonName, index)
     local addon = _get_addon(addonName)
     if not (addon and addon.Ready) then return nil end
     local nodes = addon.Nodes
@@ -304,59 +354,64 @@ end
 -- =========================================================
 -- Character / Mount / Target / Position Helpers
 -- =========================================================
-function GetCharacterName()
-    return (Entity and Entity.Player and Entity.Player.Name)
-end
-
-function GetCharacterCondition(i, bool)
+GetCharacterCondition = function(i, bool)
     if bool == nil then bool = true end
     return Svc and Svc.Condition and (Svc.Condition[i] == bool) or false
 end
 
-function GetCharacterPosition()
+local function GetCharacterName()
+    return (Entity and Entity.Player and Entity.Player.Name)
+end
+
+local function GetCharacterPosition()
     local player = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
     return player and player.Position or nil
 end
 
-function GetCharacterJob()
+local function GetCharacterJob()
     return Player and Player.Job or nil
 end
 
-function GetZoneId()
+local function GetZoneId()
     local cs = Svc and Svc.ClientState
     return cs and cs.TerritoryType or nil
 end
 
-function Mount()
-    if not Svc.Condition[CharacterCondition.mounted] then
-        yield('/gaction "mount roulette"')
+local function Mount()
+    local useMount = Config.Get("Mount")
+    if not GetCharacterCondition(CharacterCondition.mounted) then
+        if useMount ~= nil and useMount ~= "" then
+            yield('/mount "'..useMount'"')
+        else
+            Actions.ExecuteGeneralAction(9) -- Mount Roulette
+        end
     end
 end
 
-function Dismount()
-    if Svc.Condition[CharacterCondition.mounted] then
-        yield('/ac dismount')
+local function Dismount()
+    if GetCharacterCondition(CharacterCondition.mounted) then
+        Actions.ExecuteGeneralAction(23) -- Dismount
     end
 end
 
 -- =========================================================
 -- Distance Helpers
 -- =========================================================
-function GetTargetName()
+local function GetTargetName()
     return (Entity and Entity.Target and Entity.Target.Name) or ""
 end
 
-function GetDistanceToTarget()
+local function GetDistanceToTarget()
     if not (Entity and Entity.Player and Entity.Target) then return math.huge end
     return Vector3.Distance(Entity.Player.Position, Entity.Target.Position)
 end
 
-function DistanceBetweenPositions(pos1, pos2)
+local function DistanceBetweenPositions(pos1, pos2)
     if not (pos1 and pos2) then return math.huge end
     return Vector3.Distance(pos1, pos2)
 end
 
-function IsWithinDistance(pos1, pos2, maxDist)
+local function IsWithinDistance(pos1, pos2, maxDist)
     if not (pos1 and pos2 and maxDist) then return false end
     local distSq
     if Vector3.DistanceSquared then
@@ -368,7 +423,7 @@ function IsWithinDistance(pos1, pos2, maxDist)
     return distSq <= (maxDist * maxDist)
 end
 
-function IsTargetWithin(maxDist)
+local function IsTargetWithin(maxDist)
     if not (Entity and Entity.Player and Entity.Target and maxDist) then return false end
     return IsWithinDistance(Entity.Player.Position, Entity.Target.Position, maxDist)
 end
@@ -376,7 +431,7 @@ end
 -- =========================================================
 -- Interaction Helper
 -- =========================================================
-function InteractByName(name, timeout)
+local function InteractByName(name, timeout)
     if type(name) ~= "string" or name == "" then
         Log("InteractByName: invalid name '%s'", tostring(name)); return false
     end
@@ -411,7 +466,7 @@ local function _quoteArg(s)
     return '"' .. s .. '"'
 end
 
-function SafeCallback(...)
+local function SafeCallback(...)
     local args = {...}
     local idx  = 1
     local addon = args[idx]; idx = idx + 1
@@ -445,7 +500,7 @@ function SafeCallback(...)
         end
     end
 
-    Echo("calling: %s", call)
+    Log("calling: %s", call)
     if IsAddonReady(addon) and IsAddonVisible(addon) then
         yield(call)
         return true
@@ -458,14 +513,14 @@ end
 -- =========================================================
 -- Plugin helpers
 -- =========================================================
-function HasPlugin(name)
+local function HasPlugin(name)
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
         if plugin.InternalName == name and plugin.IsLoaded then return true end
     end
     return false
 end
 
-function GetPlugins()
+local function GetPlugins()
     local plugins = {}
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
         table.insert(plugins, { name = plugin.InternalName, loaded = plugin.IsLoaded })
@@ -478,23 +533,110 @@ function GetPlugins()
     end
 end
 
+local changedTextAdvance = false
+local textAdvanceOriginalState = nil
+local function ToggleTextAdvance(wanted)
+    local desired = nil
+
+    if wanted == "enable" then
+        desired = true
+    elseif wanted == "disable" then
+        desired = false
+    elseif wanted == "restore" then
+        if changedTextAdvance and textAdvanceOriginalState ~= nil then
+            local current = IPC.TextAdvance.IsEnabled()
+            if current ~= textAdvanceOriginalState then
+                Log("TextAdvance: restoring enabled=%s", tostring(textAdvanceOriginalState))
+                yield(textAdvanceOriginalState and "/at yes" or "/at no")
+            else
+                Log("TextAdvance: already in original state")
+            end
+        end
+
+        changedTextAdvance = false
+        textAdvanceOriginalState = nil
+        return
+    else
+        Log("TextAdvance: invalid wanted=%s (use enable|disable|restore)", tostring(wanted))
+        return
+    end
+
+    local current = IPC.TextAdvance.IsEnabled()
+
+    if textAdvanceOriginalState == nil then
+        textAdvanceOriginalState = current
+    end
+
+    if current ~= desired then
+        Log("TextAdvance: setting enabled=%s (script-owned)", tostring(desired))
+        yield(desired and "/at yes" or "/at no")
+        changedTextAdvance = true
+    else
+        Log("TextAdvance: already enabled=%s (no change)", tostring(desired))
+    end
+end
+
+local changedYesAlready = false
+local yesAlreadyOriginalState = nil
+local function ToggleYesAlready(wanted)
+    local desired = nil
+
+    if wanted == "enable" then
+        desired = true
+    elseif wanted == "disable" then
+        desired = false
+    elseif wanted == "restore" then
+        -- restore only if we changed it
+        if changedYesAlready and yesAlreadyOriginalState ~= nil then
+            local current = IPC.YesAlready.IsPluginEnabled()
+            if current ~= yesAlreadyOriginalState then
+                Log("YesAlready: restoring enabled=%s", tostring(yesAlreadyOriginalState))
+                IPC.YesAlready.SetPluginEnabled(yesAlreadyOriginalState)
+            else
+                Log("YesAlready: already in original state")
+            end
+        end
+
+        changedYesAlready = false
+        yesAlreadyOriginalState = nil
+        return
+    else
+        Log("YesAlready: invalid wanted=%s (use enable|disable|restore)", tostring(wanted))
+        return
+    end
+
+    local current = IPC.YesAlready.IsPluginEnabled()
+
+    if yesAlreadyOriginalState == nil then
+        yesAlreadyOriginalState = current
+    end
+
+    if current ~= desired then
+        Log("YesAlready: setting enabled=%s (script-owned)", tostring(desired))
+        IPC.YesAlready.SetPluginEnabled(desired)
+        changedYesAlready = true
+    else
+        Log("YesAlready: already enabled=%s (no change)", tostring(desired))
+    end
+end
+
 -- =========================================================
 -- VNAV Helpers
 -- =========================================================
-function PathandMoveVnav(dest, fly)
+local function PathandMoveVnav(dest, fly)
     fly = (fly == true)
     local t, timeout = 0, TIME.TIMEOUT
     while not IPC.vnavmesh.IsReady() and t < timeout do
         sleep(TIME.POLL); t = t + TIME.POLL
     end
     if not IPC.vnavmesh.IsReady() then
-        log("%s VNAV not ready (timeout)", PREFIX)
+        log("VNAV not ready (timeout)")
         return false
     end
 
     local ok = IPC.vnavmesh.PathfindAndMoveTo(dest, fly)
     if not ok then
-        log("%s VNAV pathfind failed", PREFIX)
+        log("VNAV pathfind failed")
     end
 
     if ok then
@@ -506,7 +648,7 @@ function PathandMoveVnav(dest, fly)
     return ok and true or false
 end
 
-function StopCloseVnav(dest, stopDistance)
+local function StopCloseVnav(dest, stopDistance)
     stopDistance = tonumber(stopDistance) or 3.0
     if not dest then return false end
 
@@ -515,14 +657,15 @@ function StopCloseVnav(dest, stopDistance)
         sleep(TIME.POLL); t = t + TIME.POLL
     end
     if not IPC.vnavmesh.IsRunning() then
-        log("%s VNAV not running (timeout)", PREFIX)
+        log("VNAV not running (timeout)")
         return false
     end
 
     while IPC.vnavmesh.IsRunning() do
         local me = Entity and Entity.Player
         if me and me.Position then
-            if Vector3.Distance(me.Position, dest) < 15
+
+            if Vector3.Distance(me.Position, dest) < 20
                 and GetCharacterCondition(CharacterCondition.mounted) then
                 Dismount()
             end
@@ -534,10 +677,10 @@ function StopCloseVnav(dest, stopDistance)
         sleep(TIME.POLL)
     end
 
-    return true
+    return false
 end
 
-function MoveNearVnav(dest, stopDistance, fly)
+local function MoveNearVnav(dest, stopDistance, fly)
     stopDistance = tonumber(stopDistance) or 3.0
     if PathandMoveVnav(dest, fly) then
         return StopCloseVnav(dest, stopDistance)
@@ -545,13 +688,16 @@ function MoveNearVnav(dest, stopDistance, fly)
     return false
 end
 
+local function StopVNAV()
+    if IPC.vnavmesh.BuildProgress() or IPC.vnavmesh.IsRunning() then IPC.vnavmesh.Stop() end
+end
 -- =========================================================
 -- Excel Sheet Lookups (guarded, return {ok,value|err})
 -- =========================================================
 local function ok(v)  return true, v end
 local function err(m) return false, tostring(m or "unknown error") end
 
-function GetENpcResidentName(dataId)
+local function GetENpcResidentName(dataId)
     local id = toNumberSafe(dataId, nil)
     if not id then return err("ENpcResident: invalid id '"..tostring(dataId).."'") end
 
@@ -567,7 +713,37 @@ function GetENpcResidentName(dataId)
     return ok({ name = tostring(name), source = "ENpcResident", id = id })
 end
 
-function BuildJobTable(firstId, lastId)
+local function GetEObjName(dataId)
+    local id = toNumberSafe(dataId, nil)
+    if not id then
+        return err("EObjName: invalid id '" .. tostring(dataId) .. "'")
+    end
+
+    local sheet = Excel.GetSheet("EObjName")
+    if not sheet then
+        return err("EObjName sheet not available")
+    end
+
+    local row = sheet:GetRow(id)
+    if not row then
+        return err("EObjName: no row for id " .. tostring(id))
+    end
+
+    -- EObjName uses Singular as the primary display string
+    local name = row.Singular
+    if not name or name == "" then
+        return err("EObjName: Singular missing for id " .. tostring(id))
+    end
+
+    return ok({
+        id     = id,
+        name   = tostring(name),
+        plural = row.Plural and tostring(row.Plural) or nil,
+        source = "EObjName",
+    })
+end
+
+local function BuildJobTable(firstId, lastId)
     firstId = toNumberSafe(firstId, 1, 1)
     lastId  = toNumberSafe(lastId,  100, firstId)
 
@@ -596,7 +772,7 @@ function BuildJobTable(firstId, lastId)
     return ok({ map = job, warnings = (#missing > 0) and missing or nil })
 end
 
-function PlaceNameByTerritory(id)
+local function PlaceNameByTerritory(id)
     local tid = toNumberSafe(id, nil, 1)
     if not tid then return err("invalid territory id: "..tostring(id)) end
 
@@ -644,7 +820,7 @@ function PlaceNameByTerritory(id)
     return err("unsupported PlaceName type: "..type(pn))
 end
 
-function GetZoneName(territoryType)
+local function GetZoneName(territoryType)
     local okRes, dataOrErr = PlaceNameByTerritory(territoryType)
     if not okRes then return false, "GetZoneName: " .. dataOrErr end
     return true, dataOrErr.name
@@ -656,7 +832,7 @@ end
 local _gearsetCache = nil
 local _gearsetStamp = nil
 
-function BuildGearsetTable(force)
+local function BuildGearsetTable(force)
     if _gearsetCache and not force then
         return _gearsetCache
     end
@@ -674,10 +850,19 @@ function BuildGearsetTable(force)
     return gearset
 end
 
-function InvalidateGearsetCache()
+local function InvalidateGearsetCache()
     _gearsetCache = nil
     _gearsetStamp = nil
     Log("Gearset cache invalidated")
+end
+
+-- =========================================================
+-- Trigger Events
+-- =========================================================
+function OnStop()
+    ToggleTextAdvance("restore")
+    ToggleYesAlready("restore")
+    StopVNAV()
 end
 
 -- =========================================================
