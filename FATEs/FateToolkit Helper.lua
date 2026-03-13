@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.0.1
 description: |
   Toolkit Helper pairs with Fate Tool Kit automation to pause farming whenever retainers finish ventures.
   - Polls AutoRetainer venture timers while Tool Kit runs other tasks
