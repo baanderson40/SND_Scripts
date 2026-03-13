@@ -1,16 +1,15 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.1
+version: 1.0.2
 description: |
-  Toolkit Helper pairs with Fate Tool Kit automation to pause farming whenever retainers finish ventures.
-  - Polls AutoRetainer venture timers while Tool Kit runs other tasks
-  - Teleports to the Limsa summoning bell and interacts automatically
-  - Hands UI back to AutoRetainer, then resumes idle monitoring for the toolkit
+  Toolkit Helper adds two features on top of Fate Tool Kit automation:
+  - AutoRetainer monitoring and Limsa bell handling
+  - Gemstone stockpile and exchange automation
 plugin_dependencies:
 - AutoRetainer
 - vnavmesh
-- TextAdvance
+- Automaton
 configs:
   Pause for retainers?:
     description:
@@ -18,16 +17,6 @@ configs:
   Close Retainer List when done?:
     description:
     default: true
-  Echo logs:
-    description:
-    default: "None"
-    is_choice: true
-    choices: ["All", "None"]
-  Check interval (seconds):
-    description:
-    default: 60
-    min: 5
-    max: 300
   Maintain gemstone stockpile?:
     description:
     default: true
@@ -77,6 +66,16 @@ configs:
         "Tumbleclaw Weeds",
         "Turali Bicolor Gemstone Voucher",
         "Ty'aitya Wingblade"]
+  Echo logs:
+    description:
+    default: "None"
+    is_choice: true
+    choices: ["All", "None"]
+  Check interval (seconds):
+    description:
+    default: 60
+    min: 5
+    max: 300
 [[End Metadata]]
 --]=====]
 
@@ -107,7 +106,7 @@ CharacterCondition = {
 }
 
 local SUMMONING_BELL = {
-    rowId = 20000401,
+    rowId = 2000401,
     name = "Summoning Bell",
     position = Vector3(-122.72, 18.00, 20.39),
     territoryId = 129,
@@ -674,8 +673,11 @@ Runtime = {
     retainerToolkitStopped = false,
     exchangeDelayActive = false,
     lastExchangeDelayLog = 0,
-    lastLifestreamCommand = 0
+    lastLifestreamCommand = 0,
+    initialToolkitStarted = false
 }
+
+local ResumeToolkitRun -- forward declaration
 
 --#endregion Config & Runtime
 
@@ -790,6 +792,31 @@ local function WaitForAddonClosed(name, timeout)
         yield("/wait 0.1")
     until os.clock() > untilTime
     return false
+end
+
+local function WaitForTeleportCompletion(start)
+    yield("/wait 1")
+    while Svc.Condition[CharacterCondition.casting] do
+        yield("/wait 1")
+        if os.clock() - start > 60 then
+            EchoAll("Teleport failed: timeout during cast")
+            return false
+        end
+    end
+
+    yield("/wait 1")
+    while Svc.Condition[CharacterCondition.betweenAreas] do
+        yield("/wait 1")
+        if os.clock() - start > 120 then
+            EchoAll("Teleport failed: timeout during zone transition")
+            return false
+        end
+    end
+
+    if Instances ~= nil and Instances.Framework ~= nil then
+        Runtime.lastTeleport = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
+    end
+    return true
 end
 
 local function StopVnav()
@@ -1042,9 +1069,23 @@ local function EnsureSummoningBellAetheryte()
         return true
     end
 
-    local resolvedName = GetAetherytePlaceNameByRowId(SUMMONING_BELL.aetheryteRowId)
-        or SUMMONING_BELL.aetheryteName
-        or "Limsa Lominsa Lower Decks"
+    local resolvedName = nil
+    if Svc.AetheryteList ~= nil then
+        for _, aetheryte in ipairs(Svc.AetheryteList) do
+            local rowId = ExtractAetheryteRowId(aetheryte)
+            if rowId == SUMMONING_BELL.aetheryteRowId then
+                resolvedName = GetAetheryteName(aetheryte)
+                break
+            end
+        end
+    end
+
+    if resolvedName == nil or resolvedName == "" then
+        resolvedName = GetAetherytePlaceNameByRowId(SUMMONING_BELL.aetheryteRowId)
+            or SUMMONING_BELL.aetheryteName
+            or "Limsa Lominsa Lower Decks"
+    end
+
     SUMMONING_BELL.aetheryteName = resolvedName
     SUMMONING_BELL.aetheryteId = SUMMONING_BELL.aetheryteRowId
     Dalamud.Log("[Toolkit Helper] Resolved Limsa aetheryte to "..resolvedName.." (id="..tostring(SUMMONING_BELL.aetheryteId)..")")
@@ -1060,6 +1101,7 @@ local function EnsureSummoningBellNameLocalized()
         SUMMONING_BELL.name = localized
     end
     SUMMONING_BELL.localizedNameResolved = true
+    Dalamud.Log("[Toolkit Helper] Summoning bell entity name resolved to "..tostring(SUMMONING_BELL.name).." (rowId="..tostring(SUMMONING_BELL.rowId)..")")
     return SUMMONING_BELL.name
 end
 
@@ -1210,6 +1252,7 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
     local function retryableCall(label, fn, maxAttempts)
         maxAttempts = maxAttempts or 1
         for attempt = 1, maxAttempts do
+            Dalamud.Log(string.format("[Toolkit Helper] %s attempt %d preparing", label, attempt))
             local ready = WaitForLifestreamReady(5)
             if not ready then
                 Dalamud.Log("[Toolkit Helper] Lifestream is still busy before "..label.."; delaying attempt")
@@ -1217,7 +1260,9 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
             end
             local sinceLast = os.clock() - (Runtime.lastLifestreamCommand or 0)
             if sinceLast < 2 then
-                yield(string.format("/wait %.3f", 2 - sinceLast))
+                local waitTime = 2 - sinceLast
+                Dalamud.Log(string.format("[Toolkit Helper] %s attempt %d throttling %.3fs", label, attempt, waitTime))
+                yield(string.format("/wait %.3f", waitTime))
             end
             Runtime.lastLifestreamCommand = os.clock()
             local ok, result = pcall(fn)
@@ -1242,7 +1287,12 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
     end
 
     local function tryTeleportById(maxAttempts)
-        if not destId or not IPC.Lifestream.Teleport then
+        if not destId then
+            Dalamud.Log("[Toolkit Helper] tryTeleportById skipped: destId missing")
+            return false
+        end
+        if not IPC.Lifestream.Teleport then
+            Dalamud.Log("[Toolkit Helper] tryTeleportById skipped: IPC.Lifestream.Teleport unavailable")
             return false
         end
         return retryableCall(
@@ -1255,7 +1305,16 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
     end
 
     local function tryMiniAethernetTeleport(maxAttempts)
-        if not isMini or not destId or not IPC.Lifestream.AethernetTeleportById then
+        if not isMini then
+            Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: not mini destination")
+            return false
+        end
+        if not destId then
+            Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: no destId")
+            return false
+        end
+        if not IPC.Lifestream.AethernetTeleportById then
+            Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: IPC method unavailable")
             return false
         end
         return retryableCall(
@@ -1268,7 +1327,12 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
     end
 
     local function tryTeleportByName()
-        if not destName or not IPC.Lifestream.ExecuteCommand then
+        if not destName then
+            Dalamud.Log("[Toolkit Helper] tryTeleportByName skipped: no destination name")
+            return false
+        end
+        if not IPC.Lifestream.ExecuteCommand then
+            Dalamud.Log("[Toolkit Helper] tryTeleportByName skipped: IPC execute command unavailable")
             return false
         end
         return retryableCall(
@@ -1313,6 +1377,7 @@ function TeleportTo(destination)
         return false
     end
 
+    Dalamud.Log(string.format("[Toolkit Helper] TeleportTo preparing for %s (id=%s, mini=%s)", tostring(destName), tostring(destId), tostring(isMini)))
     WaitForPlayerStationary(5)
     AcceptTeleportOfferLocation(destName)
     local start = os.clock()
@@ -1326,34 +1391,16 @@ function TeleportTo(destination)
         end
     end
 
-    if not ExecuteLifestreamCommand(destName, destId, isMini) then
+    local executed = ExecuteLifestreamCommand(destName, destId, isMini)
+    Dalamud.Log(string.format("[Toolkit Helper] ExecuteLifestreamCommand returned %s for %s", tostring(executed), tostring(destName)))
+    if not executed then
         Dalamud.Log("[Toolkit Helper] Falling back to /li command for destination "..destName)
         local fallback = isMini and ("/li "..destName) or ("/li tp "..destName)
         yield(fallback)
     end
-    yield("/wait 1")
-
-    while Svc.Condition[CharacterCondition.casting] do
-        yield("/wait 1")
-        if os.clock() - start > 60 then
-            EchoAll("Teleport failed: timeout during cast")
-            return false
-        end
-    end
-
-    yield("/wait 1")
-    while Svc.Condition[CharacterCondition.betweenAreas] do
-        yield("/wait 1")
-        if os.clock() - start > 120 then
-            EchoAll("Teleport failed: timeout during zone transition")
-            return false
-        end
-    end
-
-    if Instances ~= nil and Instances.Framework ~= nil then
-        Runtime.lastTeleport = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
-    end
-    return true
+    local success = WaitForTeleportCompletion(start)
+    Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
+    return success
 end
 
 function CurrentCharacterRetainersReady()
@@ -1480,7 +1527,7 @@ local function DetermineToolkitRunCount()
     return 1000
 end
 
-local function ResumeToolkitRun(reason)
+local function _ResumeToolkitRun(reason)
     local runs = DetermineToolkitRunCount()
     local suffix = ""
     if reason ~= nil and reason ~= "" then
@@ -1488,7 +1535,11 @@ local function ResumeToolkitRun(reason)
     end
     Dalamud.Log(string.format("[Toolkit Helper] Issuing /vfate run %d%s", runs, suffix))
     yield(string.format("/vfate run %d", runs))
+    Runtime.initialToolkitStarted = true
 end
+
+ResumeToolkitRun = _ResumeToolkitRun
+
 
 local function IssueToolkitGemstoneRun(runCount, goal)
     local count = math.max(1, runCount)
@@ -1627,6 +1678,42 @@ local function InteractWithGemstoneVendor(entry)
     return true
 end
 
+local function InteractWithSummoningBell()
+    local bellName = EnsureSummoningBellNameLocalized()
+    if bellName == nil or bellName == "" then
+        return false
+    end
+    Dalamud.Log("[Toolkit Helper] Attempting to interact with summoning bell named "..bellName)
+    local deadline = os.clock() + 2
+    if Entity and Entity.GetEntityByName then
+        repeat
+            local bell = Entity.GetEntityByName(bellName)
+            if bell ~= nil then
+                bell:SetAsTarget()
+                yield("/wait 0.2")
+                bell:Interact()
+                return true
+            end
+            yield("/wait 0.1")
+        until os.clock() > deadline
+    end
+
+    local attempts = 0
+    repeat
+        attempts = attempts + 1
+        yield('/target "'..bellName..'"')
+        yield("/wait 0.2")
+        if Svc.Targets.Target ~= nil and GetTargetName() == bellName then
+            yield("/interact")
+            return true
+        end
+        yield("/wait 0.2")
+    until attempts >= 3
+
+    Dalamud.Log("[Toolkit Helper] Unable to locate summoning bell entity for interaction")
+    return false
+end
+
 local function EnsureGemstoneShopOpen(entry)
     local shop = WaitForAddonReady("ShopExchangeCurrency", 3)
     if shop ~= nil then
@@ -1712,6 +1799,7 @@ function Idle()
     end
 
     local now = os.clock()
+    local retainerReady = false
     if Settings.pauseRetainers then
         if now >= Runtime.nextCheck then
             Runtime.nextCheck = now + Settings.checkInterval
@@ -1743,8 +1831,8 @@ function Idle()
                     Dalamud.Log("[Toolkit Helper] Need gemstones but delaying because "..reason)
                     return
                 end
-                Dalamud.Log("[Toolkit Helper] Gemstones below target; entering MaintainGemstones state")
-                ChangeState(CharacterState.maintainGemstones, "MaintainGemstones")
+                Dalamud.Log("[Toolkit Helper] Gemstones below target; entering MaintainGemestones state")
+                ChangeState(CharacterState.maintainGemstones, "MaintainGemestones")
                 return
             end
         end
@@ -1765,11 +1853,15 @@ function Idle()
             end
         end
     end
+
+    if not Runtime.initialToolkitStarted then
+        ResumeToolkitRun("initial start")
+    end
 end
 
 function ProcessRetainers()
     RefreshSettings()
-    local summoningBellName = EnsureSummoningBellNameLocalized()
+    EnsureSummoningBellNameLocalized()
     if not Settings.pauseRetainers then
         ChangeState(CharacterState.idle)
         ResumeToolkitAfterRetainers("retainer feature disabled")
@@ -1829,10 +1921,14 @@ function ProcessRetainers()
         EnsureRetainerToolkitStopped("retainer teleport to Limsa")
         StopVnav()
         EnsureSummoningBellAetheryte()
-        local limsaAetheryteName = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks"
-        if TeleportTo(limsaAetheryteName) then
-            EchoAll("Teleporting to "..limsaAetheryteName)
-            Dalamud.Log("[Toolkit Helper] Teleporting to "..limsaAetheryteName.." for retainer processing")
+        local limsaDestination = {
+            name = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks",
+            aetheryteId = SUMMONING_BELL.aetheryteRowId,
+            rowId = SUMMONING_BELL.aetheryteRowId
+        }
+        if TeleportTo(limsaDestination) then
+            EchoAll("Teleporting to "..limsaDestination.name)
+            Dalamud.Log("[Toolkit Helper] Teleporting to "..limsaDestination.name.." for retainer processing")
         end
         return
     end
@@ -1842,13 +1938,10 @@ function ProcessRetainers()
         return
     end
 
-    if Svc.Targets.Target == nil or GetTargetName() ~= summoningBellName then
-        yield("/target "..summoningBellName)
-        return
-    end
-
     if not Svc.Condition[CharacterCondition.occupiedSummoningBell] then
-        yield("/interact")
+        if not InteractWithSummoningBell() then
+            return
+        end
         local retainerList = Addons.GetAddon("RetainerList")
         if retainerList ~= nil and retainerList.Ready then
             yield("/ays e")
@@ -2040,8 +2133,6 @@ State = CharacterState.idle
 
 LogFeatureFlagsOnce()
 
-ResumeToolkitRun("initial start")
-
 Dalamud.Log("[Toolkit Helper] Starting toolkit helper loop")
 
 while not Runtime.stopScript do
@@ -2052,7 +2143,5 @@ while not Runtime.stopScript do
     end
     yield("/wait 0.25")
 end
-
-yield("/echo [Toolkit Helper] Loop ended")
 
 --#endregion Main
