@@ -1,11 +1,12 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.2
+version: 1.1.0
 description: |
-  Toolkit Helper adds two features on top of Fate Tool Kit automation:
+  Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
-  - Gemstone stockpile and exchange automation
+  - Gemstone stockpile checks and exchange automation
+  - Optional self-repair / NPC repair flow with Dark Matter purchasing
 plugin_dependencies:
 - AutoRetainer
 - vnavmesh
@@ -66,6 +67,17 @@ configs:
         "Tumbleclaw Weeds",
         "Turali Bicolor Gemstone Voucher",
         "Ty'aitya Wingblade"]
+  Self repair?:
+    description:
+    default: true
+  Auto-buy dark matter?:
+    description:
+    default: true
+  Repair durability threshold (%):
+    description:
+    default: 10
+    min: 1
+    max: 99
   Echo logs:
     description:
     default: "None"
@@ -115,8 +127,33 @@ local SUMMONING_BELL = {
     aetheryteId = nil
 }
 
-local function Vec3(x, y, z)
+local BICOLOR_GEM_ITEM_ID = 26807
+local DARK_MATTER_ITEM_ID = 33916
+local REPAIR_GENERAL_ACTION_ID = 6
+local UNSYNRAEL_ROW_ID = 1001207
+local ALISTAIR_ROW_ID = 1001206
+local HAWKERS_ALLEY_POSITION = Vector3(-213.95, 15.99, 49.35)
+local UNSYNRAEL_POSITION = Vector3(-257.71, 16.19, 50.11)
+local ALISTAIR_POSITION = Vector3(-246.87, 16.19, 49.83)
+local HAWKERS_MINI_AETHERYTE_ID = 49
+
+function Vec3(x, y, z)
     return Vector3(x, y, z)
+end
+
+function Dismount()
+    if not Svc or not Svc.Condition or not Svc.Condition[CharacterCondition.mounted] then
+        return
+    end
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok = pcall(function()
+            Actions.ExecuteGeneralAction(23)
+        end)
+        if ok then
+            return
+        end
+    end
+    yield("/generalaction dismount")
 end
 
 local GemstoneExchangeMap = {
@@ -504,7 +541,7 @@ local ItemNameCache = {}
 local NpcNameCache = {}
 local EObjNameCache = {}
 
-local function GetItemNameByRowId(rowId)
+function GetItemNameByRowId(rowId)
     if not rowId then return nil end
     if ItemNameCache[rowId] ~= nil then
         return ItemNameCache[rowId]
@@ -529,7 +566,7 @@ local function GetItemNameByRowId(rowId)
     return nil
 end
 
-local function GetNpcNameByRowId(rowId)
+function GetNpcNameByRowId(rowId)
     if not rowId then return nil end
     if NpcNameCache[rowId] ~= nil then
         return NpcNameCache[rowId]
@@ -555,7 +592,15 @@ local function GetNpcNameByRowId(rowId)
     return nil
 end
 
-local function GetEObjNameByRowId(rowId)
+function GetLocalizedNpcName(rowId, fallback)
+    local resolved = GetNpcNameByRowId(rowId)
+    if resolved ~= nil and resolved ~= "" then
+        return resolved
+    end
+    return fallback
+end
+
+function GetEObjNameByRowId(rowId)
     if not rowId then return nil end
     if EObjNameCache[rowId] ~= nil then
         return EObjNameCache[rowId]
@@ -607,12 +652,14 @@ Settings = {
     maintainGemstones = false,
     gemstoneTarget = 1000,
     gemstonesPerRun = 14,
-    maxGemstoneRunWait = 900,
+    selfRepair = true,
+    autoBuyDarkMatter = true,
+    repairThreshold = 10,
     bicolorItem = "None",
     exchangeGemstones = false
 }
 
-local function RefreshSettings()
+function RefreshSettings()
     local echo = Config.Get("Echo logs")
     if type(echo) == "string" then
         Settings.echoLevel = string.lower(echo)
@@ -636,6 +683,21 @@ local function RefreshSettings()
     local maintainGemstones = Config.Get("Maintain gemstone stockpile?")
     if maintainGemstones ~= nil then
         Settings.maintainGemstones = maintainGemstones
+    end
+
+    local selfRepair = Config.Get("Self repair?")
+    if selfRepair ~= nil then
+        Settings.selfRepair = selfRepair
+    end
+
+    local autoBuyDarkMatter = Config.Get("Auto-buy dark matter?")
+    if autoBuyDarkMatter ~= nil then
+        Settings.autoBuyDarkMatter = autoBuyDarkMatter
+    end
+
+    local repairThreshold = Config.Get("Repair durability threshold (%)")
+    if type(repairThreshold) == "number" then
+        Settings.repairThreshold = math.max(1, math.min(100, math.floor(repairThreshold)))
     end
 
     local gemstoneTarget = Config.Get("Gemstone stockpile target")
@@ -674,16 +736,17 @@ Runtime = {
     exchangeDelayActive = false,
     lastExchangeDelayLog = 0,
     lastLifestreamCommand = 0,
-    initialToolkitStarted = false
+    initialToolkitStarted = false,
+    pendingRepair = false,
+    repairToolkitStopped = false,
+    nextRepairCheck = 0
 }
-
-local ResumeToolkitRun -- forward declaration
 
 --#endregion Config & Runtime
 
 --#region Helpers
 
-local function EchoAll(message)
+function EchoAll(message)
     if Settings.echoLevel == "all" then
         yield("/echo [Toolkit Helper] "..message)
     end
@@ -717,7 +780,7 @@ function GetTargetName()
     return ""
 end
 
-local function _get_addon(name)
+function _get_addon(name)
     local ok, addon = pcall(Addons.GetAddon, name)
     if ok and addon ~= nil then
         return addon
@@ -725,7 +788,7 @@ local function _get_addon(name)
     return nil
 end
 
-local function _addon_ready(addon)
+function _addon_ready(addon)
     if not addon then return false end
     if addon.Ready == true or addon.IsReady == true or addon.Loaded == true then
         return true
@@ -741,7 +804,7 @@ local function _addon_ready(addon)
     return false
 end
 
-local function _addon_exists(addon)
+function _addon_exists(addon)
     if not addon then return false end
     if addon.Exists == true or addon.Visible == true or addon.IsVisible == true or addon.IsOpen == true or addon.IsShown == true then
         return true
@@ -758,7 +821,7 @@ local function _addon_exists(addon)
     return false
 end
 
-local function WaitForAddonReady(name, timeout)
+function WaitForAddonReady(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
         local addon = _get_addon(name)
@@ -770,7 +833,7 @@ local function WaitForAddonReady(name, timeout)
     return nil
 end
 
-local function WaitForAddonVisible(name, timeout)
+function WaitForAddonVisible(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
         local addon = _get_addon(name)
@@ -782,7 +845,27 @@ local function WaitForAddonVisible(name, timeout)
     return nil
 end
 
-local function WaitForAddonClosed(name, timeout)
+function EnsureInLimsa(reason)
+    if Svc.ClientState.TerritoryType == SUMMONING_BELL.territoryId then
+        Dalamud.Log(string.format("[Toolkit Helper] Already in Limsa for %s", reason or "repair workflow"))
+        return true
+    end
+    SaveReturnLocationForCurrentTerritory()
+    StopVnav()
+    EnsureSummoningBellAetheryte()
+    local limsaDestination = {
+        name = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks",
+        aetheryteId = SUMMONING_BELL.aetheryteRowId,
+        rowId = SUMMONING_BELL.aetheryteRowId
+    }
+    if TeleportTo(limsaDestination) then
+        EchoAll("Teleporting to "..limsaDestination.name)
+        Dalamud.Log(string.format("[Toolkit Helper] Teleporting to %s for %s", limsaDestination.name, reason or "repair workflow"))
+    end
+    return false
+end
+
+function WaitForAddonClosed(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
         local addon = _get_addon(name)
@@ -794,7 +877,25 @@ local function WaitForAddonClosed(name, timeout)
     return false
 end
 
-local function WaitForTeleportCompletion(start)
+function ExecuteRepairGeneralAction()
+    local usedNative = false
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok, err = pcall(function()
+            Actions.ExecuteGeneralAction(REPAIR_GENERAL_ACTION_ID)
+        end)
+        usedNative = ok
+        if not ok then
+            Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction failed: "..tostring(err))
+        end
+    end
+    if not usedNative then
+        Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction unavailable; falling back to /generalaction command")
+        yield("/generalaction repair")
+    end
+    yield("/wait 0.5")
+end
+
+function WaitForTeleportCompletion(start)
     yield("/wait 1")
     while Svc.Condition[CharacterCondition.casting] do
         yield("/wait 1")
@@ -819,7 +920,7 @@ local function WaitForTeleportCompletion(start)
     return true
 end
 
-local function StopVnav()
+function StopVnav()
     if not IPC or not IPC.vnavmesh then
         return
     end
@@ -841,7 +942,7 @@ local function StopVnav()
     end
 end
 
-local function WaitForPlayerStationary(timeout)
+function WaitForPlayerStationary(timeout)
     local deadline = os.clock() + (timeout or 5)
     while Player ~= nil and Player.Available and Player.IsMoving do
         StopVnav()
@@ -854,7 +955,7 @@ local function WaitForPlayerStationary(timeout)
     return true
 end
 
-local function ChangeState(newState, label)
+function ChangeState(newState, label)
     if type(newState) == "function" then
         State = newState
         if label then
@@ -925,7 +1026,7 @@ function GetAetheryteName(aetheryte)
     return ""
 end
 
-local function GetAetherytePlaceNameByRowId(rowId)
+function GetAetherytePlaceNameByRowId(rowId)
     local numericId = tonumber(rowId)
     if not numericId then return nil end
     if not Excel or not Excel.GetSheet then return nil end
@@ -940,10 +1041,10 @@ local function GetAetherytePlaceNameByRowId(rowId)
     return text
 end
 
-local function ExtractAetheryteRowId(aetheryte)
+function ExtractAetheryteRowId(aetheryte)
     if not aetheryte then return nil end
 
-    local function normalize(value)
+    function normalize(value)
         if value == nil then return nil end
         local valueType = type(value)
         if valueType == "number" then
@@ -1012,13 +1113,13 @@ function GetPreferredReturnAetheryteName(territoryId)
     return nil
 end
 
-local function ClearReturnTarget()
+function ClearReturnTarget()
     Runtime.returnAetheryteName = nil
     Runtime.returnTerritoryId = nil
     Runtime.returnAetheryteId = nil
 end
 
-local function SaveReturnLocationForCurrentTerritory()
+function SaveReturnLocationForCurrentTerritory()
     if Runtime.returnAetheryteName ~= nil then
         return
     end
@@ -1038,7 +1139,7 @@ local function SaveReturnLocationForCurrentTerritory()
     end
 end
 
-local function AttemptReturnToSavedLocation(context)
+function AttemptReturnToSavedLocation(context)
     if Runtime.returnAetheryteName == nil then
         return false
     end
@@ -1064,7 +1165,7 @@ local function AttemptReturnToSavedLocation(context)
     return returned
 end
 
-local function EnsureSummoningBellAetheryte()
+function EnsureSummoningBellAetheryte()
     if SUMMONING_BELL.aetheryteName ~= nil and SUMMONING_BELL.aetheryteId ~= nil then
         return true
     end
@@ -1092,7 +1193,7 @@ local function EnsureSummoningBellAetheryte()
     return true
 end
 
-local function EnsureSummoningBellNameLocalized()
+function EnsureSummoningBellNameLocalized()
     if SUMMONING_BELL.localizedNameResolved then
         return SUMMONING_BELL.name
     end
@@ -1105,7 +1206,7 @@ local function EnsureSummoningBellNameLocalized()
     return SUMMONING_BELL.name
 end
 
-local function StopToolkitRun(reason)
+function StopToolkitRun(reason)
     local suffix = ""
     if reason ~= nil and reason ~= "" then
         suffix = " ("..reason..")"
@@ -1115,17 +1216,31 @@ local function StopToolkitRun(reason)
     -- Toolkit resumes explicitly via ResumeToolkitRun when appropriate.
 end
 
-local function EnsureRetainerToolkitStopped(reason)
+function EnsureRetainerToolkitStopped(reason)
     if not Runtime.retainerToolkitStopped then
         StopToolkitRun(reason or "retainer pause")
         Runtime.retainerToolkitStopped = true
     end
 end
 
-local function ResumeToolkitAfterRetainers(reason)
+function ResumeToolkitAfterRetainers(reason)
     if Runtime.retainerToolkitStopped then
         Runtime.retainerToolkitStopped = false
         ResumeToolkitRun(reason or "retainer resume")
+    end
+end
+
+function EnsureRepairToolkitStopped(reason)
+    if not Runtime.repairToolkitStopped then
+        StopToolkitRun(reason or "repair start")
+        Runtime.repairToolkitStopped = true
+    end
+end
+
+function ResumeToolkitAfterRepair(reason)
+    if Runtime.repairToolkitStopped then
+        Runtime.repairToolkitStopped = false
+        ResumeToolkitRun(reason or "repair resume")
     end
 end
 
@@ -1169,7 +1284,7 @@ function AcceptTeleportOfferLocation(destinationAetheryte)
     end
 end
 
-local function ResolveDestinationName(dest)
+function ResolveDestinationName(dest)
     if type(dest) ~= "table" then
         return dest, false, nil
     end
@@ -1179,7 +1294,7 @@ local function ResolveDestinationName(dest)
     local id = dest.aetheryteId or dest.rowId or dest.aetheryteRowId
     local miniId = dest.miniAetheryteId or dest.miniRowId or dest.miniAetheryteRowId
 
-    local function tryRow(rowId)
+    function tryRow(rowId)
         if name ~= nil and name ~= "" then return name end
         if rowId == nil then return nil end
         local resolved = GetAetherytePlaceNameByRowId(rowId)
@@ -1209,12 +1324,12 @@ local function ResolveDestinationName(dest)
     return name, isMini, id
 end
 
-local function ExecuteLifestreamCommand(destName, destId, isMini)
+function ExecuteLifestreamCommand(destName, destId, isMini)
     if not IPC or not IPC.Lifestream then
         return false
     end
 
-    local function HasTeleportIndicators()
+    function HasTeleportIndicators()
         if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
             local ok, busy = pcall(IPC.Lifestream.IsBusy)
             if ok and busy == true then
@@ -1230,7 +1345,7 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
         return false
     end
 
-    local function WaitForLifestreamBusyState(desiredBusy, timeout)
+    function WaitForLifestreamBusyState(desiredBusy, timeout)
         local deadline = os.clock() + (timeout or 3)
         repeat
             local indicators = HasTeleportIndicators()
@@ -1245,11 +1360,11 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
         return false
     end
 
-    local function WaitForLifestreamReady(timeout)
+    function WaitForLifestreamReady(timeout)
         return WaitForLifestreamBusyState(false, timeout or 5)
     end
 
-    local function retryableCall(label, fn, maxAttempts)
+    function retryableCall(label, fn, maxAttempts)
         maxAttempts = maxAttempts or 1
         for attempt = 1, maxAttempts do
             Dalamud.Log(string.format("[Toolkit Helper] %s attempt %d preparing", label, attempt))
@@ -1286,7 +1401,7 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
         return false
     end
 
-    local function tryTeleportById(maxAttempts)
+    function tryTeleportById(maxAttempts)
         if not destId then
             Dalamud.Log("[Toolkit Helper] tryTeleportById skipped: destId missing")
             return false
@@ -1304,7 +1419,7 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
         )
     end
 
-    local function tryMiniAethernetTeleport(maxAttempts)
+    function tryMiniAethernetTeleport(maxAttempts)
         if not isMini then
             Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: not mini destination")
             return false
@@ -1326,7 +1441,7 @@ local function ExecuteLifestreamCommand(destName, destId, isMini)
         )
     end
 
-    local function tryTeleportByName()
+    function tryTeleportByName()
         if not destName then
             Dalamud.Log("[Toolkit Helper] tryTeleportByName skipped: no destination name")
             return false
@@ -1414,15 +1529,15 @@ function CurrentCharacterRetainersReady()
     return result == true
 end
 
-local function ReadyToProcess()
+function ReadyToProcess()
     return CurrentCharacterRetainersReady() and Inventory.GetFreeInventorySlots() > 1
 end
 
-local function ShouldWaitForBonusBuff()
+function ShouldWaitForBonusBuff()
     return Settings.waitIfBonusBuff and (HasStatusId(1288) or HasStatusId(1289))
 end
 
-local function GetCurrentFateInfo()
+function GetCurrentFateInfo()
     local okCurrent, currentFate = pcall(function()
         return Fates and Fates.CurrentFate
     end)
@@ -1454,7 +1569,7 @@ local function GetCurrentFateInfo()
     }
 end
 
-local function ShouldDelayProcessing()
+function ShouldDelayProcessing()
     if ShouldWaitForBonusBuff() then
         return true, "bonus buff active", false, nil
     end
@@ -1480,10 +1595,9 @@ local function ShouldDelayProcessing()
 end
 
 -- Gemstone helpers
-local BICOLOR_GEM_ITEM_ID = 26807
 local SelectedGemstoneEntry = nil
 
-local function GetBicolorGemCount()
+function GetBicolorGemCount()
     local ok, count = pcall(function()
         return Inventory.GetItemCount(BICOLOR_GEM_ITEM_ID)
     end)
@@ -1493,7 +1607,7 @@ local function GetBicolorGemCount()
     return count
 end
 
-local function NeedsGemstones()
+function NeedsGemstones()
     if not Settings.maintainGemstones then
         return false
     end
@@ -1504,7 +1618,64 @@ local function NeedsGemstones()
     return GetBicolorGemCount() < target
 end
 
-local function ComputeGemstoneRunCount(goal)
+function GetDarkMatterCount()
+    local ok, count = pcall(function()
+        return Inventory.GetItemCount(DARK_MATTER_ITEM_ID)
+    end)
+    if not ok or count == nil then
+        return 0
+    end
+    return count
+end
+
+function GetRepairItemsCount()
+    local threshold = Settings.repairThreshold or 0
+    if threshold <= 0 then
+        return 0
+    end
+    local items = Inventory.GetItemsInNeedOfRepairs(threshold)
+    if not items then
+        return 0
+    end
+    local count = items.Count or 0
+    return count
+end
+
+function NeedsRepair()
+    return GetRepairItemsCount() > 0
+end
+
+function ShouldRepairNow()
+    local threshold = Settings.repairThreshold or 0
+    if threshold <= 0 then
+        return false
+    end
+    local count = GetRepairItemsCount()
+    if count <= 0 then
+        return false
+    end
+    local delay = ShouldDelayProcessing()
+    if delay == true then
+        return false
+    end
+    return true, count
+end
+
+function ShouldProcessRetainersNow()
+    if not Settings.pauseRetainers then
+        return false
+    end
+    if not ReadyToProcess() then
+        return false
+    end
+    local delay = ShouldDelayProcessing()
+    if delay == true then
+        return false
+    end
+    return true
+end
+
+function ComputeGemstoneRunCount(goal)
     local target = goal or Settings.gemstoneTarget or 0
     local current = GetBicolorGemCount()
     local deficit = math.max(0, target - current)
@@ -1516,7 +1687,7 @@ local function ComputeGemstoneRunCount(goal)
     return math.max(1, math.ceil(deficit / average))
 end
 
-local function DetermineToolkitRunCount()
+function DetermineToolkitRunCount()
     if Settings.maintainGemstones and (Settings.gemstoneTarget or 0) > 0 then
         local runs = ComputeGemstoneRunCount(Settings.gemstoneTarget)
         if runs <= 0 then
@@ -1527,7 +1698,7 @@ local function DetermineToolkitRunCount()
     return 1000
 end
 
-local function _ResumeToolkitRun(reason)
+function _ResumeToolkitRun(reason)
     local runs = DetermineToolkitRunCount()
     local suffix = ""
     if reason ~= nil and reason ~= "" then
@@ -1541,7 +1712,7 @@ end
 ResumeToolkitRun = _ResumeToolkitRun
 
 
-local function IssueToolkitGemstoneRun(runCount, goal)
+function IssueToolkitGemstoneRun(runCount, goal)
     local count = math.max(1, runCount)
     local gemstoneGoal = goal or Settings.gemstoneTarget or 0
     Dalamud.Log(string.format("[Toolkit Helper] Issuing /vfate run %d to reach %d gemstones", count, gemstoneGoal))
@@ -1550,26 +1721,29 @@ local function IssueToolkitGemstoneRun(runCount, goal)
     Runtime.gemstoneRunIssuedAt = os.clock()
 end
 
-local function WaitForGemstoneGoal(goal)
+function WaitForGemstoneGoal(goal)
     local gemstoneGoal = goal or Settings.gemstoneTarget or 0
     if gemstoneGoal <= 0 then
         return true
     end
-    local start = os.clock()
-    local timeout = Settings.maxGemstoneRunWait or 900
-    repeat
+    while true do
         if Runtime.stopScript then
-            return false
+            return GetBicolorGemCount() >= gemstoneGoal
         end
         if GetBicolorGemCount() >= gemstoneGoal then
             return true
         end
+        if ShouldRepairNow() then
+            return false, "repair"
+        end
+        if ShouldProcessRetainersNow() then
+            return false, "retainer"
+        end
         yield("/wait 5")
-    until os.clock() - start > timeout
-    return GetBicolorGemCount() >= gemstoneGoal
+    end
 end
 
-local function EnsureGemstoneSelection()
+function EnsureGemstoneSelection()
     if not Settings.exchangeGemstones then
         SelectedGemstoneEntry = nil
         return false
@@ -1628,7 +1802,7 @@ local function EnsureGemstoneSelection()
     return true
 end
 
-local function ShouldExchangeGemstones()
+function ShouldExchangeGemstones()
     if not Settings.exchangeGemstones then
         return false
     end
@@ -1642,7 +1816,7 @@ local function ShouldExchangeGemstones()
     return GetBicolorGemCount() >= target
 end
 
-local function MoveNearPosition(targetPos, stopDistance)
+function MoveNearPosition(targetPos, stopDistance)
     if targetPos == nil then
         return true
     end
@@ -1657,7 +1831,79 @@ local function MoveNearPosition(targetPos, stopDistance)
     return true
 end
 
-local function InteractWithGemstoneVendor(entry)
+function MoveWithinLimsaTarget(targetPos)
+    if targetPos == nil then
+        return true
+    end
+    if GetDistanceToPoint(targetPos) > (DistanceBetween(HAWKERS_ALLEY_POSITION, targetPos) + 10) then
+        Dalamud.Log("[Toolkit Helper] Using mini aetheryte to reach Limsa vendor")
+        local miniDest = {
+            name = "Hawkers' Alley",
+            isMiniAetheryte = true,
+            isMini = true,
+            mini = true,
+            aetheryteId = HAWKERS_MINI_AETHERYTE_ID,
+            miniAetheryteId = HAWKERS_MINI_AETHERYTE_ID
+        }
+        local teleported = TeleportTo(miniDest)
+        if not teleported then
+            Dalamud.Log("[Toolkit Helper] Mini aetheryte teleport failed; using fallback command")
+            yield("/li Hawkers' Alley")
+        end
+        yield("/wait 1")
+        return false
+    end
+    local tele = Addons.GetAddon("TelepotTown")
+    if tele ~= nil and tele.Ready then
+        Dalamud.Log("[Toolkit Helper] Closing TelepotTown before moving to vendor")
+        yield("/callback TelepotTown false -1")
+        return false
+    end
+    if GetDistanceToPoint(targetPos) > 5 then
+        if not (IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning()) then
+            Dalamud.Log("[Toolkit Helper] Pathing to Limsa vendor location")
+            IPC.vnavmesh.PathfindAndMoveTo(targetPos, false)
+        end
+        return false
+    end
+    return true
+end
+
+function TargetNpcByName(name)
+    if name == nil or name == "" then
+        return false
+    end
+    local current = GetTargetName()
+    if current == name then
+        return true
+    end
+    local sanitized = name:gsub('"', '\\"')
+    yield('/target "'..sanitized..'"')
+    return GetTargetName() == name
+end
+
+function InteractWithNpcAtPosition(position, npcRowId, fallbackName)
+    if not MoveWithinLimsaTarget(position) then
+        return false
+    end
+    local npcName = GetLocalizedNpcName(npcRowId, fallbackName)
+    if npcName == nil or npcName == "" then
+        Dalamud.Log(string.format("[Toolkit Helper] Unable to resolve NPC name for rowId=%s", tostring(npcRowId)))
+        return false
+    end
+    if not TargetNpcByName(npcName) then
+        Dalamud.Log("[Toolkit Helper] Could not target NPC "..npcName)
+        return false
+    end
+    if not Svc.Condition[CharacterCondition.occupiedInQuestEvent] then
+        Dalamud.Log("[Toolkit Helper] Interacting with NPC "..npcName)
+        yield("/interact")
+        return false
+    end
+    return true
+end
+
+function InteractWithGemstoneVendor(entry)
     if entry == nil then return false end
     local npcName = entry.vendorLocalizedName or entry.vendorName
     if npcName == nil or npcName == "" then
@@ -1678,7 +1924,7 @@ local function InteractWithGemstoneVendor(entry)
     return true
 end
 
-local function InteractWithSummoningBell()
+function InteractWithSummoningBell()
     local bellName = EnsureSummoningBellNameLocalized()
     if bellName == nil or bellName == "" then
         return false
@@ -1714,7 +1960,7 @@ local function InteractWithSummoningBell()
     return false
 end
 
-local function EnsureGemstoneShopOpen(entry)
+function EnsureGemstoneShopOpen(entry)
     local shop = WaitForAddonReady("ShopExchangeCurrency", 3)
     if shop ~= nil then
         return shop
@@ -1723,7 +1969,7 @@ local function EnsureGemstoneShopOpen(entry)
     return WaitForAddonReady("ShopExchangeCurrency", 5)
 end
 
-local function PurchaseGemstoneItem(entry, shop)
+function PurchaseGemstoneItem(entry, shop)
     local gemstoneCount = GetBicolorGemCount()
     local quantity = math.floor(gemstoneCount / entry.price)
     if quantity <= 0 then
@@ -1746,7 +1992,7 @@ local function PurchaseGemstoneItem(entry, shop)
     return true
 end
 
-local function ResetExchangeState()
+function ResetExchangeState()
     Runtime.exchangeInProgress = false
     Runtime.exchangeStarted = false
     Runtime.usedMiniTeleport = false
@@ -1754,7 +2000,7 @@ local function ResetExchangeState()
     Runtime.lastExchangeDelayLog = 0
 end
 
-local function FinishGemstoneExchange(reason)
+function FinishGemstoneExchange(reason)
     ResetExchangeState()
     Runtime.nextExchangeCheck = os.clock() + 30
     if reason then
@@ -1765,7 +2011,18 @@ local function FinishGemstoneExchange(reason)
     ChangeState(CharacterState.idle)
 end
 
-local function LogFeatureFlagsOnce()
+function FinishRepairWorkflow(reason)
+    if reason then
+        Dalamud.Log("[Toolkit Helper] "..reason)
+    end
+    Runtime.pendingRepair = false
+    Runtime.nextRepairCheck = os.clock() + 120
+    AttemptReturnToSavedLocation("repair workflow")
+    ResumeToolkitAfterRepair("repair workflow complete")
+    ChangeState(CharacterState.idle, "Idle")
+end
+
+function LogFeatureFlagsOnce()
     if Runtime.featureLogPrinted then return end
     local entries = {}
     if Settings.pauseRetainers then
@@ -1776,6 +2033,10 @@ local function LogFeatureFlagsOnce()
     end
     if Settings.exchangeGemstones and Settings.bicolorItem ~= "None" then
         table.insert(entries, string.format("Gemstone exchange enabled (%s)", Settings.bicolorItem))
+    end
+    if (Settings.repairThreshold or 0) > 0 then
+        local mode = Settings.selfRepair and "Self-repair" or "Mender-only"
+        table.insert(entries, string.format("%s enabled (threshold=%d%%)", mode, Settings.repairThreshold))
     end
     if #entries == 0 then
         table.insert(entries, "No optional workflows enabled")
@@ -1799,7 +2060,6 @@ function Idle()
     end
 
     local now = os.clock()
-    local retainerReady = false
     if Settings.pauseRetainers then
         if now >= Runtime.nextCheck then
             Runtime.nextCheck = now + Settings.checkInterval
@@ -1822,18 +2082,20 @@ function Idle()
         end
     end
 
-    if Settings.maintainGemstones and Runtime.pendingGemstoneGoal == nil then
-        if os.clock() >= Runtime.lastGemstoneCheck then
-            Runtime.lastGemstoneCheck = os.clock() + 30
-            if NeedsGemstones() then
-                local delay, reason = ShouldDelayProcessing()
-                if delay then
-                    Dalamud.Log("[Toolkit Helper] Need gemstones but delaying because "..reason)
-                    return
-                end
-                Dalamud.Log("[Toolkit Helper] Gemstones below target; entering MaintainGemestones state")
-                ChangeState(CharacterState.maintainGemstones, "MaintainGemestones")
+    local repairThreshold = Settings.repairThreshold or 0
+    if repairThreshold > 0 then
+        local nowCheck = os.clock()
+        if nowCheck >= (Runtime.nextRepairCheck or 0) then
+            Runtime.nextRepairCheck = nowCheck + 30
+            local shouldRepair, repairCount = ShouldRepairNow()
+            if shouldRepair then
+                Dalamud.Log(string.format("[Toolkit Helper] Repair check: %d items at/below %d%% durability", repairCount or 0, repairThreshold))
+                Dalamud.Log("[Toolkit Helper] Durability threshold reached; entering RepairGear state")
+                Runtime.pendingRepair = true
+                ChangeState(CharacterState.repairGear, "RepairGear")
                 return
+            elseif Settings.echoLevel == "all" then
+                Dalamud.Log(string.format("[Toolkit Helper] Repair check: no items below %d%%", repairThreshold))
             end
         end
     end
@@ -1849,6 +2111,22 @@ function Idle()
                 Runtime.usedMiniTeleport = false
                 Dalamud.Log("[Toolkit Helper] Gemstone threshold met; entering ExchangeGemstones state")
                 ChangeState(CharacterState.exchangeGemstones, "ExchangeGemstones")
+                return
+            end
+        end
+    end
+
+    if Settings.maintainGemstones and Runtime.pendingGemstoneGoal == nil then
+        if os.clock() >= Runtime.lastGemstoneCheck then
+            Runtime.lastGemstoneCheck = os.clock() + 30
+            if NeedsGemstones() then
+                local delay, reason = ShouldDelayProcessing()
+                if delay then
+                    Dalamud.Log("[Toolkit Helper] Need gemstones but delaying because "..reason)
+                    return
+                end
+                Dalamud.Log("[Toolkit Helper] Gemstones below target; entering MaintainGemestones state")
+                ChangeState(CharacterState.maintainGemstones, "MaintainGemestones")
                 return
             end
         end
@@ -1960,6 +2238,20 @@ function MaintainGemstones()
         return
     end
 
+    if ShouldProcessRetainersNow() then
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for retainer processing")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
+        return
+    end
+
+    if ShouldRepairNow() then
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for repairs")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.repairGear, "RepairGear")
+        return
+    end
+
     local target = Settings.gemstoneTarget or 0
     if target <= 0 or not NeedsGemstones() then
         Runtime.pendingGemstoneGoal = nil
@@ -1983,16 +2275,141 @@ function MaintainGemstones()
     end
 
     IssueToolkitGemstoneRun(runs, target)
-    local reached = WaitForGemstoneGoal(target)
-    if reached then
+    local reached, interrupt = WaitForGemstoneGoal(target)
+    if reached == true then
         Dalamud.Log(string.format("[Toolkit Helper] Gemstone goal of %d reached (current=%d)", target, GetBicolorGemCount()))
         StopToolkitRun("gemstone goal reached")
+    elseif interrupt == "repair" then
+        Dalamud.Log("[Toolkit Helper] Stopping gemstone run to handle repairs")
+        StopToolkitRun("repair priority")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.repairGear, "RepairGear")
+        return
+    elseif interrupt == "retainer" then
+        Dalamud.Log("[Toolkit Helper] Stopping gemstone run to process retainers")
+        StopToolkitRun("retainer priority")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
+        return
     else
         Dalamud.Log(string.format("[Toolkit Helper] Timed out waiting for gemstone goal (%d). Current=%d", target, GetBicolorGemCount()))
         StopToolkitRun("gemstone goal timeout")
     end
     Runtime.pendingGemstoneGoal = nil
     ChangeState(CharacterState.idle, "Idle")
+end
+
+function RepairGear()
+    RefreshSettings()
+    local threshold = Settings.repairThreshold or 0
+    if threshold <= 0 then
+        Runtime.pendingRepair = false
+        ResumeToolkitAfterRepair("repair disabled")
+        ChangeState(CharacterState.idle)
+        return
+    end
+
+    local needsRepair = Inventory.GetItemsInNeedOfRepairs(threshold)
+    local needsCount = needsRepair and needsRepair.Count or 0
+    local darkMatterCount = GetDarkMatterCount()
+    Dalamud.Log(string.format("[Toolkit Helper] RepairGear state: threshold=%d%%, needs=%d, darkMatter=%d", threshold, needsCount or 0, darkMatterCount))
+
+    local yesno = Addons.GetAddon("SelectYesno")
+    if yesno ~= nil and yesno.Ready then
+        yield("/callback SelectYesno true 0")
+        return
+    end
+
+    local repairAddon = Addons.GetAddon("Repair")
+    if repairAddon ~= nil and repairAddon.Ready then
+        if needsCount == nil or needsCount == 0 then
+            yield("/callback Repair true -1")
+            FinishRepairWorkflow("repair menu closed")
+        else
+            yield("/callback Repair true 0")
+        end
+        return
+    end
+
+    if needsCount == nil or needsCount == 0 then
+        FinishRepairWorkflow("durability restored")
+        return
+    end
+
+    EnsureRepairToolkitStopped("repair start")
+    SaveReturnLocationForCurrentTerritory()
+
+    if Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] then
+        Dalamud.Log("[Toolkit Helper] Repair UI indicates character is busy repairing; waiting")
+        yield("/wait 1")
+        return
+    end
+
+    local shopAddon = Addons.GetAddon("Shop")
+    if shopAddon ~= nil and shopAddon.Ready and darkMatterCount > 0 then
+        Dalamud.Log("[Toolkit Helper] Closing vendor shop before resuming repairs")
+        yield("/callback Shop true -1")
+        WaitForAddonClosed("Shop", 2)
+        yield("/wait 0.5")
+        return
+    end
+
+    if Settings.selfRepair then
+        if darkMatterCount > 0 then
+            if Svc.Condition[CharacterCondition.mounted] then
+                Dalamud.Log("[Toolkit Helper] Character mounted; dismounting before repair")
+                local mountedStill = true
+                for attempt = 1, 2 do
+                    Dalamud.Log(string.format("[Toolkit Helper] Dismount attempt %d", attempt))
+                    Dismount()
+                    local deadline = os.clock() + 5
+                    repeat
+                        if not Svc.Condition[CharacterCondition.mounted] then
+                            mountedStill = false
+                            break
+                        end
+                        yield("/wait 0.25")
+                    until os.clock() > deadline
+                    if not mountedStill then
+                        break
+                    end
+                end
+                if mountedStill then
+                    Dalamud.Log("[Toolkit Helper] Dismount failed after two attempts; retrying later")
+                    return
+                end
+            end
+            Dalamud.Log("[Toolkit Helper] Executing self-repair general action")
+            ExecuteRepairGeneralAction()
+            return
+        elseif Settings.autoBuyDarkMatter then
+            if not EnsureInLimsa("dark matter purchase") then
+                return
+            end
+            shopAddon = Addons.GetAddon("Shop")
+            if shopAddon == nil or not shopAddon.Ready then
+                if not InteractWithNpcAtPosition(UNSYNRAEL_POSITION, UNSYNRAEL_ROW_ID, "Unsynrael") then
+                    return
+                end
+                shopAddon = WaitForAddonReady("Shop", 3)
+                if shopAddon == nil then
+                    Dalamud.Log("[Toolkit Helper] Waiting for Shop addon to open before purchasing Dark Matter")
+                    return
+                end
+            end
+            Dalamud.Log("[Toolkit Helper] Purchasing Grade 8 Dark Matter from "..GetLocalizedNpcName(UNSYNRAEL_ROW_ID, "Unsynrael"))
+            yield("/callback Shop true 0 40 99")
+            return
+        end
+    end
+
+    if Settings.selfRepair and not Settings.autoBuyDarkMatter then
+        Dalamud.Log("[Toolkit Helper] Dark Matter depleted and auto-buy disabled; falling back to Limsa mender")
+    end
+    if not EnsureInLimsa("mender repair") then
+        return
+    end
+    InteractWithNpcAtPosition(ALISTAIR_POSITION, ALISTAIR_ROW_ID, "Alistair")
 end
 
 function ExchangeGemstones()
@@ -2003,6 +2420,20 @@ function ExchangeGemstones()
             ResumeToolkitRun("gemstone exchange disabled")
         end
         ChangeState(CharacterState.idle)
+        return
+    end
+
+    if ShouldProcessRetainersNow() then
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for retainer processing")
+        ResetExchangeState()
+        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
+        return
+    end
+
+    if ShouldRepairNow() then
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for repairs")
+        ResetExchangeState()
+        ChangeState(CharacterState.repairGear, "RepairGear")
         return
     end
 
@@ -2116,12 +2547,15 @@ CharacterState = {
     idle = Idle,
     processRetainers = ProcessRetainers,
     maintainGemstones = MaintainGemstones,
+    repairGear = RepairGear,
     exchangeGemstones = ExchangeGemstones
 }
 
 function OnStop()
     StopVnav()
     StopToolkitRun("script stop")
+    Runtime.pendingRepair = false
+    Runtime.repairToolkitStopped = false
     if IPC and IPC.Lifestream and IPC.Lifestream.Abort then
         pcall(function()
             IPC.Lifestream.Abort()
