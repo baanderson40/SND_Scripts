@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1
+version: 1.1.2
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -55,9 +55,17 @@ configs:
       Pause the script while AutoRetainer handles retainer interactions.
       This script does not interact with retainers; AutoRetainer MultiMode or RetainerSense must be enabled for processing.
     default: true
+  Close Retainer List:
+    description: Automatically close retainer list.
+    default: true
   Enable AutoRetainer MultiMode:
     description: Enable AutoRetainer MultiMode when the script completes.
     default: true
+  Follow-up Script:
+    description: |
+      SND script to run after this script finishes.
+      Must be a valid name for a script.
+    default: ""
 [[End Metadata]]
 --]=====]
 
@@ -67,7 +75,6 @@ configs:
 import("System.Numerics")
 echoLog = false
 PREFIX  = "[Poetic Farmer]"
-closeRetainer = true
 
 -- ==============================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
@@ -509,7 +516,9 @@ local relicMatPick        = tostring(Config.Get("Manderville Relic Mat"))
 local dungeonPick         = tostring(Config.Get("Dungeon"))
 local pauseAutoRetainer   = (Config.Get("Pause for AutoRetainer") ~= false)
 local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
-local autoRestockToggle   = (Config.Get("Auto Restock Manderville Mats") == true)
+local autoRestockToggle   = (Config.Get("Auto Restock Manderville Mats") ~= false)
+local closeRetainer       = (Config.Get("Close Retainer List") ~= false)
+local followupScript      = tostring(Config.Get("Follow-up Script"))
 
 local RestockMatSettings  = {}
 local restockAnyEnabled   = false
@@ -938,6 +947,14 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
     ::continue::
     Sleep(TIME.POLL)
+end
+
+if followupScript ~= "" then
+    yield('/snd run "'..followupScript..'"')
+    if multiMode then
+        multiMode = false
+        EchoOnce("MultiMode not being enabled due to follow-up script running")
+    end
 end
 
 if multiMode then
