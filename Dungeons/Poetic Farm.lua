@@ -623,17 +623,14 @@ local function NeedsRestock(states)
 end
 
 local function SelectMatForRestock(states)
-    local best = nil
     for i = 1, #RelicMatTypes do
         local mat  = RelicMatTypes[i]
         local info = states[mat.name]
         if info and info.enabled and info.deficit > 0 then
-            if not best or info.deficit > best.deficit then
-                best = info
-            end
+            return info
         end
     end
-    return best
+    return nil
 end
 
 local function LogMatTargets(states)
