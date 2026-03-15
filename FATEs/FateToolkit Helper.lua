@@ -1,28 +1,29 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.2
+version: 1.2.0
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
   - Gemstone stockpile checks and exchange automation
   - Optional self-repair / NPC repair flow with Dark Matter purchasing
+  - Gemstone purchase cycle limits with optional follow-up scripts or AutoRetainer multi-mode
 plugin_dependencies:
 - AutoRetainer
 - vnavmesh
 - Automaton
 configs:
   Pause for retainers?:
-    description:
+    description: Pause FATE Toolkit to process retainers with AutoRetainer.
     default: true
   Close Retainer List when done?:
-    description:
+    description: Close the retainer list when retainers are complete.
     default: true
   Maintain gemstone stockpile?:
-    description:
+    description: Restart FATE Toolkit after spending Bicolor gemstones.
     default: true
   Gemstone stockpile target:
-    description:
+    description: Target amount of Bicolor gemstones before performing purchase.
     default: 1500
     min: 100
     max: 2000
@@ -67,8 +68,13 @@ configs:
         "Tumbleclaw Weeds",
         "Turali Bicolor Gemstone Voucher",
         "Ty'aitya Wingblade"]
+  Gemstone purchase cycle limit:
+    description: Stop the script after this many purchases (0 disables the limit).
+    default: 0
+    min: 0
+    max: 999
   Self repair?:
-    description:
+    description: "Enabled: Self repair | Disabled: NPC repair"
     default: true
   Auto-buy dark matter?:
     description:
@@ -78,13 +84,21 @@ configs:
     default: 10
     min: 1
     max: 99
+  Follow-up script:
+    description: |
+      SND script to run after this helper stops.
+      Must be a valid script name that already exists.
+    default: ""
+  Enable AutoRetainer multi-mode after limit?:
+    description: Turn on AutoRetainer multi-mode when the purchase limit stops this script.
+    default: false
   Echo logs:
     description:
     default: "None"
     is_choice: true
     choices: ["All", "None"]
   Check interval (seconds):
-    description:
+    description: How often to poll for completed retainers.
     default: 60
     min: 5
     max: 300
@@ -92,6 +106,25 @@ configs:
 --]=====]
 
 import("System.Numerics")
+
+--#region Utilities
+
+function Vec3(x, y, z)
+    return Vector3(x, y, z)
+end
+
+function TrimString(value)
+    if type(value) ~= "string" then
+        return value
+    end
+    local trimmed = value:match("^%s*(.-)%s*$")
+    if trimmed == nil then
+        return value
+    end
+    return trimmed
+end
+
+--#endregion Utilities
 
 --#region Data
 
@@ -136,61 +169,6 @@ local HAWKERS_ALLEY_POSITION = Vector3(-213.95, 15.99, 49.35)
 local UNSYNRAEL_POSITION = Vector3(-257.71, 16.19, 50.11)
 local ALISTAIR_POSITION = Vector3(-246.87, 16.19, 49.83)
 local HAWKERS_MINI_AETHERYTE_ID = 49
-
-function Vec3(x, y, z)
-    return Vector3(x, y, z)
-end
-
-function Dismount()
-    if not Svc or not Svc.Condition or not Svc.Condition[CharacterCondition.mounted] then
-        return
-    end
-    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
-        local ok = pcall(function()
-            Actions.ExecuteGeneralAction(23)
-        end)
-        if ok then
-            return
-        end
-    end
-    yield("/generalaction dismount")
-end
-
-function EnsureDismounted()
-    if not Svc or not Svc.Condition then
-        return false
-    end
-    local mountedFlags = {
-        CharacterCondition.mounted,
-        CharacterCondition.mounting57,
-        CharacterCondition.mounting64
-    }
-    local function isMountedState()
-        for _, flag in ipairs(mountedFlags) do
-            if flag ~= nil and Svc.Condition[flag] then
-                return true
-            end
-        end
-        return false
-    end
-
-    for attempt = 1, 2 do
-        Dismount()
-        local deadline = os.clock() + 5
-        repeat
-            if not isMountedState() then
-                return true
-            end
-            yield("/wait 0.25")
-        until os.clock() > deadline
-        if not isMountedState() then
-            return true
-        end
-        yield("/wait 0.5")
-    end
-
-    return not isMountedState()
-end
 
 local GemstoneExchangeMap = {
     ["Alexandrian Axe Beak Wing"] = {
@@ -692,10 +670,15 @@ Settings = {
     autoBuyDarkMatter = true,
     repairThreshold = 10,
     bicolorItem = "None",
-    exchangeGemstones = false
+    exchangeGemstones = false,
+    purchaseCycleLimit = 0,
+    purchaseLimitFollowUp = "",
+    enableMultiModeOnLimit = false
 }
 
 function RefreshSettings()
+    local previousExchange = Settings.exchangeGemstones
+    local previousLimit = Settings.purchaseCycleLimit or 0
     local echo = Config.Get("Echo logs")
     if type(echo) == "string" then
         Settings.echoLevel = string.lower(echo)
@@ -746,12 +729,48 @@ function RefreshSettings()
         Settings.bicolorItem = bicolorItem
     end
 
+    local purchaseLimit = Config.Get("Gemstone purchase cycle limit")
+    if type(purchaseLimit) == "number" then
+        purchaseLimit = math.max(0, math.floor(purchaseLimit))
+    else
+        purchaseLimit = 0
+    end
+    Settings.purchaseCycleLimit = purchaseLimit
+
+    local followUpScript = Config.Get("Follow-up script")
+    if type(followUpScript) == "string" then
+        followUpScript = TrimString(followUpScript)
+        if followUpScript ~= nil and followUpScript ~= "" then
+            if string.lower(followUpScript) == "none" then
+                followUpScript = ""
+            end
+        end
+    else
+        followUpScript = ""
+    end
+    Settings.purchaseLimitFollowUp = followUpScript or ""
+
+    local enableMultiMode = Config.Get("Enable AutoRetainer multi-mode")
+    if enableMultiMode ~= nil then
+        Settings.enableMultiModeOnLimit = enableMultiMode == true
+    else
+        Settings.enableMultiModeOnLimit = false
+    end
+
     Settings.exchangeGemstones = Settings.maintainGemstones
         and type(Settings.bicolorItem) == "string"
         and Settings.bicolorItem ~= "None"
-end
 
-RefreshSettings()
+    local limitChanged = previousLimit ~= Settings.purchaseCycleLimit
+    local exchangeChanged = previousExchange ~= Settings.exchangeGemstones
+    if Runtime ~= nil and ResetPurchaseCycleTracking ~= nil then
+        if limitChanged then
+            ResetPurchaseCycleTracking()
+        elseif exchangeChanged or not Settings.exchangeGemstones then
+            ResetPurchaseCycleTracking()
+        end
+    end
+end
 
 Runtime = {
     stopScript = false,
@@ -775,18 +794,41 @@ Runtime = {
     initialToolkitStarted = false,
     pendingRepair = false,
     repairToolkitStopped = false,
-    nextRepairCheck = 0
+    nextRepairCheck = 0,
+    purchaseCycleCount = 0,
+    purchaseLimitReached = false,
+    purchaseLimitHandled = false,
+    purchaseLimitFollowUpIssued = false
 }
 
 --#endregion Config & Runtime
 
 --#region Helpers
 
+--## Logging & Toolkit Control
+
 function EchoAll(message)
     if Settings.echoLevel == "all" then
         yield("/echo [Toolkit Helper] "..message)
     end
 end
+
+function SetAutoRetainerMultiMode(enabled)
+    if not IPC or not IPC.AutoRetainer or not IPC.AutoRetainer.SetMultiModeEnabled then
+        Dalamud.Log("[Toolkit Helper] Unable to set AutoRetainer multi-mode; IPC unavailable")
+        return false
+    end
+    local ok, err = pcall(function()
+        return IPC.AutoRetainer.SetMultiModeEnabled(enabled)
+    end)
+    if not ok then
+        Dalamud.Log("[Toolkit Helper] Failed to set AutoRetainer multi-mode: "..tostring(err))
+        return false
+    end
+    return true
+end
+
+--## Position & Movement
 
 function DistanceBetween(pos1, pos2)
     local dx = pos1.X - pos2.X
@@ -802,6 +844,59 @@ function GetDistanceToPoint(vec3)
     return DistanceBetween(Svc.ClientState.LocalPlayer.Position, vec3)
 end
 
+function Dismount()
+    if not Svc or not Svc.Condition or not Svc.Condition[CharacterCondition.mounted] then
+        return
+    end
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok = pcall(function()
+            Actions.ExecuteGeneralAction(23)
+        end)
+        if ok then
+            return
+        end
+    end
+    yield("/generalaction dismount")
+end
+
+function EnsureDismounted()
+    if not Svc or not Svc.Condition then
+        return false
+    end
+    local mountedFlags = {
+        CharacterCondition.mounted,
+        CharacterCondition.mounting57,
+        CharacterCondition.mounting64
+    }
+    local function isMountedState()
+        for _, flag in ipairs(mountedFlags) do
+            if flag ~= nil and Svc.Condition[flag] then
+                return true
+            end
+        end
+        return false
+    end
+
+    for attempt = 1, 2 do
+        Dismount()
+        local deadline = os.clock() + 5
+        repeat
+            if not isMountedState() then
+                return true
+            end
+            yield("/wait 0.25")
+        until os.clock() > deadline
+        if not isMountedState() then
+            return true
+        end
+        yield("/wait 0.5")
+    end
+
+    return not isMountedState()
+end
+
+--## Targeting & Status
+
 function GetTargetName()
     if Svc.Targets.Target == nil then
         return ""
@@ -815,6 +910,8 @@ function GetTargetName()
     end
     return ""
 end
+
+--## Addon Helpers
 
 function _get_addon(name)
     local ok, addon = pcall(Addons.GetAddon, name)
@@ -881,6 +978,8 @@ function WaitForAddonVisible(name, timeout)
     return nil
 end
 
+--## Teleportation & Travel
+
 function EnsureInLimsa(reason)
     if Svc.ClientState.TerritoryType == SUMMONING_BELL.territoryId then
         Dalamud.Log(string.format("[Toolkit Helper] Already in Limsa for %s", reason or "repair workflow"))
@@ -901,6 +1000,10 @@ function EnsureInLimsa(reason)
     return false
 end
 
+function EorzeaTimeToUnixTime(eorzeaTime)
+    return eorzeaTime/(144/7)
+end
+
 function WaitForAddonClosed(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
@@ -913,22 +1016,12 @@ function WaitForAddonClosed(name, timeout)
     return false
 end
 
-function ExecuteRepairGeneralAction()
-    local usedNative = false
-    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
-        local ok, err = pcall(function()
-            Actions.ExecuteGeneralAction(REPAIR_GENERAL_ACTION_ID)
-        end)
-        usedNative = ok
-        if not ok then
-            Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction failed: "..tostring(err))
-        end
-    end
-    if not usedNative then
-        Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction unavailable; falling back to /generalaction command")
-        yield("/generalaction repair")
-    end
-    yield("/wait 0.5")
+function GetNodeText(addonName, nodePath, ...)
+    local addon = Addons.GetAddon(addonName)
+    repeat
+        yield("/wait 0.1")
+    until addon.Ready
+    return addon:GetNode(nodePath, ...).Text
 end
 
 function CloseAddonIfMounted(addonName)
@@ -941,7 +1034,7 @@ function CloseAddonIfMounted(addonName)
     end
 end
 
-function WaitForTeleportCompletion(start)
+ function WaitForTeleportCompletion(start)
     yield("/wait 1")
     while Svc.Condition[CharacterCondition.casting] do
         yield("/wait 1")
@@ -1019,6 +1112,44 @@ function ChangeState(newState, label)
     return false
 end
 
+function StopToolkitRun(reason)
+    local suffix = ""
+    if reason ~= nil and reason ~= "" then
+        suffix = " ("..reason..")"
+    end
+    Dalamud.Log("[Toolkit Helper] Issuing /vfate stop"..suffix)
+    yield("/vfate stop")
+    -- Toolkit resumes explicitly via ResumeToolkitRun when appropriate.
+end
+
+function EnsureRetainerToolkitStopped(reason)
+    if not Runtime.retainerToolkitStopped then
+        StopToolkitRun(reason or "retainer pause")
+        Runtime.retainerToolkitStopped = true
+    end
+end
+
+function ResumeToolkitAfterRetainers(reason)
+    if Runtime.retainerToolkitStopped then
+        Runtime.retainerToolkitStopped = false
+        ResumeToolkitRun(reason or "retainer resume")
+    end
+end
+
+function EnsureRepairToolkitStopped(reason)
+    if not Runtime.repairToolkitStopped then
+        StopToolkitRun(reason or "repair start")
+        Runtime.repairToolkitStopped = true
+    end
+end
+
+function ResumeToolkitAfterRepair(reason)
+    if Runtime.repairToolkitStopped then
+        Runtime.repairToolkitStopped = false
+        ResumeToolkitRun(reason or "repair resume")
+    end
+end
+
 function HasPlugin(name)
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
         if plugin.InternalName == name and plugin.IsLoaded then
@@ -1044,6 +1175,8 @@ function HasStatusId(statusId)
     end
     return false
 end
+
+--## Aetheryte & Return Handling
 
 function GetAetherytesInTerritory(territoryId)
     local aetherytesInZone = {}
@@ -1250,57 +1383,6 @@ function EnsureSummoningBellNameLocalized()
     SUMMONING_BELL.localizedNameResolved = true
     Dalamud.Log("[Toolkit Helper] Summoning bell entity name resolved to "..tostring(SUMMONING_BELL.name).." (rowId="..tostring(SUMMONING_BELL.rowId)..")")
     return SUMMONING_BELL.name
-end
-
-function StopToolkitRun(reason)
-    local suffix = ""
-    if reason ~= nil and reason ~= "" then
-        suffix = " ("..reason..")"
-    end
-    Dalamud.Log("[Toolkit Helper] Issuing /vfate stop"..suffix)
-    yield("/vfate stop")
-    -- Toolkit resumes explicitly via ResumeToolkitRun when appropriate.
-end
-
-function EnsureRetainerToolkitStopped(reason)
-    if not Runtime.retainerToolkitStopped then
-        StopToolkitRun(reason or "retainer pause")
-        Runtime.retainerToolkitStopped = true
-    end
-end
-
-function ResumeToolkitAfterRetainers(reason)
-    if Runtime.retainerToolkitStopped then
-        Runtime.retainerToolkitStopped = false
-        ResumeToolkitRun(reason or "retainer resume")
-    end
-end
-
-function EnsureRepairToolkitStopped(reason)
-    if not Runtime.repairToolkitStopped then
-        StopToolkitRun(reason or "repair start")
-        Runtime.repairToolkitStopped = true
-    end
-end
-
-function ResumeToolkitAfterRepair(reason)
-    if Runtime.repairToolkitStopped then
-        Runtime.repairToolkitStopped = false
-        ResumeToolkitRun(reason or "repair resume")
-    end
-end
-
-
-function EorzeaTimeToUnixTime(eorzeaTime)
-    return eorzeaTime/(144/7)
-end
-
-function GetNodeText(addonName, nodePath, ...)
-    local addon = Addons.GetAddon(addonName)
-    repeat
-        yield("/wait 0.1")
-    until addon.Ready
-    return addon:GetNode(nodePath, ...).Text
 end
 
 function AcceptTeleportOfferLocation(destinationAetheryte)
@@ -1564,6 +1646,28 @@ function TeleportTo(destination)
     return success
 end
 
+--## Repair Utilities
+
+function ExecuteRepairGeneralAction()
+    local usedNative = false
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok, err = pcall(function()
+            Actions.ExecuteGeneralAction(REPAIR_GENERAL_ACTION_ID)
+        end)
+        usedNative = ok
+        if not ok then
+            Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction failed: "..tostring(err))
+        end
+    end
+    if not usedNative then
+        Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction unavailable; falling back to /generalaction command")
+        yield("/generalaction repair")
+    end
+    yield("/wait 0.5")
+end
+
+--## Retainer & Runtime Checks
+
 function CurrentCharacterRetainersReady()
     local ok, result = pcall(function()
         return IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
@@ -1642,6 +1746,90 @@ end
 
 -- Gemstone helpers
 local SelectedGemstoneEntry = nil
+
+function ResetPurchaseCycleTracking()
+    if Runtime == nil then
+        return
+    end
+    Runtime.purchaseCycleCount = 0
+    Runtime.purchaseLimitReached = false
+    Runtime.purchaseLimitHandled = false
+    Runtime.purchaseLimitFollowUpIssued = false
+end
+
+function GetPurchaseCycleLimit()
+    local limit = Settings.purchaseCycleLimit or 0
+    if type(limit) ~= "number" then
+        return 0
+    end
+    return math.max(0, math.floor(limit))
+end
+
+function HasReachedPurchaseCycleLimit()
+    local limit = GetPurchaseCycleLimit()
+    if limit <= 0 then
+        return false
+    end
+    if Runtime.purchaseLimitReached then
+        return true
+    end
+    local count = Runtime.purchaseCycleCount or 0
+    return count >= limit
+end
+
+function RegisterGemstonePurchaseCycle()
+    Runtime.purchaseCycleCount = (Runtime.purchaseCycleCount or 0) + 1
+    local limit = GetPurchaseCycleLimit()
+    local hitLimit = limit > 0 and Runtime.purchaseCycleCount >= limit
+    if hitLimit then
+        Runtime.purchaseLimitReached = true
+    end
+    return Runtime.purchaseCycleCount, limit, hitLimit
+end
+
+function RunFollowUpScript(scriptName)
+    if Runtime.purchaseLimitFollowUpIssued then
+        return false
+    end
+    if type(scriptName) ~= "string" then
+        return false
+    end
+    local trimmed = TrimString(scriptName) or ""
+    if trimmed == "" then
+        return false
+    end
+    local sanitized = trimmed:gsub('"', '\\"')
+    Dalamud.Log(string.format("[Toolkit Helper] Running follow-up script '%s'", trimmed))
+    yield(string.format('/snd run "%s"', sanitized))
+    Runtime.purchaseLimitFollowUpIssued = true
+    return true
+end
+
+function HandlePurchaseLimitReached()
+    if Runtime.purchaseLimitHandled then
+        return
+    end
+    Runtime.purchaseLimitReached = true
+    Runtime.purchaseLimitHandled = true
+    local count = Runtime.purchaseCycleCount or 0
+    local limit = GetPurchaseCycleLimit()
+    Dalamud.Log(string.format("[Toolkit Helper] Gemstone purchase limit reached (%d/%d)", count, limit))
+    EchoAll("Gemstone purchase limit reached; stopping Toolkit Helper")
+    local followUp = Settings.purchaseLimitFollowUp or ""
+    if followUp ~= nil and followUp ~= "" then
+        RunFollowUpScript(followUp)
+    elseif Settings.enableMultiModeOnLimit then
+        local enabled = SetAutoRetainerMultiMode(true)
+        if enabled then
+            Dalamud.Log("[Toolkit Helper] AutoRetainer multi-mode enabled due to purchase limit")
+            EchoAll("AutoRetainer multi-mode enabled for follow-up automation")
+        else
+            Dalamud.Log("[Toolkit Helper] Failed to enable AutoRetainer multi-mode after purchase limit")
+        end
+    end
+    StopToolkitRun("purchase limit reached")
+    Runtime.stopScript = true
+end
 
 function GetBicolorGemCount()
     local ok, count = pcall(function()
@@ -1852,6 +2040,9 @@ function ShouldExchangeGemstones()
     if not Settings.exchangeGemstones then
         return false
     end
+    if HasReachedPurchaseCycleLimit() then
+        return false
+    end
     if Runtime.pendingGemstoneGoal ~= nil then
         return false
     end
@@ -2050,14 +2241,18 @@ function ResetExchangeState()
     Runtime.lastExchangeDelayLog = 0
 end
 
-function FinishGemstoneExchange(reason)
+function FinishGemstoneExchange(reason, options)
+    options = options or {}
+    local suppressResume = options.suppressResume == true
     ResetExchangeState()
     Runtime.nextExchangeCheck = os.clock() + 30
     if reason then
         Dalamud.Log("[Toolkit Helper] "..reason)
     end
     AttemptReturnToSavedLocation("gemstone exchange")
-    ResumeToolkitRun("after gemstone exchange")
+    if not suppressResume then
+        ResumeToolkitRun("after gemstone exchange")
+    end
     ChangeState(CharacterState.idle)
 end
 
@@ -2082,7 +2277,23 @@ function LogFeatureFlagsOnce()
         table.insert(entries, string.format("Gemstone stockpile enabled (target=%d)", Settings.gemstoneTarget))
     end
     if Settings.exchangeGemstones and Settings.bicolorItem ~= "None" then
-        table.insert(entries, string.format("Gemstone exchange enabled (%s)", Settings.bicolorItem))
+        local suffixParts = {}
+        if (Settings.purchaseCycleLimit or 0) > 0 then
+            table.insert(suffixParts, string.format("limit=%d", Settings.purchaseCycleLimit))
+        end
+        if Settings.purchaseLimitFollowUp ~= nil and Settings.purchaseLimitFollowUp ~= "" then
+            table.insert(suffixParts, string.format("follow-up=%s", Settings.purchaseLimitFollowUp))
+        elseif Settings.enableMultiModeOnLimit then
+            table.insert(suffixParts, "multi-mode-on-limit")
+        end
+        if Settings.purchaseLimitFollowUp ~= nil and Settings.purchaseLimitFollowUp ~= "" and Settings.enableMultiModeOnLimit then
+            table.insert(suffixParts, "multi-mode-disabled-by-follow-up")
+        end
+        local suffix = ""
+        if #suffixParts > 0 then
+            suffix = " | "..table.concat(suffixParts, ", ")
+        end
+        table.insert(entries, string.format("Gemstone exchange enabled (%s%s)", Settings.bicolorItem, suffix))
     end
     if (Settings.repairThreshold or 0) > 0 then
         local mode = Settings.selfRepair and "Self-repair" or "Mender-only"
@@ -2106,6 +2317,11 @@ function Idle()
     if Runtime.stopScript then return end
 
     if not Player.Available or Svc.Condition[CharacterCondition.betweenAreas] then
+        return
+    end
+
+    if HasReachedPurchaseCycleLimit() then
+        HandlePurchaseLimitReached()
         return
     end
 
@@ -2285,6 +2501,13 @@ function MaintainGemstones()
     if not Settings.maintainGemstones then
         Runtime.pendingGemstoneGoal = nil
         ChangeState(CharacterState.idle)
+        return
+    end
+
+    if HasReachedPurchaseCycleLimit() then
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.idle)
+        HandlePurchaseLimitReached()
         return
     end
 
@@ -2468,6 +2691,13 @@ function ExchangeGemstones()
         return
     end
 
+    if HasReachedPurchaseCycleLimit() then
+        ResetExchangeState()
+        ChangeState(CharacterState.idle)
+        HandlePurchaseLimitReached()
+        return
+    end
+
     if ShouldProcessRetainersNow() then
         Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for retainer processing")
         ResetExchangeState()
@@ -2569,7 +2799,15 @@ function ExchangeGemstones()
         return
     end
 
-    FinishGemstoneExchange(string.format("Completed gemstone exchange for %s", entry.localizedItemName))
+    local count, limit, hitLimit = RegisterGemstonePurchaseCycle()
+    local completionMessage = string.format("Completed gemstone exchange #%d for %s", count or 0, entry.localizedItemName)
+    if hitLimit then
+        FinishGemstoneExchange(completionMessage.." (purchase limit reached)", { suppressResume = true })
+        HandlePurchaseLimitReached()
+        return
+    end
+
+    FinishGemstoneExchange(completionMessage)
 end
 
 --#endregion State Functions
@@ -2607,6 +2845,8 @@ function OnStop()
         end)
     end
 end
+
+RefreshSettings()
 
 State = CharacterState.idle
 
