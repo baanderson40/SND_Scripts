@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.0
+version: 1.2.1
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -2244,12 +2244,15 @@ end
 function FinishGemstoneExchange(reason, options)
     options = options or {}
     local suppressResume = options.suppressResume == true
+    local skipReturnTeleport = options.skipReturnTeleport == true
     ResetExchangeState()
     Runtime.nextExchangeCheck = os.clock() + 30
     if reason then
         Dalamud.Log("[Toolkit Helper] "..reason)
     end
-    AttemptReturnToSavedLocation("gemstone exchange")
+    if not skipReturnTeleport then
+        AttemptReturnToSavedLocation("gemstone exchange")
+    end
     if not suppressResume then
         ResumeToolkitRun("after gemstone exchange")
     end
@@ -2802,7 +2805,10 @@ function ExchangeGemstones()
     local count, limit, hitLimit = RegisterGemstonePurchaseCycle()
     local completionMessage = string.format("Completed gemstone exchange #%d for %s", count or 0, entry.localizedItemName)
     if hitLimit then
-        FinishGemstoneExchange(completionMessage.." (purchase limit reached)", { suppressResume = true })
+        FinishGemstoneExchange(
+            completionMessage.." (purchase limit reached)",
+            { suppressResume = true, skipReturnTeleport = true }
+        )
         HandlePurchaseLimitReached()
         return
     end
