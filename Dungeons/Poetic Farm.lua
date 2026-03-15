@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.0
+version: 1.1.1
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
