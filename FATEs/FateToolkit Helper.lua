@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1
+version: 1.1.2
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -154,6 +154,42 @@ function Dismount()
         end
     end
     yield("/generalaction dismount")
+end
+
+function EnsureDismounted()
+    if not Svc or not Svc.Condition then
+        return false
+    end
+    local mountedFlags = {
+        CharacterCondition.mounted,
+        CharacterCondition.mounting57,
+        CharacterCondition.mounting64
+    }
+    local function isMountedState()
+        for _, flag in ipairs(mountedFlags) do
+            if flag ~= nil and Svc.Condition[flag] then
+                return true
+            end
+        end
+        return false
+    end
+
+    for attempt = 1, 2 do
+        Dismount()
+        local deadline = os.clock() + 5
+        repeat
+            if not isMountedState() then
+                return true
+            end
+            yield("/wait 0.25")
+        until os.clock() > deadline
+        if not isMountedState() then
+            return true
+        end
+        yield("/wait 0.5")
+    end
+
+    return not isMountedState()
 end
 
 local GemstoneExchangeMap = {
@@ -2588,38 +2624,3 @@ while not Runtime.stopScript do
 end
 
 --#endregion Main
-function EnsureDismounted()
-    if not Svc or not Svc.Condition then
-        return false
-    end
-    local mountedFlags = {
-        CharacterCondition.mounted,
-        CharacterCondition.mounting57,
-        CharacterCondition.mounting64
-    }
-    local function isMountedState()
-        for _, flag in ipairs(mountedFlags) do
-            if flag ~= nil and Svc.Condition[flag] then
-                return true
-            end
-        end
-        return false
-    end
-
-    for attempt = 1, 2 do
-        Dismount()
-        local deadline = os.clock() + 5
-        repeat
-            if not isMountedState() then
-                return true
-            end
-            yield("/wait 0.25")
-        until os.clock() > deadline
-        if not isMountedState() then
-            return true
-        end
-        yield("/wait 0.5")
-    end
-
-    return not isMountedState()
-end
