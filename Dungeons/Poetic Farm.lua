@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.1.0
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -27,6 +27,29 @@ configs:
     default: "Manderium Meteorite"
     is_choice: true
     choices: ["Manderium Meteorite", "Complementary Chondrite", "Amplifying Achondrite", "Cosmic Crystallite"]
+  Auto Restock Manderville Mats:
+    description: Automatically choose which relic mats to buy based on inventory levels.
+    default: false
+  Target Manderium Meteorite Count:
+    description: Desired Manderium Meteorite count when restocking.
+    default: 3
+    min: 0
+    max: 99
+  Target Complementary Chondrite Count:
+    description: Desired Complementary Chondrite count when restocking.
+    default: 3
+    min: 0
+    max: 99
+  Target Amplifying Achondrite Count:
+    description: Desired Amplifying Achondrite count when restocking.
+    default: 3
+    min: 0
+    max: 99
+  Target Cosmic Crystallite Count:
+    description: Desired Cosmic Crystallite count when restocking.
+    default: 3
+    min: 0
+    max: 99
   Pause for AutoRetainer:
     description: |
       Pause the script while AutoRetainer handles retainer interactions.
@@ -437,10 +460,30 @@ end
 -- Variable State + Tables
 -- =========================================================
 local RelicMatTypes  = {
-    {name = "Manderium Meteorite",      id = 0},
-    {name = "Complementary Chondrite",  id = 1},
-    {name = "Amplifying Achondrite",    id = 2},
-    {name = "Cosmic Crystallite",       id = 3}
+    {
+        name         = "Manderium Meteorite",
+        purchaseId   = 0,
+        itemId       = 38420,
+        configTarget = "Target Manderium Meteorite Count",
+    },
+    {
+        name         = "Complementary Chondrite",
+        purchaseId   = 1,
+        itemId       = 38940,
+        configTarget = "Target Complementary Chondrite Count",
+    },
+    {
+        name         = "Amplifying Achondrite",
+        purchaseId   = 2,
+        itemId       = 40322,
+        configTarget = "Target Amplifying Achondrite Count",
+    },
+    {
+        name         = "Cosmic Crystallite",
+        purchaseId   = 3,
+        itemId       = 41032,
+        configTarget = "Target Cosmic Crystallite Count",
+    }
 }
 
 local DungList = {
@@ -450,7 +493,7 @@ local DungList = {
 local RelicMatMap = {}
 for i = 1, #RelicMatTypes do
     local t = RelicMatTypes[i]
-    RelicMatMap[t.name] = t.id
+    RelicMatMap[t.name] = t
 end
 
 local DungMap = {}
@@ -466,8 +509,34 @@ local relicMatPick        = tostring(Config.Get("Manderville Relic Mat"))
 local dungeonPick         = tostring(Config.Get("Dungeon"))
 local pauseAutoRetainer   = (Config.Get("Pause for AutoRetainer") ~= false)
 local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
+local autoRestockToggle   = (Config.Get("Auto Restock Manderville Mats") == true)
 
-local ItemToBuy           = (RelicMatMap[relicMatPick] or 0)
+local RestockMatSettings  = {}
+local restockAnyEnabled   = false
+for i = 1, #RelicMatTypes do
+    local mat      = RelicMatTypes[i]
+    local target   = toNumberSafe(Config.Get(mat.configTarget), 3, 0) or 0
+    if target < 0 then target = 0 end
+    local enabled  = target > 0
+    RestockMatSettings[mat.name] = {
+        enabled    = enabled,
+        target     = target,
+        purchaseId = mat.purchaseId,
+        itemId     = mat.itemId,
+        meta       = mat,
+    }
+    if enabled then
+        restockAnyEnabled = true
+    end
+end
+
+local autoRestockActive   = autoRestockToggle and restockAnyEnabled
+if autoRestockToggle and not autoRestockActive then
+    Log("Auto restock enabled but no mats selected; falling back to manual purchase item")
+end
+
+local ItemToBuyEntry      = RelicMatMap[relicMatPick]
+local ItemToBuy           = (ItemToBuyEntry and ItemToBuyEntry.purchaseId or 0)
 local DungeonToDo         = (DungMap[dungeonPick] and DungMap[dungeonPick].id or 0)
 local PoeticFromDung      = (DungMap[dungeonPick] and DungMap[dungeonPick].amount or 0)
 local purchaseCounter     = 0
@@ -511,6 +580,71 @@ end
 
 local function PoeticOnHand()
     return tonumber(Inventory.GetItemCount(POETIC_ITEM_ID)) or 0
+end
+
+local function GetMatCount(itemId)
+    if not itemId then return 0 end
+    return tonumber(Inventory.GetItemCount(itemId)) or 0
+end
+
+local function BuildMatStates()
+    local states = {}
+    for i = 1, #RelicMatTypes do
+        local mat   = RelicMatTypes[i]
+        local cfg   = RestockMatSettings[mat.name] or {}
+        local target = tonumber(cfg.target) or 0
+        local enabled = (cfg.enabled == true) and target > 0
+        local count   = GetMatCount(mat.itemId)
+        local deficit = 0
+        if enabled then
+            deficit = math.max(0, target - count)
+        end
+        states[mat.name] = {
+            mat     = mat,
+            enabled = enabled,
+            target  = target,
+            count   = count,
+            deficit = deficit,
+        }
+    end
+    return states
+end
+
+local function NeedsRestock(states)
+    states = states or BuildMatStates()
+    for i = 1, #RelicMatTypes do
+        local mat  = RelicMatTypes[i]
+        local info = states[mat.name]
+        if info and info.enabled and info.deficit > 0 then
+            return true, states
+        end
+    end
+    return false, states
+end
+
+local function SelectMatForRestock(states)
+    local best = nil
+    for i = 1, #RelicMatTypes do
+        local mat  = RelicMatTypes[i]
+        local info = states[mat.name]
+        if info and info.enabled and info.deficit > 0 then
+            if not best or info.deficit > best.deficit then
+                best = info
+            end
+        end
+    end
+    return best
+end
+
+local function LogMatTargets(states)
+    if not states then return end
+    for i = 1, #RelicMatTypes do
+        local mat  = RelicMatTypes[i]
+        local info = states[mat.name]
+        if info and info.enabled then
+            Log("Restock target: %s %d/%d (deficit=%d)", mat.name, info.count, info.target, info.deficit)
+        end
+    end
 end
 
 local function RunsToGo()
@@ -607,7 +741,19 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         end
 
         if PoeticOnHand() >= poeticLimit then
-            gotoState(STATE.SPEND_TOMES)
+            if autoRestockActive then
+                local needsRestock = false
+                local states = nil
+                needsRestock, states = NeedsRestock()
+                if needsRestock then
+                    gotoState(STATE.SPEND_TOMES)
+                else
+                    Log("Auto restock: inventory targets satisfied; no purchases required")
+                    gotoState(STATE.DONE)
+                end
+            else
+                gotoState(STATE.SPEND_TOMES)
+            end
 
         elseif RunsToGo() > 0 then
             gotoState(STATE.RUN_AUTODUTY)
@@ -663,8 +809,39 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
+        local matStates = nil
+        if autoRestockActive then
+            local _, states = NeedsRestock()
+            matStates = states
+            Log("Auto restock enabled; evaluating inventory targets")
+            LogMatTargets(matStates)
+        end
+
         while PoeticOnHand() >= 500 do
-            SafeCallback("ShopExchangeCurrency", true, 0, ItemToBuy, 1)
+            local purchaseId = ItemToBuy
+            local purchaseName = relicMatPick
+            local selectedMat = nil
+
+            if autoRestockActive then
+                local needsRestock
+                needsRestock, matStates = NeedsRestock()
+                if not needsRestock then
+                    Log("Auto restock: targets met; stopping purchases")
+                    break
+                end
+
+                selectedMat = SelectMatForRestock(matStates)
+                if not selectedMat then
+                    Log("Auto restock: no eligible mats found despite restock flag")
+                    break
+                end
+
+                purchaseId = selectedMat.mat.purchaseId
+                purchaseName = selectedMat.mat.name
+                Log("Auto restock purchasing %s (%d/%d)", purchaseName, selectedMat.count, selectedMat.target)
+            end
+
+            SafeCallback("ShopExchangeCurrency", true, 0, purchaseId, 1)
 
             if not AwaitAddonReady("SelectYesno", 5.0) then
                 Log("SPEND_TOMES: SelectYesno missing")
@@ -679,7 +856,19 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 break
             end
 
-            sleep(TIME.STABLE)
+            if autoRestockActive then
+                sleep(TIME.STABLE)
+                local _, states = NeedsRestock()
+                matStates = states
+                if selectedMat then
+                    local info = matStates and matStates[selectedMat.mat.name] or nil
+                    if info then
+                        Log("Auto restock updated: %s %d/%d (deficit=%d)", info.mat.name, info.count, info.target, info.deficit)
+                    end
+                end
+            else
+                sleep(TIME.STABLE)
+            end
         end
 
         if sm.s ~= STATE.FAIL then
@@ -692,13 +881,25 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
             Sleep(TIME.STABLE)
 
-            purchaseCounter = purchaseCounter + 1
-            Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
-
-            if maxPurchases == 0 or purchaseCounter < maxPurchases then
-                gotoState(STATE.READY)
+            if autoRestockActive then
+                local needsRestock, states = NeedsRestock()
+                LogMatTargets(states)
+                if needsRestock then
+                    Log("Auto restock: additional tomes needed; returning to READY")
+                    gotoState(STATE.READY)
+                else
+                    Log("Auto restock complete: all targets satisfied")
+                    gotoState(STATE.DONE)
+                end
             else
-                gotoState(STATE.DONE)
+                purchaseCounter = purchaseCounter + 1
+                Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
+
+                if maxPurchases == 0 or purchaseCounter < maxPurchases then
+                    gotoState(STATE.READY)
+                else
+                    gotoState(STATE.DONE)
+                end
             end
         end
 
