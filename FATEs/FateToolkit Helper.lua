@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.0
+version: 1.1.1
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -893,6 +893,16 @@ function ExecuteRepairGeneralAction()
         yield("/generalaction repair")
     end
     yield("/wait 0.5")
+end
+
+function CloseAddonIfMounted(addonName)
+    if Addons == nil then return end
+    local addon = Addons.GetAddon(addonName)
+    if addon ~= nil and addon.Ready then
+        yield(string.format("/callback %s true -1", addonName))
+        WaitForAddonClosed(addonName, 2)
+        yield("/wait 0.5")
+    end
 end
 
 function WaitForTeleportCompletion(start)
@@ -1886,6 +1896,10 @@ function InteractWithNpcAtPosition(position, npcRowId, fallbackName)
     if not MoveWithinLimsaTarget(position) then
         return false
     end
+    if not EnsureDismounted() then
+        Dalamud.Log("[Toolkit Helper] Unable to dismount before interacting with NPC")
+        return false
+    end
     local npcName = GetLocalizedNpcName(npcRowId, fallbackName)
     if npcName == nil or npcName == "" then
         Dalamud.Log(string.format("[Toolkit Helper] Unable to resolve NPC name for rowId=%s", tostring(npcRowId)))
@@ -2322,6 +2336,11 @@ function RepairGear()
 
     local repairAddon = Addons.GetAddon("Repair")
     if repairAddon ~= nil and repairAddon.Ready then
+        if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] then
+            Dalamud.Log("[Toolkit Helper] Mount detected while repair addon open; closing and retrying")
+            CloseAddonIfMounted("Repair")
+            return
+        end
         if needsCount == nil or needsCount == 0 then
             yield("/callback Repair true -1")
             FinishRepairWorkflow("repair menu closed")
@@ -2356,28 +2375,10 @@ function RepairGear()
 
     if Settings.selfRepair then
         if darkMatterCount > 0 then
-            if Svc.Condition[CharacterCondition.mounted] then
-                Dalamud.Log("[Toolkit Helper] Character mounted; dismounting before repair")
-                local mountedStill = true
-                for attempt = 1, 2 do
-                    Dalamud.Log(string.format("[Toolkit Helper] Dismount attempt %d", attempt))
-                    Dismount()
-                    local deadline = os.clock() + 5
-                    repeat
-                        if not Svc.Condition[CharacterCondition.mounted] then
-                            mountedStill = false
-                            break
-                        end
-                        yield("/wait 0.25")
-                    until os.clock() > deadline
-                    if not mountedStill then
-                        break
-                    end
-                end
-                if mountedStill then
-                    Dalamud.Log("[Toolkit Helper] Dismount failed after two attempts; retrying later")
-                    return
-                end
+            Dalamud.Log("[Toolkit Helper] Ensuring character is dismounted before repair")
+            if not EnsureDismounted() then
+                Dalamud.Log("[Toolkit Helper] Dismount failed; retrying later")
+                return
             end
             Dalamud.Log("[Toolkit Helper] Executing self-repair general action")
             ExecuteRepairGeneralAction()
@@ -2388,6 +2389,10 @@ function RepairGear()
             end
             shopAddon = Addons.GetAddon("Shop")
             if shopAddon == nil or not shopAddon.Ready then
+                if not EnsureDismounted() then
+                    Dalamud.Log("[Toolkit Helper] Unable to dismount before vendor interaction; retrying")
+                    return
+                end
                 if not InteractWithNpcAtPosition(UNSYNRAEL_POSITION, UNSYNRAEL_ROW_ID, "Unsynrael") then
                     return
                 end
@@ -2407,6 +2412,10 @@ function RepairGear()
         Dalamud.Log("[Toolkit Helper] Dark Matter depleted and auto-buy disabled; falling back to Limsa mender")
     end
     if not EnsureInLimsa("mender repair") then
+        return
+    end
+    if not EnsureDismounted() then
+        Dalamud.Log("[Toolkit Helper] Unable to dismount before mender interaction; retrying")
         return
     end
     InteractWithNpcAtPosition(ALISTAIR_POSITION, ALISTAIR_ROW_ID, "Alistair")
@@ -2579,3 +2588,38 @@ while not Runtime.stopScript do
 end
 
 --#endregion Main
+function EnsureDismounted()
+    if not Svc or not Svc.Condition then
+        return false
+    end
+    local mountedFlags = {
+        CharacterCondition.mounted,
+        CharacterCondition.mounting57,
+        CharacterCondition.mounting64
+    }
+    local function isMountedState()
+        for _, flag in ipairs(mountedFlags) do
+            if flag ~= nil and Svc.Condition[flag] then
+                return true
+            end
+        end
+        return false
+    end
+
+    for attempt = 1, 2 do
+        Dismount()
+        local deadline = os.clock() + 5
+        repeat
+            if not isMountedState() then
+                return true
+            end
+            yield("/wait 0.25")
+        until os.clock() > deadline
+        if not isMountedState() then
+            return true
+        end
+        yield("/wait 0.5")
+    end
+
+    return not isMountedState()
+end
