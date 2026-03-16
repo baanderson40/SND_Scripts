@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.2
+version: 1.1.3
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -509,46 +509,88 @@ for i = 1, #DungList do
     DungMap[t.name] = { id = t.id, amount = t.amount }
 end
 
--- Config reads
-local poeticLimit         = toNumberSafe(Config.Get("Poetic Tome Limit"), 1500, 0)
-local maxPurchases        = toNumberSafe(Config.Get("Max Purchase Cycles"), 0, 0)
-local relicMatPick        = tostring(Config.Get("Manderville Relic Mat"))
-local dungeonPick         = tostring(Config.Get("Dungeon"))
-local pauseAutoRetainer   = (Config.Get("Pause for AutoRetainer") ~= false)
-local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
-local autoRestockToggle   = (Config.Get("Auto Restock Manderville Mats") ~= false)
-local closeRetainer       = (Config.Get("Close Retainer List") ~= false)
-local followupScript      = tostring(Config.Get("Follow-up Script"))
-
+local poeticLimit         = 1500
+local maxPurchases        = 0
+local relicMatPick        = ""
+local dungeonPick         = ""
+local pauseAutoRetainer   = true
+local multiMode           = true
+local autoRestockToggle   = false
+local closeRetainer       = true
+local followupScript      = ""
 local RestockMatSettings  = {}
 local restockAnyEnabled   = false
-for i = 1, #RelicMatTypes do
-    local mat      = RelicMatTypes[i]
-    local target   = toNumberSafe(Config.Get(mat.configTarget), 3, 0) or 0
-    if target < 0 then target = 0 end
-    local enabled  = target > 0
-    RestockMatSettings[mat.name] = {
-        enabled    = enabled,
-        target     = target,
-        purchaseId = mat.purchaseId,
-        itemId     = mat.itemId,
-        meta       = mat,
-    }
-    if enabled then
-        restockAnyEnabled = true
-    end
-end
-
-local autoRestockActive   = autoRestockToggle and restockAnyEnabled
-if autoRestockToggle and not autoRestockActive then
-    Log("Auto restock enabled but no mats selected; falling back to manual purchase item")
-end
-
-local ItemToBuyEntry      = RelicMatMap[relicMatPick]
-local ItemToBuy           = (ItemToBuyEntry and ItemToBuyEntry.purchaseId or 0)
-local DungeonToDo         = (DungMap[dungeonPick] and DungMap[dungeonPick].id or 0)
-local PoeticFromDung      = (DungMap[dungeonPick] and DungMap[dungeonPick].amount or 0)
+local autoRestockActive   = false
+local ItemToBuyEntry      = nil
+local ItemToBuy           = 0
+local DungeonToDo         = 0
+local PoeticFromDung      = 0
 local purchaseCounter     = 0
+local autoRestockWarned   = false
+
+local function SyncSettings(force)
+    force = force == true
+
+    local newPoeticLimit   = toNumberSafe(Config.Get("Poetic Tome Limit"), 1500, 0)
+    local newMaxPurchases  = toNumberSafe(Config.Get("Max Purchase Cycles"), 0, 0)
+    local newRelicMatPick  = tostring(Config.Get("Manderville Relic Mat"))
+    local newDungeonPick   = tostring(Config.Get("Dungeon"))
+    local newPauseBell     = (Config.Get("Pause for AutoRetainer") ~= false)
+    local newMultiMode     = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
+    local newAutoRestock   = (Config.Get("Auto Restock Manderville Mats") ~= false)
+    local newCloseRetainer = (Config.Get("Close Retainer List") ~= false)
+    local newFollowup      = tostring(Config.Get("Follow-up Script"))
+
+    if force or poeticLimit ~= newPoeticLimit then poeticLimit = newPoeticLimit end
+    if force or maxPurchases ~= newMaxPurchases then maxPurchases = newMaxPurchases end
+    if force or relicMatPick ~= newRelicMatPick then relicMatPick = newRelicMatPick end
+    if force or dungeonPick ~= newDungeonPick then dungeonPick = newDungeonPick end
+    if force or pauseAutoRetainer ~= newPauseBell then pauseAutoRetainer = newPauseBell end
+    if force or multiMode ~= newMultiMode then multiMode = newMultiMode end
+    if force or autoRestockToggle ~= newAutoRestock then autoRestockToggle = newAutoRestock end
+    if force or closeRetainer ~= newCloseRetainer then closeRetainer = newCloseRetainer end
+    if force or followupScript ~= newFollowup then followupScript = newFollowup end
+
+    local restockSettings  = {}
+    local anyRestock       = false
+    for i = 1, #RelicMatTypes do
+        local mat    = RelicMatTypes[i]
+        local target = toNumberSafe(Config.Get(mat.configTarget), 3, 0) or 0
+        if target < 0 then target = 0 end
+        local enabled = target > 0
+        restockSettings[mat.name] = {
+            enabled    = enabled,
+            target     = target,
+            purchaseId = mat.purchaseId,
+            itemId     = mat.itemId,
+            meta       = mat,
+        }
+        if enabled then
+            anyRestock = true
+        end
+    end
+
+    RestockMatSettings = restockSettings
+    restockAnyEnabled  = anyRestock
+    autoRestockActive  = autoRestockToggle and restockAnyEnabled
+
+    if autoRestockToggle and not autoRestockActive then
+        if not autoRestockWarned or force then
+            Log("Auto restock enabled but no mats selected; falling back to manual purchase item")
+            autoRestockWarned = true
+        end
+    else
+        autoRestockWarned = false
+    end
+
+    ItemToBuyEntry = RelicMatMap[relicMatPick]
+    ItemToBuy      = (ItemToBuyEntry and ItemToBuyEntry.purchaseId or 0)
+    local dungInfo = DungMap[dungeonPick]
+    DungeonToDo    = (dungInfo and dungInfo.id or 0)
+    PoeticFromDung = (dungInfo and dungInfo.amount or 0)
+end
+
+SyncSettings(true)
 
 -- IDs / locations
 local INN_TERRITORY_ID      = 177
@@ -667,6 +709,9 @@ local function StartAutoDuty()
         gotoState(STATE.FAIL)
         return false
     end
+    Log("StartAutoDuty: forcing DutyModeEnum Support before run")
+    yield("/ad cfg dutyModeEnum Support")
+    sleep(0.5)
     IPC.AutoDuty.Run(DungeonToDo, RunsToGo(), false)
     sleep(TIME.POLL)
     return true
@@ -731,6 +776,7 @@ end
 EchoOnce("Starting Poetic Farmer script.")
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
+    SyncSettings()
     -- ======================
     -- READY
     -- ======================
