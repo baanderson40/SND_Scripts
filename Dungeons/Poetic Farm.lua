@@ -9,6 +9,11 @@ plugin_dependencies:
 - Lifestream
 - vnavmesh
 configs:
+  Gearset Slot:
+    description: Optional gearset slot number to equip before farming (-1 disables).
+    default: -1
+    min: -1
+    max: 100
   Poetic Tome Limit:
     description: The number of Poetic tomes to gather before spending them.
     default: 1500
@@ -61,10 +66,6 @@ configs:
   Enable AutoRetainer MultiMode:
     description: Enable AutoRetainer MultiMode when the script completes.
     default: true
-  Gearset Slot:
-    description: Optional gearset slot number to equip before farming (-1 disables).
-    default: -1
-    min: -1
   Follow-up Script:
     description: |
       SND script to run after this script finishes.

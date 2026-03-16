@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.0
+version: 1.1.1
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -1213,7 +1213,7 @@ local function StartEnduranceCraft(quantity)
             Log("Endurance crafting finished (recipe %d).", recipeId)
             Sleep(3)
             SafeCallback("RecipeNote", -1)
-            Sleep(0.5)
+            Sleep(2)
             if Settings.followUpScript and Settings.followUpScript ~= "" then
                 Log("Launching follow-up script: %s", Settings.followUpScript)
                 yield('/snd run "' .. Settings.followUpScript .. '"')
