@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1
+version: 1.1.2
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -9,6 +9,9 @@ configs:
     default: 99
     min: 1
     max: 999
+  Auto-gather Dark Matter Clusters?:
+    description: Use Gatherbuddy Reborn to farm clusters automatically when required.
+    default: false
   Follow-up script:
     description: Optional SND script to run after crafting completes
     default: ""
@@ -1106,6 +1109,12 @@ local function RefreshSettings()
     end
     Settings.targetMagitek = target
 
+    local autoGather = false
+    if Config and Config.Get then
+        autoGather = (Config.Get("Auto-gather Dark Matter Clusters?") == true)
+    end
+    Settings.autoGatherClusters = autoGather
+
     local follow = ""
     if Config and Config.Get then
         local cfgFollow = Config.Get("Follow-up script")
@@ -1161,6 +1170,37 @@ local function BuildCraftPlan(targetAmount)
         requiredCluster = requiredCluster,
         clusterDeficit = clusterDeficit
     }
+end
+
+local function AutoGatherClusters(requiredAmount)
+    requiredAmount = tonumber(requiredAmount) or 0
+    if requiredAmount <= 0 then return true end
+
+    Log("Auto-gather enabled; starting Gatherbuddy for %d deficit Dark Matter Clusters.", requiredAmount)
+    yield('/gbr auto on')
+    Sleep(1)
+
+    while true do
+        local currentCluster = GetInventoryCount(ITEM_IDS.CLUSTER.id)
+        local craftPlan = BuildCraftPlan(Settings.targetMagitek)
+        local remaining = craftPlan.requiredCluster - craftPlan.currentCluster
+        if remaining <= 0 then
+            break
+        end
+        Sleep(3)
+    end
+
+    while true do
+        if not (Svc and Svc.Condition and Svc.Condition[CharacterCondition.gathering]) then
+            break
+        end
+        Sleep(1)
+    end
+
+    yield('/gbr auto off')
+    Sleep(1)
+    Log("Gatherbuddy auto-gather completed; resuming script.")
+    return true
 end
 
 local function IsEnduranceActive()
@@ -1315,8 +1355,18 @@ if craftPlan.neededMagitek <= 0 then
 end
 
 if craftPlan.clusterDeficit > 0 then
-    Log("Missing %d Dark Matter Cluster(s); cannot craft %d Magitek Repair Material.", craftPlan.clusterDeficit, craftPlan.neededMagitek)
-    return
+    if Settings.autoGatherClusters then
+        Log("Cluster deficit detected (%d). Engaging Gatherbuddy.", craftPlan.clusterDeficit)
+        AutoGatherClusters(craftPlan.clusterDeficit)
+        craftPlan = BuildCraftPlan(Settings.targetMagitek)
+        if craftPlan.clusterDeficit > 0 then
+            Log("Auto-gather completed but still missing %d Dark Matter Cluster(s).", craftPlan.clusterDeficit)
+            return
+        end
+    else
+        Log("Missing %d Dark Matter Cluster(s); cannot craft %d Magitek Repair Material.", craftPlan.clusterDeficit, craftPlan.neededMagitek)
+        return
+    end
 end
 
 if craftPlan.darkMatterDeficit > 0 then
@@ -1326,8 +1376,18 @@ end
 craftPlan = BuildCraftPlan(Settings.targetMagitek)
 
 if craftPlan.clusterDeficit > 0 then
-    Log("Missing %d Dark Matter Cluster(s) after restock; stopping.", craftPlan.clusterDeficit)
-    return
+    if Settings.autoGatherClusters then
+        Log("Cluster deficit detected after restock (%d). Engaging Gatherbuddy again.", craftPlan.clusterDeficit)
+        AutoGatherClusters(craftPlan.clusterDeficit)
+        craftPlan = BuildCraftPlan(Settings.targetMagitek)
+        if craftPlan.clusterDeficit > 0 then
+            Log("Auto-gather post-restock failed; still missing %d Dark Matter Cluster(s).", craftPlan.clusterDeficit)
+            return
+        end
+    else
+        Log("Missing %d Dark Matter Cluster(s) after restock; stopping.", craftPlan.clusterDeficit)
+        return
+    end
 end
 
 if craftPlan.darkMatterDeficit > 0 then
