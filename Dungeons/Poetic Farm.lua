@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.3
+version: 1.1.4
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -61,6 +61,10 @@ configs:
   Enable AutoRetainer MultiMode:
     description: Enable AutoRetainer MultiMode when the script completes.
     default: true
+  Gearset Slot:
+    description: Optional gearset slot number to equip before farming (-1 disables).
+    default: -1
+    min: -1
   Follow-up Script:
     description: |
       SND script to run after this script finishes.
@@ -518,6 +522,7 @@ local multiMode           = true
 local autoRestockToggle   = false
 local closeRetainer       = true
 local followupScript      = ""
+local equipGearsetSlot    = -1
 local RestockMatSettings  = {}
 local restockAnyEnabled   = false
 local autoRestockActive   = false
@@ -527,6 +532,7 @@ local DungeonToDo         = 0
 local PoeticFromDung      = 0
 local purchaseCounter     = 0
 local autoRestockWarned   = false
+local gearsetEquipped     = false
 
 local function SyncSettings(force)
     force = force == true
@@ -540,6 +546,12 @@ local function SyncSettings(force)
     local newAutoRestock   = (Config.Get("Auto Restock Manderville Mats") ~= false)
     local newCloseRetainer = (Config.Get("Close Retainer List") ~= false)
     local newFollowup      = tostring(Config.Get("Follow-up Script"))
+    local newGearsetSlot   = toNumberSafe(Config.Get("Gearset Slot"), -1, -1)
+    if newGearsetSlot and newGearsetSlot >= 1 then
+        newGearsetSlot = math.floor(newGearsetSlot) - 1
+    else
+        newGearsetSlot = -1
+    end
 
     if force or poeticLimit ~= newPoeticLimit then poeticLimit = newPoeticLimit end
     if force or maxPurchases ~= newMaxPurchases then maxPurchases = newMaxPurchases end
@@ -550,6 +562,7 @@ local function SyncSettings(force)
     if force or autoRestockToggle ~= newAutoRestock then autoRestockToggle = newAutoRestock end
     if force or closeRetainer ~= newCloseRetainer then closeRetainer = newCloseRetainer end
     if force or followupScript ~= newFollowup then followupScript = newFollowup end
+    if force or equipGearsetSlot ~= newGearsetSlot then equipGearsetSlot = newGearsetSlot end
 
     local restockSettings  = {}
     local anyRestock       = false
@@ -731,6 +744,30 @@ local function MoveToRadzAtHan()
     TravelToZone("Radz-At-Han", RADZATHAN_VILLAGE_ID)
 end
 
+local function EquipConfiguredGearset()
+    if gearsetEquipped then return true end
+    local slot = tonumber(equipGearsetSlot)
+    if not slot or slot < 0 then return true end
+    local slotDisplay = slot + 1
+
+    if not (Player and Player.GetGearset) then
+        Log("Gearset equip requested but Player module unavailable")
+        return false
+    end
+
+    local gearset = Player.GetGearset(slot)
+    if not (gearset and gearset.IsValid) then
+        Log("Configured gearset slot %d invalid or unavailable", slotDisplay)
+        return false
+    end
+
+    Log("Equipping gearset slot %d (%s)", slotDisplay, tostring(gearset.Name))
+    gearset:Equip()
+    Sleep(1.0)
+    gearsetEquipped = true
+    return true
+end
+
 -- =========================================================
 -- AutoRetainer readiness (retainer fix)
 -- =========================================================
@@ -774,6 +811,8 @@ end
 -- Main Loop
 -- =========================================================
 EchoOnce("Starting Poetic Farmer script.")
+
+EquipConfiguredGearset()
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     SyncSettings()
