@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.1.0
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -9,6 +9,9 @@ configs:
     default: 99
     min: 1
     max: 999
+  Follow-up script:
+    description: Optional SND script to run after crafting completes
+    default: ""
 [[End Metadata]]
 --]=====]
 
@@ -1102,6 +1105,18 @@ local function RefreshSettings()
         end
     end
     Settings.targetMagitek = target
+
+    local follow = ""
+    if Config and Config.Get then
+        local cfgFollow = Config.Get("Follow-up script")
+        if type(cfgFollow) == "string" then
+            local trimmed = cfgFollow:gsub("^%s+", ""):gsub("%s+$", "")
+            if trimmed ~= "" and trimmed:lower() ~= "none" then
+                follow = trimmed
+            end
+        end
+    end
+    Settings.followUpScript = follow
 end
 
 RefreshSettings()
@@ -1198,6 +1213,11 @@ local function StartEnduranceCraft(quantity)
             Log("Endurance crafting finished (recipe %d).", recipeId)
             Sleep(3)
             SafeCallback("RecipeNote", -1)
+            Sleep(0.5)
+            if Settings.followUpScript and Settings.followUpScript ~= "" then
+                Log("Launching follow-up script: %s", Settings.followUpScript)
+                yield('/snd run "' .. Settings.followUpScript .. '"')
+            end
             return true
         else
             Log("Recipe %d did not activate Endurance; trying next recipe.", recipeId)
