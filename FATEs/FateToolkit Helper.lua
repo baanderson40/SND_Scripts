@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.1
+version: 1.2.2
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -776,6 +776,11 @@ Runtime = {
     stopScript = false,
     nextCheck = 0,
     lastTeleport = -math.huge,
+    teleportLockActive = false,
+    teleportLockDestination = nil,
+    teleportLockStarted = 0,
+    teleportLockExpires = 0,
+    nextTeleportLockLog = 0,
     returnAetheryteName = nil,
     returnTerritoryId = nil,
     returnAetheryteId = nil,
@@ -1092,6 +1097,84 @@ function WaitForPlayerStationary(timeout)
         yield("/wait 0.1")
     end
     return true
+end
+
+local TELEPORT_LOCK_TIMEOUT = 180
+local TELEPORT_SUCCESS_COOLDOWN = 2
+local TELEPORT_FAILURE_COOLDOWN = 3
+
+function TeleportIndicatorsActive()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        if ok and busy == true then
+            return true
+        end
+    end
+    if Svc and Svc.Condition then
+        if Svc.Condition[CharacterCondition.casting] then
+            return true
+        end
+        if Svc.Condition[CharacterCondition.betweenAreas] then
+            return true
+        end
+    end
+    return false
+end
+
+function AcquireTeleportLock(destName)
+    local now = os.clock()
+    if Runtime.teleportLockActive then
+        if (Runtime.nextTeleportLockLog or 0) <= now then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport request for %s deferred; %s already in progress",
+                tostring(destName or "destination"),
+                tostring(Runtime.teleportLockDestination or "another teleport")))
+            Runtime.nextTeleportLockLog = now + 1
+        end
+        return false
+    end
+    local cooldown = Runtime.teleportLockExpires or 0
+    if cooldown > now then
+        if (Runtime.nextTeleportLockLog or 0) <= now then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport request for %s throttled for %.1fs",
+                tostring(destName or "destination"),
+                cooldown - now))
+            Runtime.nextTeleportLockLog = now + 1
+        end
+        return false
+    end
+    Runtime.teleportLockActive = true
+    Runtime.teleportLockDestination = destName
+    Runtime.teleportLockStarted = now
+    Runtime.nextTeleportLockLog = 0
+    Dalamud.Log(string.format("[Toolkit Helper] Teleport lock acquired for %s", tostring(destName or "destination")))
+    return true
+end
+
+function ReleaseTeleportLock(success)
+    Runtime.teleportLockActive = false
+    Runtime.teleportLockDestination = nil
+    Runtime.teleportLockStarted = 0
+    local cooldown = success and TELEPORT_SUCCESS_COOLDOWN or TELEPORT_FAILURE_COOLDOWN
+    Runtime.teleportLockExpires = os.clock() + cooldown
+end
+
+function WaitForTeleportIdle(timeout)
+    local deadline = os.clock() + (timeout or 10)
+    repeat
+        if Runtime.teleportLockActive then
+            local started = Runtime.teleportLockStarted or 0
+            if started > 0 and os.clock() - started > TELEPORT_LOCK_TIMEOUT then
+                Dalamud.Log("[Toolkit Helper] Teleport lock timed out; forcing release")
+                ReleaseTeleportLock(false)
+            end
+        end
+        local cooldown = Runtime.teleportLockExpires or 0
+        if not Runtime.teleportLockActive and cooldown <= os.clock() and not TeleportIndicatorsActive() then
+            return true
+        end
+        yield("/wait 0.1")
+    until os.clock() > deadline
+    return false
 end
 
 function ChangeState(newState, label)
@@ -1457,26 +1540,10 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         return false
     end
 
-    function HasTeleportIndicators()
-        if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
-            local ok, busy = pcall(IPC.Lifestream.IsBusy)
-            if ok and busy == true then
-                return true
-            end
-        end
-        if Svc.Condition[CharacterCondition.casting] then
-            return true
-        end
-        if Svc.Condition[CharacterCondition.betweenAreas] then
-            return true
-        end
-        return false
-    end
-
     function WaitForLifestreamBusyState(desiredBusy, timeout)
         local deadline = os.clock() + (timeout or 3)
         repeat
-            local indicators = HasTeleportIndicators()
+            local indicators = TeleportIndicatorsActive()
             if desiredBusy and indicators then
                 return true
             end
@@ -1621,9 +1688,22 @@ function TeleportTo(destination)
     end
 
     Dalamud.Log(string.format("[Toolkit Helper] TeleportTo preparing for %s (id=%s, mini=%s)", tostring(destName), tostring(destId), tostring(isMini)))
+    if not WaitForTeleportIdle(15) then
+        Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; teleport channel busy", tostring(destName)))
+        return false
+    end
     WaitForPlayerStationary(5)
+    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
+        Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character is casting", tostring(destName)))
+        return false
+    end
+    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas] then
+        Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character changing zones", tostring(destName)))
+        return false
+    end
     AcceptTeleportOfferLocation(destName)
     local start = os.clock()
+    local lockHeld = false
 
     while Instances ~= nil and Instances.Framework ~= nil and EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - Runtime.lastTeleport < 5 do
         Dalamud.Log("[Toolkit Helper] Too soon since last teleport. Waiting...")
@@ -1634,6 +1714,11 @@ function TeleportTo(destination)
         end
     end
 
+    if not AcquireTeleportLock(destName) then
+        return false
+    end
+    lockHeld = true
+
     local executed = ExecuteLifestreamCommand(destName, destId, isMini)
     Dalamud.Log(string.format("[Toolkit Helper] ExecuteLifestreamCommand returned %s for %s", tostring(executed), tostring(destName)))
     if not executed then
@@ -1641,8 +1726,12 @@ function TeleportTo(destination)
         local fallback = isMini and ("/li "..destName) or ("/li tp "..destName)
         yield(fallback)
     end
+    yield("/wait 3")
     local success = WaitForTeleportCompletion(start)
     Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
+    if lockHeld then
+        ReleaseTeleportLock(success)
+    end
     return success
 end
 
@@ -2084,8 +2173,7 @@ function MoveWithinLimsaTarget(targetPos)
         }
         local teleported = TeleportTo(miniDest)
         if not teleported then
-            Dalamud.Log("[Toolkit Helper] Mini aetheryte teleport failed; using fallback command")
-            yield("/li Hawkers' Alley")
+            Dalamud.Log("[Toolkit Helper] Mini aetheryte teleport failed; will retry shortly")
         end
         yield("/wait 1")
         return false
