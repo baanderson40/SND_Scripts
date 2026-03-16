@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.2
+version: 1.2.3
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -13,6 +13,11 @@ plugin_dependencies:
 - vnavmesh
 - Automaton
 configs:
+  Gearset Slot:
+    description: Optional gearset slot number to equip before farming (0 disables).
+    default: 0
+    min: 0
+    max: 100
   Pause for retainers?:
     description: Pause FATE Toolkit to process retainers with AutoRetainer.
     default: true
@@ -676,6 +681,9 @@ Settings = {
     enableMultiModeOnLimit = false
 }
 
+local equipGearsetSlot = -1
+local gearsetEquipped = false
+
 function RefreshSettings()
     local previousExchange = Settings.exchangeGemstones
     local previousLimit = Settings.purchaseCycleLimit or 0
@@ -757,6 +765,24 @@ function RefreshSettings()
         Settings.enableMultiModeOnLimit = false
     end
 
+    local gearsetConfig = Config.Get("Gearset Slot")
+    local numericGearset = nil
+    if type(gearsetConfig) == "number" or type(gearsetConfig) == "string" then
+        numericGearset = tonumber(gearsetConfig)
+    end
+    local newGearsetSlot = -1
+    if numericGearset ~= nil then
+        numericGearset = math.floor(numericGearset)
+        if numericGearset >= 1 then
+            numericGearset = math.min(100, numericGearset)
+            newGearsetSlot = numericGearset - 1
+        end
+    end
+    if equipGearsetSlot ~= newGearsetSlot then
+        equipGearsetSlot = newGearsetSlot
+        gearsetEquipped = false
+    end
+
     Settings.exchangeGemstones = Settings.maintainGemstones
         and type(Settings.bicolorItem) == "string"
         and Settings.bicolorItem ~= "None"
@@ -769,6 +795,10 @@ function RefreshSettings()
         elseif exchangeChanged or not Settings.exchangeGemstones then
             ResetPurchaseCycleTracking()
         end
+    end
+
+    if not gearsetEquipped then
+        EquipConfiguredGearset()
     end
 end
 
@@ -803,7 +833,9 @@ Runtime = {
     purchaseCycleCount = 0,
     purchaseLimitReached = false,
     purchaseLimitHandled = false,
-    purchaseLimitFollowUpIssued = false
+    purchaseLimitFollowUpIssued = false,
+    bossmodRecordedState = nil,
+    bossmodStateChanged = false
 }
 
 --#endregion Config & Runtime
@@ -830,6 +862,50 @@ function SetAutoRetainerMultiMode(enabled)
         Dalamud.Log("[Toolkit Helper] Failed to set AutoRetainer multi-mode: "..tostring(err))
         return false
     end
+    return true
+end
+
+--## Gearset Helpers
+
+function EquipConfiguredGearset()
+    if gearsetEquipped then
+        return true
+    end
+    local slot = tonumber(equipGearsetSlot)
+    if slot == nil or slot < 0 then
+        gearsetEquipped = true
+        return true
+    end
+    local slotDisplay = slot + 1
+    if not Player or not Player.GetGearset then
+        Dalamud.Log("[Toolkit Helper] Gearset equip requested but Player module unavailable")
+        return false
+    end
+    local gearset = Player.GetGearset(slot)
+    if not gearset or gearset.IsValid ~= true then
+        Dalamud.Log(string.format("[Toolkit Helper] Configured gearset slot %d invalid or unavailable", slotDisplay))
+        return false
+    end
+    local gearsetName = gearset.Name
+    if gearsetName and gearsetName.GetText then
+        local ok, resolved = pcall(function()
+            return gearsetName:GetText()
+        end)
+        if ok and type(resolved) == "string" and resolved ~= "" then
+            gearsetName = resolved
+        end
+    end
+    gearsetName = tostring(gearsetName or "Gearset "..slotDisplay)
+    Dalamud.Log(string.format("[Toolkit Helper] Equipping gearset slot %d (%s)", slotDisplay, gearsetName))
+    local ok, err = pcall(function()
+        return gearset:Equip()
+    end)
+    if not ok then
+        Dalamud.Log(string.format("[Toolkit Helper] Failed to equip gearset slot %d: %s", slotDisplay, tostring(err)))
+        return false
+    end
+    yield("/wait 1")
+    gearsetEquipped = true
     return true
 end
 
@@ -1240,6 +1316,67 @@ function HasPlugin(name)
         end
     end
     return false
+end
+
+function GetPluginEnabledState(name)
+    if not Svc or not Svc.PluginInterface or not Svc.PluginInterface.InstalledPlugins then
+        return nil
+    end
+    for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
+        if plugin.InternalName == name then
+            return plugin.IsLoaded == true
+        end
+    end
+    return false
+end
+
+function SetPluginEnabledState(name, enabled)
+    local command = enabled and ("/xlenableplugin "..name) or ("/xldisableplugin "..name)
+    Dalamud.Log(string.format("[Toolkit Helper] %s plugin %s", enabled and "Enabling" or "Disabling", name))
+    yield(command)
+    yield("/wait 2")
+end
+
+function EnsureBossModPreferredState()
+    local bossModEnabled = GetPluginEnabledState("BossMod")
+    local rebornEnabled = GetPluginEnabledState("BossModReborn")
+    if bossModEnabled == nil or rebornEnabled == nil then
+        return
+    end
+    if Runtime.bossmodRecordedState == nil then
+        Runtime.bossmodRecordedState = {
+            bossModEnabled = bossModEnabled,
+            bossModRebornEnabled = rebornEnabled
+        }
+    end
+    if bossModEnabled == true and rebornEnabled == false then
+        return
+    end
+    if bossModEnabled == false and rebornEnabled == true then
+        Dalamud.Log("[Toolkit Helper] Switching BossMod plugin pair (BossMod disabled, BossModReborn enabled)")
+        SetPluginEnabledState("BossModReborn", false)
+        SetPluginEnabledState("BossMod", true)
+        yield("/wait 2")
+        Runtime.bossmodStateChanged = true
+    end
+end
+
+function RestoreBossModPreferredState()
+    if not Runtime.bossmodStateChanged or Runtime.bossmodRecordedState == nil then
+        return
+    end
+    local original = Runtime.bossmodRecordedState
+    Dalamud.Log("[Toolkit Helper] Restoring BossMod plugin configuration")
+    local currentBossMod = GetPluginEnabledState("BossMod")
+    if currentBossMod ~= nil and currentBossMod ~= original.bossModEnabled then
+        SetPluginEnabledState("BossMod", original.bossModEnabled)
+    end
+    local currentReborn = GetPluginEnabledState("BossModReborn")
+    if currentReborn ~= nil and currentReborn ~= original.bossModRebornEnabled then
+        SetPluginEnabledState("BossModReborn", original.bossModRebornEnabled)
+    end
+    yield("/wait 2")
+    Runtime.bossmodStateChanged = false
 end
 
 function HasStatusId(statusId)
@@ -2399,6 +2536,18 @@ function LogFeatureFlagsOnce()
     Runtime.featureLogPrinted = true
 end
 
+function OnStop()
+    StopVnav()
+    StopToolkitRun("script stop")
+    Runtime.pendingRepair = false
+    Runtime.repairToolkitStopped = false
+    if IPC and IPC.Lifestream and IPC.Lifestream.Abort then
+        pcall(function()
+            IPC.Lifestream.Abort()
+        end)
+    end
+    RestoreBossModPreferredState()
+end
 --#endregion Helpers
 
 --#region State Functions
@@ -2908,17 +3057,11 @@ end
 
 --#region Main
 
-if not HasPlugin("AutoRetainer") then
-    yield("/echo [Toolkit Helper] AutoRetainer is required for this script. Stopping.")
-    return
-end
+EnsureBossModPreferredState()
 
-if not IPC.vnavmesh.IsReady() then
-    yield("/echo [Toolkit Helper] Waiting for vnavmesh to build...")
-    repeat
-        yield("/wait 1")
-    until IPC.vnavmesh.IsReady()
-end
+RefreshSettings()
+
+LogFeatureFlagsOnce()
 
 CharacterState = {
     idle = Idle,
@@ -2928,23 +3071,7 @@ CharacterState = {
     exchangeGemstones = ExchangeGemstones
 }
 
-function OnStop()
-    StopVnav()
-    StopToolkitRun("script stop")
-    Runtime.pendingRepair = false
-    Runtime.repairToolkitStopped = false
-    if IPC and IPC.Lifestream and IPC.Lifestream.Abort then
-        pcall(function()
-            IPC.Lifestream.Abort()
-        end)
-    end
-end
-
-RefreshSettings()
-
 State = CharacterState.idle
-
-LogFeatureFlagsOnce()
 
 Dalamud.Log("[Toolkit Helper] Starting toolkit helper loop")
 
