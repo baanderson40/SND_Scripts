@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.3
+version: 1.2.4
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -78,6 +78,11 @@ configs:
     default: 0
     min: 0
     max: 999
+  Use Return for Solution Nine?:
+    description: |
+      Use the Return instead of teleporting when traveling to Solution Nine.
+      Solution Nine must be set as your home point.
+    default: false
   Self repair?:
     description: "Enabled: Self repair | Disabled: NPC repair"
     default: true
@@ -168,12 +173,14 @@ local SUMMONING_BELL = {
 local BICOLOR_GEM_ITEM_ID = 26807
 local DARK_MATTER_ITEM_ID = 33916
 local REPAIR_GENERAL_ACTION_ID = 6
+local RETURN_GENERAL_ACTION_ID = 8
 local UNSYNRAEL_ROW_ID = 1001207
 local ALISTAIR_ROW_ID = 1001206
 local HAWKERS_ALLEY_POSITION = Vector3(-213.95, 15.99, 49.35)
 local UNSYNRAEL_POSITION = Vector3(-257.71, 16.19, 50.11)
 local ALISTAIR_POSITION = Vector3(-246.87, 16.19, 49.83)
 local HAWKERS_MINI_AETHERYTE_ID = 49
+local SOLUTION_NINE_AETHERYTE_ROW_ID = 217
 
 local GemstoneExchangeMap = {
     ["Alexandrian Axe Beak Wing"] = {
@@ -678,7 +685,8 @@ Settings = {
     exchangeGemstones = false,
     purchaseCycleLimit = 0,
     purchaseLimitFollowUp = "",
-    enableMultiModeOnLimit = false
+    enableMultiModeOnLimit = false,
+    useReturnToSolutionNine = false
 }
 
 local equipGearsetSlot = -1
@@ -763,6 +771,13 @@ function RefreshSettings()
         Settings.enableMultiModeOnLimit = enableMultiMode == true
     else
         Settings.enableMultiModeOnLimit = false
+    end
+
+    local useReturn = Config.Get("Use Return for Solution Nine?")
+    if useReturn ~= nil then
+        Settings.useReturnToSolutionNine = useReturn == true
+    else
+        Settings.useReturnToSolutionNine = false
     end
 
     local gearsetConfig = Config.Get("Gearset Slot")
@@ -1872,6 +1887,98 @@ function TeleportTo(destination)
     return success
 end
 
+function IsSolutionNineAetheryte(dest)
+    if dest == nil then
+        return false
+    end
+    local candidates = {
+        dest.aetheryteRowId,
+        dest.rowId,
+        dest.aetheryteId,
+        dest.miniAetheryteId,
+        dest.miniRowId
+    }
+    for _, candidate in ipairs(candidates) do
+        local numeric = tonumber(candidate)
+        if numeric ~= nil and numeric == SOLUTION_NINE_AETHERYTE_ROW_ID then
+            return true
+        end
+    end
+    return false
+end
+
+function ShouldUseReturnForSolutionNine(entry)
+    if not Settings.useReturnToSolutionNine then
+        return false
+    end
+    if entry == nil or entry.aetheryteTeleport == nil then
+        return false
+    end
+    return IsSolutionNineAetheryte(entry.aetheryteTeleport)
+end
+
+function TryReturnToSolutionNine(expectedTerritoryId)
+    if not Settings.useReturnToSolutionNine then
+        return false
+    end
+    if not WaitForTeleportIdle(15) then
+        Dalamud.Log("[Toolkit Helper] Return to Solution Nine aborted; teleport channel busy")
+        return false
+    end
+    if not WaitForPlayerStationary(5) then
+        return false
+    end
+    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
+        Dalamud.Log("[Toolkit Helper] Return to Solution Nine aborted; character is casting")
+        return false
+    end
+    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas] then
+        Dalamud.Log("[Toolkit Helper] Return to Solution Nine aborted; character changing zones")
+        return false
+    end
+    if not AcquireTeleportLock("Return (Solution Nine)") then
+        return false
+    end
+    local lockHeld = true
+    local start = os.clock()
+    local usedNative = false
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok, err = pcall(function()
+            Actions.ExecuteGeneralAction(RETURN_GENERAL_ACTION_ID)
+        end)
+        usedNative = ok
+        if not ok then
+            Dalamud.Log("[Toolkit Helper] Failed to execute Return general action: "..tostring(err))
+        end
+    end
+    if not usedNative then
+        Dalamud.Log("[Toolkit Helper] Using /generalaction return fallback")
+        yield("/generalaction return")
+    end
+    yield("/wait 3")
+    local success = WaitForTeleportCompletion(start)
+    if success and expectedTerritoryId ~= nil then
+        local confirmDeadline = os.clock() + 5
+        repeat
+            if Svc and Svc.ClientState and Svc.ClientState.TerritoryType == expectedTerritoryId then
+                break
+            end
+            yield("/wait 0.5")
+        until os.clock() > confirmDeadline
+        if not (Svc and Svc.ClientState and Svc.ClientState.TerritoryType == expectedTerritoryId) then
+            Dalamud.Log(string.format("[Toolkit Helper] Return completed but territory %s != expected %s",
+                tostring(Svc and Svc.ClientState and Svc.ClientState.TerritoryType),
+                tostring(expectedTerritoryId)))
+            success = false
+        end
+    end
+    if lockHeld then
+        ReleaseTeleportLock(success)
+    end
+    Dalamud.Log(string.format("[Toolkit Helper] Return to Solution Nine success=%s", tostring(success)))
+    return success
+end
+
 --## Repair Utilities
 
 function ExecuteRepairGeneralAction()
@@ -2523,6 +2630,9 @@ function LogFeatureFlagsOnce()
         end
         table.insert(entries, string.format("Gemstone exchange enabled (%s%s)", Settings.bicolorItem, suffix))
     end
+    if Settings.useReturnToSolutionNine then
+        table.insert(entries, "Return to Solution Nine enabled")
+    end
     if (Settings.repairThreshold or 0) > 0 then
         local mode = Settings.selfRepair and "Self-repair" or "Mender-only"
         table.insert(entries, string.format("%s enabled (threshold=%d%%)", mode, Settings.repairThreshold))
@@ -3008,6 +3118,14 @@ function ExchangeGemstones()
 
     if Svc.ClientState.TerritoryType ~= entry.territoryId then
         if entry.aetheryteTeleport ~= nil then
+            if ShouldUseReturnForSolutionNine(entry) then
+                local returned = TryReturnToSolutionNine(entry.territoryId)
+                if returned then
+                    return
+                else
+                    Dalamud.Log("[Toolkit Helper] Return to Solution Nine failed; falling back to teleport")
+                end
+            end
             TeleportTo(entry.aetheryteTeleport)
         end
         return
