@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.2
+version: 1.1.3
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -1271,30 +1271,50 @@ local function StartEnduranceCraft(quantity)
     return false
 end
 
-local function EnsureUnsynraelShopOpen()
-    local currentTerr = GetCurrentTerritory()
-    Log("EnsureUnsynraelShopOpen: current territory=%s", tostring(currentTerr))
-    if currentTerr ~= limsaZoneId then
-        TeleportToDestination(limsaDestination)
-        WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 60)
-        WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 60)
-        WaitForTerritory(limsaZoneId, 60)
+local function EnsureUnsynraelShopOpen(maxAttempts)
+    maxAttempts = tonumber(maxAttempts) or 5
+
+    local function prepareLocation()
+        local currentTerr = GetCurrentTerritory()
+        Log("EnsureUnsynraelShopOpen: current territory=%s", tostring(currentTerr))
+        if currentTerr ~= limsaZoneId then
+            TeleportToDestination(limsaDestination)
+            WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 60)
+            WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 60)
+            WaitForTerritory(limsaZoneId, 60)
+        end
+
+        TeleportToDestination(hawkersDestination)
+        WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 30)
+        WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 30)
+        WaitForTerritory(limsaZoneId, 30)
+        WaitForMovementStop(10)
+
+        MoveNearVnav(NPC.position, 3, Player.CanFly)
+        repeat
+            Sleep(0.1)
+        until not Player.IsMoving
     end
 
-    TeleportToDestination(hawkersDestination)
-    WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 30)
-    WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 30)
-    WaitForTerritory(limsaZoneId, 30)
-    WaitForMovementStop(10)
+    prepareLocation()
 
-    MoveNearVnav(NPC.position, 3, Player.CanFly)
+    for attempt = 1, maxAttempts do
+        Log("Attempting to interact with %s (attempt %d/%d)", NPC.name, attempt, maxAttempts)
+        if InteractByName(NPC.name) then
+            if WaitAddonStable("Shop", 0.5, 10) then
+                return true
+            else
+                Log("Shop addon not ready on attempt %d; retrying interaction.", attempt)
+            end
+        else
+            Log("Could not interact with %s; repositioning.", NPC.name)
+            prepareLocation()
+        end
+        Sleep(1)
+    end
 
-    repeat
-        Sleep(0.1)
-    until not Player.IsMoving
-
-    InteractByName(NPC.name)
-    WaitAddonStable("Shop")
+    Log("Failed to interact with %s after %d attempts.", NPC.name, maxAttempts)
+    return false
 end
 
 local function PurchaseDarkMatter(targetTotal)
@@ -1304,7 +1324,10 @@ local function PurchaseDarkMatter(targetTotal)
     purchaseItem.purchaseAmount = targetTotal
     Log("Purchasing Grade 6 Dark Matter up to %d (current=%d)", targetTotal, ItemCount(purchaseItem.itemId))
 
-    EnsureUnsynraelShopOpen()
+    if not EnsureUnsynraelShopOpen(5) then
+        Log("Unable to reach %s; aborting purchase.", NPC.name)
+        return false
+    end
 
     while true do
         local have = ItemCount(purchaseItem.itemId)
