@@ -15,6 +15,9 @@ configs:
   Follow-up script:
     description: Optional SND script to run after crafting completes
     default: ""
+  Enable AutoRetainer MultiMode?:
+    description: Enable AutoRetainer MultiMode at the end of the script.
+    default: false
 [[End Metadata]]
 --]=====]
 
@@ -1126,6 +1129,12 @@ local function RefreshSettings()
         end
     end
     Settings.followUpScript = follow
+
+    local enableMulti = false
+    if Config and Config.Get then
+        enableMulti = (Config.Get("Enable AutoRetainer MultiMode?") == true)
+    end
+    Settings.enableMultiMode = enableMulti
 end
 
 RefreshSettings()
@@ -1442,7 +1451,22 @@ if not WaitForTerritoryStable(nil, 4, 120) then
     return
 end
 
-if not StartEnduranceCraft(craftPlan.neededMagitek) then
+local craftSuccess = StartEnduranceCraft(craftPlan.neededMagitek)
+if not craftSuccess then
     Log("Endurance crafting did not complete; exiting script.")
-    return
 end
+
+if Settings.enableMultiMode then
+    if IPC and IPC.AutoRetainer and IPC.AutoRetainer.EnableMultiMode then
+        local ok, err = pcall(IPC.AutoRetainer.EnableMultiMode)
+        if ok then
+            Log("AutoRetainer MultiMode enabled.")
+        else
+            Log("Failed to enable AutoRetainer MultiMode: %s", tostring(err))
+        end
+    else
+        Log("AutoRetainer MultiMode requested but IPC unavailable.")
+    end
+end
+
+if not craftSuccess then return end
