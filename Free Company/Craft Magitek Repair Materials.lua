@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.3
+version: 1.1.5
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -1212,41 +1212,62 @@ local function AutoGatherClusters(requiredAmount)
     return true
 end
 
-local function IsEnduranceActive()
-    if not (IPC and IPC.Artisan and IPC.Artisan.GetEnduranceStatus) then
-        return false
-    end
-    local ok, status = pcall(IPC.Artisan.GetEnduranceStatus)
-    return ok and status == true
+local function IsCraftingActive()
+    if not (Svc and Svc.Condition) then return false end
+    local cond = Svc.Condition
+    return (cond[CharacterCondition.crafting] == true)
+        or (cond[CharacterCondition.executingCraftingAction] == true)
+        or (cond[CharacterCondition.preparingToCraft] == true)
 end
 
-local function WaitForEnduranceStart(timeoutSec)
-    local deadline = os.clock() + (timeoutSec or 30)
+local function IsRepairingDuringCraft()
+    return (Svc and Svc.Condition and Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] == true) or false
+end
+
+local function WaitForCraftStart(timeoutSec)
+    local deadline = os.clock() + (timeoutSec or 15)
     while os.clock() < deadline do
-        if IsEnduranceActive() then
-            return true
-        end
+        if IsCraftingActive() then return true end
         Sleep(0.5)
     end
     return false
 end
 
-local function WaitForEnduranceFinish()
-    while IsEnduranceActive() do
-        Sleep(1)
+local function WaitForMagitekProgress(targetCount, stagnationSec)
+    local stagnation = stagnationSec or 15
+    local lastCount = GetInventoryCount(ITEM_IDS.MAGITEK.id)
+    local lastChange = os.clock()
+
+    if lastCount >= targetCount then return true end
+
+    while true do
+        Sleep(2)
+        local current = GetInventoryCount(ITEM_IDS.MAGITEK.id)
+        if current >= targetCount then return true end
+
+        if current > lastCount then
+            lastCount = current
+            lastChange = os.clock()
+        else
+            if IsRepairingDuringCraft() then
+                lastChange = os.clock()
+            elseif (os.clock() - lastChange) >= stagnation then
+                return false
+            end
+        end
+
+        if not IsCraftingActive() and not IsRepairingDuringCraft() then
+            if (os.clock() - lastChange) >= stagnation then
+                return false
+            end
+        end
     end
-    return true
 end
 
-local function StartEnduranceCraft(quantity)
-    if not (IPC and IPC.Artisan and IPC.Artisan.CraftItem and IPC.Artisan.GetEnduranceStatus) then
-        Log("IPC.Artisan crafting APIs unavailable; cannot start Endurance craft.")
+local function StartCraftingRun(quantity, targetTotal)
+    if not (IPC and IPC.Artisan and IPC.Artisan.CraftItem) then
+        Log("IPC.Artisan crafting APIs unavailable; cannot craft.")
         return false
-    end
-
-    if IsEnduranceActive() then
-        Log("Endurance crafting already in progress; waiting for it to finish before starting new batch.")
-        WaitForEnduranceFinish()
     end
 
     for _, recipeId in ipairs(MAGITEK_RECIPE_IDS) do
@@ -1255,29 +1276,46 @@ local function StartEnduranceCraft(quantity)
         if not ok then
             Log("Craft command errored for recipe %d: %s", recipeId, tostring(err))
         end
-        Sleep(3)
-        if WaitForEnduranceStart(quantity * 2) then
-            Log("Endurance crafting started (recipe %d).", recipeId)
-            WaitForEnduranceFinish()
-            Log("Endurance crafting finished (recipe %d).", recipeId)
-            Sleep(3)
+        Sleep(1)
+        if WaitForCraftStart(15) then
+            Log("Crafting detected (recipe %d).", recipeId)
+            local completed = WaitForMagitekProgress(targetTotal, 15)
+            Sleep(1)
             SafeCallback("RecipeNote", -1)
             Sleep(2)
-            if Settings.followUpScript and Settings.followUpScript ~= "" then
-                Log("Launching follow-up script: %s", Settings.followUpScript)
-                yield('/snd run "' .. Settings.followUpScript .. '"')
+            if completed then
+                return true
+            else
+                Log("Crafting halted before reaching target count.")
+                return false
             end
-            return true
         else
-            Log("Recipe %d did not activate Endurance; trying next recipe.", recipeId)
-            if IsEnduranceActive() then
-                WaitForEnduranceFinish()
-            end
+            Log("Recipe %d did not start; trying next recipe.", recipeId)
         end
     end
 
-    Log("Failed to start Endurance crafting; all recipe attempts exhausted.")
+    Log("Failed to start crafting; all recipe attempts exhausted.")
     return false
+end
+
+local function RunFollowUpAndMultiMode()
+    if Settings.followUpScript and Settings.followUpScript ~= "" then
+        Log("Launching follow-up script: %s", Settings.followUpScript)
+        yield('/snd run "' .. Settings.followUpScript .. '"')
+    end
+
+    if Settings.enableMultiMode then
+        if IPC and IPC.AutoRetainer and IPC.AutoRetainer.EnableMultiMode then
+            local ok, err = pcall(IPC.AutoRetainer.EnableMultiMode)
+            if ok then
+                Log("AutoRetainer MultiMode enabled.")
+            else
+                Log("Failed to enable AutoRetainer MultiMode: %s", tostring(err))
+            end
+        else
+            Log("AutoRetainer MultiMode requested but IPC unavailable.")
+        end
+    end
 end
 
 local function EnsureUnsynraelShopOpen(maxAttempts)
@@ -1383,6 +1421,7 @@ if craftPlan.neededMagitek <= 0 then
         craftPlan.currentMagitek,
         craftPlan.targetMagitek
     )
+    RunFollowUpAndMultiMode()
     return
 end
 
@@ -1443,30 +1482,21 @@ Sleep(3)
 
 if not WaitForLifestreamIdle(30) then
     Log("Lifestream remained busy; aborting craft request.")
+    RunFollowUpAndMultiMode()
     return
 end
 
 if not WaitForTerritoryStable(nil, 4, 120) then
     Log("Territory/position did not stabilize before crafting; aborting.")
+    RunFollowUpAndMultiMode()
     return
 end
 
-local craftSuccess = StartEnduranceCraft(craftPlan.neededMagitek)
+local craftSuccess = StartCraftingRun(craftPlan.neededMagitek, craftPlan.targetMagitek)
 if not craftSuccess then
-    Log("Endurance crafting did not complete; exiting script.")
+    Log("Crafting did not complete successfully.")
 end
 
-if Settings.enableMultiMode then
-    if IPC and IPC.AutoRetainer and IPC.AutoRetainer.EnableMultiMode then
-        local ok, err = pcall(IPC.AutoRetainer.EnableMultiMode)
-        if ok then
-            Log("AutoRetainer MultiMode enabled.")
-        else
-            Log("Failed to enable AutoRetainer MultiMode: %s", tostring(err))
-        end
-    else
-        Log("AutoRetainer MultiMode requested but IPC unavailable.")
-    end
-end
+RunFollowUpAndMultiMode()
 
 if not craftSuccess then return end
