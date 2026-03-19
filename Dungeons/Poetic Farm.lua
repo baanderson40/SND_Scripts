@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.4
+version: 1.1.5
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -10,9 +10,9 @@ plugin_dependencies:
 - vnavmesh
 configs:
   Gearset Slot:
-    description: Optional gearset slot number to equip before farming (-1 disables).
-    default: -1
-    min: -1
+    description: Optional gearset slot number to equip before farming (0 disables).
+    default: 0
+    min: 0
     max: 100
   Poetic Tome Limit:
     description: The number of Poetic tomes to gather before spending them.
@@ -547,7 +547,7 @@ local function SyncSettings(force)
     local newAutoRestock   = (Config.Get("Auto Restock Manderville Mats") ~= false)
     local newCloseRetainer = (Config.Get("Close Retainer List") ~= false)
     local newFollowup      = tostring(Config.Get("Follow-up Script"))
-    local newGearsetSlot   = toNumberSafe(Config.Get("Gearset Slot"), -1, -1)
+    local newGearsetSlot   = toNumberSafe(Config.Get("Gearset Slot"), 0, 0)
     if newGearsetSlot and newGearsetSlot >= 1 then
         newGearsetSlot = math.floor(newGearsetSlot) - 1
     else
@@ -832,12 +832,19 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
+        local restockNeeded, restockStates = nil, nil
+        if autoRestockActive then
+            restockNeeded, restockStates = NeedsRestock()
+            if not restockNeeded and PoeticOnHand() < poeticLimit then
+                Log("Auto restock: inventory targets satisfied; no dungeon runs required")
+                gotoState(STATE.DONE)
+                goto continue
+            end
+        end
+
         if PoeticOnHand() >= poeticLimit then
             if autoRestockActive then
-                local needsRestock = false
-                local states = nil
-                needsRestock, states = NeedsRestock()
-                if needsRestock then
+                if restockNeeded then
                     gotoState(STATE.SPEND_TOMES)
                 else
                     Log("Auto restock: inventory targets satisfied; no purchases required")
