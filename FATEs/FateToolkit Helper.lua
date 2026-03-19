@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.4
+version: 1.2.5
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -1845,6 +1845,19 @@ function TeleportTo(destination)
         return false
     end
     WaitForPlayerStationary(5)
+    if Svc and Svc.Condition then
+        local mountingStates = {
+            CharacterCondition.mounting57,
+            CharacterCondition.mounting64
+        }
+        for _, flag in ipairs(mountingStates) do
+            if flag ~= nil and Svc.Condition[flag] then
+                Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s delayed; character mounting", tostring(destName)))
+                yield("/wait 10")
+                return false
+            end
+        end
+    end
     if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
         Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character is casting", tostring(destName)))
         return false
