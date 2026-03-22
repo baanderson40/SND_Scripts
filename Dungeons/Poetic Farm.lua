@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.5
+version: 1.1.6
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -14,6 +14,11 @@ configs:
     default: 0
     min: 0
     max: 100
+  Dungeon:
+    description: The dungeon AutoDuty should run.
+    default: "The Praetorium"
+    is_choice: true
+    choices: ["The Porta Decumana", "The Praetorium"]
   Poetic Tome Limit:
     description: The number of Poetic tomes to gather before spending them.
     default: 1500
@@ -22,11 +27,6 @@ configs:
   Max Purchase Cycles:
     description: How many times the script should spend tomes before stopping. Set to 0 for unlimited.
     default: 1
-  Dungeon:
-    description: The dungeon AutoDuty should run.
-    default: "The Porta Decumana"
-    is_choice: true
-    choices: ["The Porta Decumana"]
   Manderville Relic Mat:
     description: The type of material to purchase with tomes.
     default: "Manderium Meteorite"
@@ -500,6 +500,7 @@ local RelicMatTypes  = {
 
 local DungList = {
     {name = "The Porta Decumana",      id = 1048, amount = 100},
+    {name = "The Praetorium",          id = 1044, amount = 150},
 }
 
 local RelicMatMap = {}
