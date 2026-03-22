@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.5
+version: 1.1.6
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -9,9 +9,11 @@ configs:
     default: 99
     min: 1
     max: 999
-  Auto-gather Dark Matter Clusters?:
-    description: Use Gatherbuddy Reborn to farm clusters automatically when required.
-    default: false
+  Craft Type:
+    description: Crafting discipline Vulcan should use for Magitek Repair Materials
+    default: "Woodworking"
+    is_choice: true
+    choices: ["Woodworking", "Smithing", "Armorcraft", "Goldsmithing", "Leatherworking", "Clothcraft", "Alchemy", "Cooking"]
   Follow-up script:
     description: Optional SND script to run after crafting completes
     default: ""
@@ -1102,6 +1104,17 @@ purchaseItem = {
 local TARGET_MAGITEK_DEFAULT = 594
 local Settings = Settings or {}
 
+local CRAFT_TYPE_RECIPES = {
+    Woodworking    = 30971,
+    Smithing       = 30987,
+    Armorcraft     = 31023,
+    Goldsmithing   = 31052,
+    Leatherworking = 31094,
+    Clothcraft     = 31157,
+    Alchemy        = 31192,
+    Cooking        = 31217
+}
+
 local function RefreshSettings()
     local target = TARGET_MAGITEK_DEFAULT
     if Config and Config.Get then
@@ -1111,12 +1124,6 @@ local function RefreshSettings()
         end
     end
     Settings.targetMagitek = target
-
-    local autoGather = false
-    if Config and Config.Get then
-        autoGather = (Config.Get("Auto-gather Dark Matter Clusters?") == true)
-    end
-    Settings.autoGatherClusters = autoGather
 
     local follow = ""
     if Config and Config.Get then
@@ -1130,6 +1137,25 @@ local function RefreshSettings()
     end
     Settings.followUpScript = follow
 
+    local defaultCraft = "Goldsmithing"
+    local craftChoice = defaultCraft
+    if Config and Config.Get then
+        local cfgCraft = Config.Get("Craft Type")
+        if type(cfgCraft) == "string" then
+            local trimmed = cfgCraft:gsub("^%s+", ""):gsub("%s+$", "")
+            if trimmed ~= "" and CRAFT_TYPE_RECIPES[trimmed] then
+                craftChoice = trimmed
+            end
+        end
+    end
+    Settings.craftType = craftChoice
+    Settings.craftRecipeId = CRAFT_TYPE_RECIPES[craftChoice]
+    if not Settings.craftRecipeId then
+        Settings.craftType = defaultCraft
+        Settings.craftRecipeId = CRAFT_TYPE_RECIPES[defaultCraft]
+        Log("Invalid Craft Type config detected; defaulting to %s.", defaultCraft)
+    end
+
     local enableMulti = false
     if Config and Config.Get then
         enableMulti = (Config.Get("Enable AutoRetainer MultiMode?") == true)
@@ -1141,12 +1167,7 @@ RefreshSettings()
 
 local ITEM_IDS = {
     MAGITEK    = { id = 10373, perCraft = 1 },
-    DARKMATTER = { id = 10386, perCraft = 5 },
-    CLUSTER    = { id = 10335, perCraft = 1 }
-}
-
-local MAGITEK_RECIPE_IDS = {
-    30971, 30987, 31023, 31052, 31094, 31157, 31192, 31217
+    DARKMATTER = { id = 10386, perCraft = 5 }
 }
 
 local function GetInventoryCount(itemId)
@@ -1159,14 +1180,11 @@ local function BuildCraftPlan(targetAmount)
     targetAmount = math.max(1, math.floor(targetAmount or TARGET_MAGITEK_DEFAULT))
     local currentMagitek = GetInventoryCount(ITEM_IDS.MAGITEK.id)
     local currentDarkMatter = GetInventoryCount(ITEM_IDS.DARKMATTER.id)
-    local currentCluster = GetInventoryCount(ITEM_IDS.CLUSTER.id)
 
     local neededMagitek = math.max(0, targetAmount - currentMagitek)
     local requiredDarkMatter = neededMagitek * ITEM_IDS.DARKMATTER.perCraft
-    local requiredCluster = neededMagitek * ITEM_IDS.CLUSTER.perCraft
 
     local darkMatterDeficit = math.max(0, requiredDarkMatter - currentDarkMatter)
-    local clusterDeficit = math.max(0, requiredCluster - currentCluster)
 
     return {
         targetMagitek = targetAmount,
@@ -1174,50 +1192,27 @@ local function BuildCraftPlan(targetAmount)
         neededMagitek = neededMagitek,
         currentDarkMatter = currentDarkMatter,
         requiredDarkMatter = requiredDarkMatter,
-        darkMatterDeficit = darkMatterDeficit,
-        currentCluster = currentCluster,
-        requiredCluster = requiredCluster,
-        clusterDeficit = clusterDeficit
+        darkMatterDeficit = darkMatterDeficit
     }
-end
-
-local function AutoGatherClusters(requiredAmount)
-    requiredAmount = tonumber(requiredAmount) or 0
-    if requiredAmount <= 0 then return true end
-
-    Log("Auto-gather enabled; starting Gatherbuddy for %d deficit Dark Matter Clusters.", requiredAmount)
-    yield('/gbr auto on')
-    Sleep(1)
-
-    while true do
-        local currentCluster = GetInventoryCount(ITEM_IDS.CLUSTER.id)
-        local craftPlan = BuildCraftPlan(Settings.targetMagitek)
-        local remaining = craftPlan.requiredCluster - craftPlan.currentCluster
-        if remaining <= 0 then
-            break
-        end
-        Sleep(3)
-    end
-
-    while true do
-        if not (Svc and Svc.Condition and Svc.Condition[CharacterCondition.gathering]) then
-            break
-        end
-        Sleep(1)
-    end
-
-    yield('/gbr auto off')
-    Sleep(1)
-    Log("Gatherbuddy auto-gather completed; resuming script.")
-    return true
 end
 
 local function IsCraftingActive()
     if not (Svc and Svc.Condition) then return false end
     local cond = Svc.Condition
-    return (cond[CharacterCondition.crafting] == true)
-        or (cond[CharacterCondition.executingCraftingAction] == true)
+    return (cond[CharacterCondition.executingCraftingAction] == true)
         or (cond[CharacterCondition.preparingToCraft] == true)
+end
+
+local function IsGatheringActive()
+    if not (Svc and Svc.Condition) then return false end
+    local cond = Svc.Condition
+    return (cond[CharacterCondition.gathering] == true)
+        or (cond[CharacterCondition.executingGatheringAction] == true)
+        or (cond[CharacterCondition.fishing] == true)
+end
+
+local function IsVulcanBusy()
+    return IsCraftingActive() or IsGatheringActive() or IsRepairingDuringCraft()
 end
 
 local function IsRepairingDuringCraft()
@@ -1225,7 +1220,16 @@ local function IsRepairingDuringCraft()
 end
 
 local function WaitForCraftStart(timeoutSec)
-    local deadline = os.clock() + (timeoutSec or 15)
+    local deadline = os.clock() + (timeoutSec or 60)
+    while os.clock() < deadline do
+        if IsVulcanBusy() then return true end
+        Sleep(0.5)
+    end
+    return false
+end
+
+local function WaitForCraftingPhase(timeoutSec)
+    local deadline = os.clock() + (timeoutSec or 300)
     while os.clock() < deadline do
         if IsCraftingActive() then return true end
         Sleep(0.5)
@@ -1265,37 +1269,46 @@ local function WaitForMagitekProgress(targetCount, stagnationSec)
 end
 
 local function StartCraftingRun(quantity, targetTotal)
-    if not (IPC and IPC.Artisan and IPC.Artisan.CraftItem) then
-        Log("IPC.Artisan crafting APIs unavailable; cannot craft.")
+    quantity = math.max(0, math.floor(tonumber(quantity) or 0))
+    if quantity <= 0 then
+        Log("StartCraftingRun: no crafting required (quantity=%d)", quantity)
+        return true
+    end
+
+    local recipeId = Settings and Settings.craftRecipeId
+    if not recipeId then
+        Log("No Magitek recipe id available; cannot craft.")
         return false
     end
 
-    for _, recipeId in ipairs(MAGITEK_RECIPE_IDS) do
-        Log("Attempting craft via recipe %d", recipeId)
-        local ok, err = pcall(IPC.Artisan.CraftItem, recipeId, quantity)
-        if not ok then
-            Log("Craft command errored for recipe %d: %s", recipeId, tostring(err))
-        end
-        Sleep(1)
-        if WaitForCraftStart(15) then
-            Log("Crafting detected (recipe %d).", recipeId)
-            local completed = WaitForMagitekProgress(targetTotal, 15)
-            Sleep(1)
-            SafeCallback("RecipeNote", -1)
-            Sleep(2)
-            if completed then
-                return true
-            else
-                Log("Crafting halted before reaching target count.")
-                return false
-            end
-        else
-            Log("Recipe %d did not start; trying next recipe.", recipeId)
-        end
+    Log("Issuing Vulcan craft run via recipe %d (%s, qty=%d)", recipeId, tostring(Settings and Settings.craftType or "unknown"), quantity)
+    local cmd = string.format("/vulcan craft %d %d", recipeId, quantity)
+    yield(cmd)
+    Sleep(1)
+
+    if not WaitForCraftStart(120) then
+        Log("Vulcan craft sequence did not begin within timeout.")
+        return false
     end
 
-    Log("Failed to start crafting; all recipe attempts exhausted.")
-    return false
+    Log("Vulcan activity detected; awaiting crafting phase.")
+    if not WaitForCraftingPhase(600) then
+        Log("Crafting never began after Vulcan activity; aborting.")
+        return false
+    end
+
+    Log("Crafting detected; monitoring inventory progress.")
+    local completed = WaitForMagitekProgress(targetTotal, 120)
+    Sleep(1)
+    SafeCallback("RecipeNote", -1)
+    Sleep(2)
+
+    if completed then
+        return true
+    else
+        Log("Crafting halted before reaching target count.")
+        return false
+    end
 end
 
 local function RunFollowUpAndMultiMode()
@@ -1405,14 +1418,14 @@ end
 
 local craftPlan = BuildCraftPlan(Settings.targetMagitek)
 
+Log("Using craft type %s (recipe %s)", tostring(Settings.craftType), tostring(Settings.craftRecipeId))
+
 Log(
-    "Inventory status -> Magitek: %d/%d | Grade 6 Dark Matter: %d/%d | Dark Matter Clusters: %d/%d",
+    "Inventory status -> Magitek: %d/%d | Grade 6 Dark Matter: %d/%d",
     craftPlan.currentMagitek,
     craftPlan.targetMagitek,
     craftPlan.currentDarkMatter,
-    craftPlan.requiredDarkMatter,
-    craftPlan.currentCluster,
-    craftPlan.requiredCluster
+    craftPlan.requiredDarkMatter
 )
 
 if craftPlan.neededMagitek <= 0 then
@@ -1425,41 +1438,11 @@ if craftPlan.neededMagitek <= 0 then
     return
 end
 
-if craftPlan.clusterDeficit > 0 then
-    if Settings.autoGatherClusters then
-        Log("Cluster deficit detected (%d). Engaging Gatherbuddy.", craftPlan.clusterDeficit)
-        AutoGatherClusters(craftPlan.clusterDeficit)
-        craftPlan = BuildCraftPlan(Settings.targetMagitek)
-        if craftPlan.clusterDeficit > 0 then
-            Log("Auto-gather completed but still missing %d Dark Matter Cluster(s).", craftPlan.clusterDeficit)
-            return
-        end
-    else
-        Log("Missing %d Dark Matter Cluster(s); cannot craft %d Magitek Repair Material.", craftPlan.clusterDeficit, craftPlan.neededMagitek)
-        return
-    end
-end
-
 if craftPlan.darkMatterDeficit > 0 then
     PurchaseDarkMatter(craftPlan.requiredDarkMatter)
 end
 
 craftPlan = BuildCraftPlan(Settings.targetMagitek)
-
-if craftPlan.clusterDeficit > 0 then
-    if Settings.autoGatherClusters then
-        Log("Cluster deficit detected after restock (%d). Engaging Gatherbuddy again.", craftPlan.clusterDeficit)
-        AutoGatherClusters(craftPlan.clusterDeficit)
-        craftPlan = BuildCraftPlan(Settings.targetMagitek)
-        if craftPlan.clusterDeficit > 0 then
-            Log("Auto-gather post-restock failed; still missing %d Dark Matter Cluster(s).", craftPlan.clusterDeficit)
-            return
-        end
-    else
-        Log("Missing %d Dark Matter Cluster(s) after restock; stopping.", craftPlan.clusterDeficit)
-        return
-    end
-end
 
 if craftPlan.darkMatterDeficit > 0 then
     Log("Unable to obtain %d Grade 6 Dark Matter (need %d total).", craftPlan.darkMatterDeficit, craftPlan.requiredDarkMatter)
@@ -1477,10 +1460,10 @@ end
 
 Log("Preparing to craft %d Magitek Repair Material.", craftPlan.neededMagitek)
 
-yield("/li auto")
+ExecuteTeleportCommand("auto")
 Sleep(3)
 
-if not WaitForLifestreamIdle(30) then
+if not WaitForLifestreamIdle(90) then
     Log("Lifestream remained busy; aborting craft request.")
     RunFollowUpAndMultiMode()
     return
