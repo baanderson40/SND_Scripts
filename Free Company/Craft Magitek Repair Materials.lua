@@ -1196,6 +1196,10 @@ local function BuildCraftPlan(targetAmount)
     }
 end
 
+local function IsRepairingDuringCraft()
+    return (Svc and Svc.Condition and Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] == true) or false
+end
+
 local function IsCraftingActive()
     if not (Svc and Svc.Condition) then return false end
     local cond = Svc.Condition
@@ -1213,10 +1217,6 @@ end
 
 local function IsVulcanBusy()
     return IsCraftingActive() or IsGatheringActive() or IsRepairingDuringCraft()
-end
-
-local function IsRepairingDuringCraft()
-    return (Svc and Svc.Condition and Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] == true) or false
 end
 
 local function WaitForCraftStart(timeoutSec)
