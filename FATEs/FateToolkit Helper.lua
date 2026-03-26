@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.5
+version: 1.2.6
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -1190,6 +1190,79 @@ function WaitForPlayerStationary(timeout)
     return true
 end
 
+function WaitForMountStable(stabilitySeconds, timeoutSeconds)
+    stabilitySeconds = stabilitySeconds or 2
+    timeoutSeconds = timeoutSeconds or 10
+    local initialClearSeconds = 0.25
+    if not Svc or not Svc.Condition then
+        return true
+    end
+
+    local function isMounting()
+        local flags = {
+            CharacterCondition.mounting57,
+            CharacterCondition.mounting64
+        }
+        for _, flag in ipairs(flags) do
+            if flag ~= nil and Svc.Condition[flag] then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function isMounted()
+        return CharacterCondition.mounted ~= nil and Svc.Condition[CharacterCondition.mounted]
+    end
+
+    local function waitForStableClear()
+        local clearStart = os.clock()
+        while os.clock() - clearStart < initialClearSeconds do
+            if isMounting() then
+                return false
+            end
+            yield("/wait 0.05")
+        end
+        return true
+    end
+
+    if waitForStableClear() then
+        return true
+    end
+
+    Dalamud.Log("[Toolkit Helper] Mounting detected; waiting for animation to finish before teleport")
+    local start = os.clock()
+    while isMounting() do
+        if os.clock() - start > timeoutSeconds then
+            Dalamud.Log("[Toolkit Helper] Mounting wait timed out before teleport")
+            return false
+        end
+        yield("/wait 0.2")
+    end
+
+    Dalamud.Log("[Toolkit Helper] Mount animation ended; verifying mount stability")
+    local stableStart = nil
+    local stabilityDeadline = os.clock() + timeoutSeconds
+    while os.clock() < stabilityDeadline do
+        if isMounted() then
+            if stableStart == nil then
+                stableStart = os.clock()
+            end
+            local elapsed = os.clock() - stableStart
+            if elapsed >= stabilitySeconds then
+                Dalamud.Log(string.format("[Toolkit Helper] Mount stability confirmed after %.2fs", elapsed))
+                return true
+            end
+        else
+            stableStart = nil
+        end
+        yield("/wait 0.2")
+    end
+
+    Dalamud.Log("[Toolkit Helper] Mount stability verification timed out before teleport")
+    return false
+end
+
 local TELEPORT_LOCK_TIMEOUT = 180
 local TELEPORT_SUCCESS_COOLDOWN = 2
 local TELEPORT_FAILURE_COOLDOWN = 3
@@ -1292,6 +1365,9 @@ function StopToolkitRun(reason)
         suffix = " ("..reason..")"
     end
     Dalamud.Log("[Toolkit Helper] Issuing /vfate stop"..suffix)
+    yield("/vfate stop")
+    yield("/wait 0.5")
+    Dalamud.Log("[Toolkit Helper] Confirming /vfate stop"..suffix)
     yield("/vfate stop")
     -- Toolkit resumes explicitly via ResumeToolkitRun when appropriate.
 end
@@ -1839,65 +1915,69 @@ function TeleportTo(destination)
         return false
     end
 
-    Dalamud.Log(string.format("[Toolkit Helper] TeleportTo preparing for %s (id=%s, mini=%s)", tostring(destName), tostring(destId), tostring(isMini)))
-    if not WaitForTeleportIdle(15) then
-        Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; teleport channel busy", tostring(destName)))
-        return false
-    end
-    WaitForPlayerStationary(5)
-    if Svc and Svc.Condition then
-        local mountingStates = {
-            CharacterCondition.mounting57,
-            CharacterCondition.mounting64
-        }
-        for _, flag in ipairs(mountingStates) do
-            if flag ~= nil and Svc.Condition[flag] then
-                Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s delayed; character mounting", tostring(destName)))
-                yield("/wait 10")
+    local maxAttempts = 3
+    for attempt = 1, maxAttempts do
+        Dalamud.Log(string.format("[Toolkit Helper] Teleport attempt %d/%d to %s", attempt, maxAttempts, tostring(destName)))
+        if not WaitForTeleportIdle(15) then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; teleport channel busy", tostring(destName)))
+            return false
+        end
+        if not WaitForPlayerStationary(5) then
+            return false
+        end
+        if not WaitForMountStable(2, 10) then
+            Dalamud.Log("[Toolkit Helper] Mount stability check failed; teleport aborted")
+            return false
+        end
+        if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character is casting", tostring(destName)))
+            return false
+        end
+        if Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas] then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character changing zones", tostring(destName)))
+            return false
+        end
+
+        AcceptTeleportOfferLocation(destName)
+        local start = os.clock()
+
+        while Instances ~= nil and Instances.Framework ~= nil and EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - Runtime.lastTeleport < 5 do
+            Dalamud.Log("[Toolkit Helper] Too soon since last teleport. Waiting...")
+            yield("/wait 5.001")
+            if os.clock() - start > 30 then
+                EchoAll("Teleport failed: timeout while waiting to cast")
                 return false
             end
         end
-    end
-    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
-        Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character is casting", tostring(destName)))
-        return false
-    end
-    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas] then
-        Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character changing zones", tostring(destName)))
-        return false
-    end
-    AcceptTeleportOfferLocation(destName)
-    local start = os.clock()
-    local lockHeld = false
 
-    while Instances ~= nil and Instances.Framework ~= nil and EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - Runtime.lastTeleport < 5 do
-        Dalamud.Log("[Toolkit Helper] Too soon since last teleport. Waiting...")
-        yield("/wait 5.001")
-        if os.clock() - start > 30 then
-            EchoAll("Teleport failed: timeout while waiting to cast")
+        if not AcquireTeleportLock(destName) then
             return false
+        end
+        local lockHeld = true
+
+        local executed = ExecuteLifestreamCommand(destName, destId, isMini)
+        Dalamud.Log(string.format("[Toolkit Helper] ExecuteLifestreamCommand returned %s for %s", tostring(executed), tostring(destName)))
+        local success = false
+        if executed then
+            yield("/wait 3")
+            success = WaitForTeleportCompletion(start)
+            Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
+        else
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport command for %s failed; retrying if attempts remain", tostring(destName)))
+        end
+        ReleaseTeleportLock(success)
+
+        if success then
+            return true
+        end
+
+        if attempt < maxAttempts then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport retry scheduled for %s", tostring(destName)))
         end
     end
 
-    if not AcquireTeleportLock(destName) then
-        return false
-    end
-    lockHeld = true
-
-    local executed = ExecuteLifestreamCommand(destName, destId, isMini)
-    Dalamud.Log(string.format("[Toolkit Helper] ExecuteLifestreamCommand returned %s for %s", tostring(executed), tostring(destName)))
-    if not executed then
-        Dalamud.Log("[Toolkit Helper] Falling back to /li command for destination "..destName)
-        local fallback = isMini and ("/li "..destName) or ("/li tp "..destName)
-        yield(fallback)
-    end
-    yield("/wait 3")
-    local success = WaitForTeleportCompletion(start)
-    Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
-    if lockHeld then
-        ReleaseTeleportLock(success)
-    end
-    return success
+    Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s failed after %d attempts", tostring(destName), maxAttempts))
+    return false
 end
 
 function IsSolutionNineAetheryte(dest)
@@ -1939,6 +2019,10 @@ function TryReturnToSolutionNine(expectedTerritoryId)
         return false
     end
     if not WaitForPlayerStationary(5) then
+        return false
+    end
+    if not WaitForMountStable(2, 10) then
+        Dalamud.Log("[Toolkit Helper] Mount stability check failed; return aborted")
         return false
     end
     if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
