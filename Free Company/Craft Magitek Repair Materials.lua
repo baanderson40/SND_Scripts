@@ -1228,13 +1228,17 @@ local function WaitForCraftStart(timeoutSec)
     return false
 end
 
-local function WaitForCraftingPhase(timeoutSec)
-    local deadline = os.clock() + (timeoutSec or 300)
-    while os.clock() < deadline do
+local function WaitForCraftingPhase(logInterval)
+    logInterval = tonumber(logInterval) or 30
+    local lastLog = os.clock()
+    while true do
         if IsCraftingActive() then return true end
+        if logInterval > 0 and (os.clock() - lastLog) >= logInterval then
+            Log("Waiting for Vulcan to begin crafting (gathering still in progress)...")
+            lastLog = os.clock()
+        end
         Sleep(0.5)
     end
-    return false
 end
 
 local function WaitForMagitekProgress(targetCount, stagnationSec)
@@ -1292,10 +1296,7 @@ local function StartCraftingRun(quantity, targetTotal)
     end
 
     Log("Vulcan activity detected; awaiting crafting phase.")
-    if not WaitForCraftingPhase(600) then
-        Log("Crafting never began after Vulcan activity; aborting.")
-        return false
-    end
+    WaitForCraftingPhase()
 
     Log("Crafting detected; monitoring inventory progress.")
     local completed = WaitForMagitekProgress(targetTotal, 120)
