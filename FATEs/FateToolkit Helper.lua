@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.6
+version: 1.2.7
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -766,7 +766,7 @@ function RefreshSettings()
     end
     Settings.purchaseLimitFollowUp = followUpScript or ""
 
-    local enableMultiMode = Config.Get("Enable AutoRetainer multi-mode")
+    local enableMultiMode = Config.Get("Enable AutoRetainer multi-mode after limit?")
     if enableMultiMode ~= nil then
         Settings.enableMultiModeOnLimit = enableMultiMode == true
     else
