@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.2.7
+version: 1.3.0
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -94,6 +94,9 @@ configs:
     default: 10
     min: 1
     max: 99
+  Enable stuck monitoring?:
+    description: Restart VFATE if the character is stuck for 15 seconds.
+    default: false
   Follow-up script:
     description: |
       SND script to run after this helper stops.
@@ -686,7 +689,8 @@ Settings = {
     purchaseCycleLimit = 0,
     purchaseLimitFollowUp = "",
     enableMultiModeOnLimit = false,
-    useReturnToSolutionNine = false
+    useReturnToSolutionNine = false,
+    enableStuckMonitor = false
 }
 
 local equipGearsetSlot = -1
@@ -815,6 +819,17 @@ function RefreshSettings()
     if not gearsetEquipped then
         EquipConfiguredGearset()
     end
+
+    local stuckMonitor = Config.Get("Enable stuck monitoring?")
+    Settings.enableStuckMonitor = stuckMonitor == true
+    if Runtime ~= nil and Runtime.stuckMonitor ~= nil then
+        if Settings.enableStuckMonitor then
+            Runtime.stuckMonitor.enabled = true
+        else
+            ResetStuckMonitor("feature disabled")
+            Runtime.stuckMonitor.enabled = false
+        end
+    end
 end
 
 Runtime = {
@@ -850,7 +865,16 @@ Runtime = {
     purchaseLimitHandled = false,
     purchaseLimitFollowUpIssued = false,
     bossmodRecordedState = nil,
-    bossmodStateChanged = false
+    bossmodStateChanged = false,
+    stuckMonitor = {
+        enabled = false,
+        lastPosition = nil,
+        lastMovementTime = 0,
+        lastRestartTime = 0,
+        triggered = false,
+        lastLogMessage = nil,
+        lastLogTime = 0
+    }
 }
 
 --#endregion Config & Runtime
@@ -1261,6 +1285,182 @@ function WaitForMountStable(stabilitySeconds, timeoutSeconds)
 
     Dalamud.Log("[Toolkit Helper] Mount stability verification timed out before teleport")
     return false
+end
+
+local STUCK_MONITOR_THRESHOLD_SECONDS = 15
+local STUCK_MONITOR_MOVE_TOLERANCE = 0.8
+local STUCK_MONITOR_RESTART_COOLDOWN = 60
+
+local function CloneVector3(vec)
+    if vec == nil then
+        return nil
+    end
+    return Vector3(vec.X, vec.Y, vec.Z)
+end
+
+local function StuckMonitorLog(message)
+    if not Settings.enableStuckMonitor then
+        return
+    end
+    if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
+    local now = os.clock()
+    local lastMessage = monitor.lastLogMessage
+    local lastTime = monitor.lastLogTime or 0
+    if message ~= lastMessage or (now - lastTime) >= 5 then
+        Dalamud.Log("[Toolkit Helper][Stuck] "..message)
+        monitor.lastLogMessage = message
+        monitor.lastLogTime = now
+    end
+end
+
+function ResetStuckMonitor(reason)
+    if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
+    monitor.lastPosition = nil
+    monitor.lastMovementTime = os.clock()
+    monitor.triggered = false
+    if reason ~= nil and reason ~= "" then
+        StuckMonitorLog("Reset: "..reason)
+    end
+end
+
+local function UpdateStuckMonitorMovement(position)
+    if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
+    monitor.lastPosition = CloneVector3(position)
+    monitor.lastMovementTime = os.clock()
+    monitor.triggered = false
+end
+
+local function HandleStuckMonitorTrigger(position)
+    local monitor = Runtime.stuckMonitor
+    monitor.lastRestartTime = os.clock()
+    monitor.triggered = true
+    StuckMonitorLog("Trigger: no movement for "..STUCK_MONITOR_THRESHOLD_SECONDS.."s")
+    StopToolkitRun("stuck monitor")
+    yield("/wait 2")
+    ResumeToolkitRun("stuck recovery")
+    monitor.lastPosition = CloneVector3(position)
+    monitor.lastMovementTime = os.clock()
+end
+
+function UpdateStuckMonitor()
+    if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
+    if not Settings.enableStuckMonitor then
+        if monitor.enabled then
+            ResetStuckMonitor("disabled")
+            monitor.enabled = false
+        end
+        return
+    end
+    monitor.enabled = true
+
+    if Runtime.stopScript then
+        ResetStuckMonitor("script stopping")
+        return
+    end
+
+    if State == nil then
+        ResetStuckMonitor("state unavailable")
+        return
+    end
+
+    if CharacterState == nil then
+        ResetStuckMonitor("state table unavailable")
+        return
+    end
+
+    local allowedState = State == CharacterState.idle or State == CharacterState.maintainGemstones
+    if not allowedState then
+        ResetStuckMonitor("state unmonitored")
+        return
+    end
+
+    if not Svc or not Svc.ClientState then
+        ResetStuckMonitor("client unavailable")
+        return
+    end
+
+    local condition = Svc.Condition
+    if condition == nil then
+        ResetStuckMonitor("condition unavailable")
+        return
+    end
+
+    local busyStates = {
+        CharacterCondition.betweenAreas,
+        CharacterCondition.occupiedInEvent,
+        CharacterCondition.occupiedInQuestEvent,
+        CharacterCondition.occupied,
+        CharacterCondition.beingMoved,
+        CharacterCondition.occupiedSummoningBell,
+        CharacterCondition.occupiedMateriaExtractionAndRepair
+    }
+    for _, flag in ipairs(busyStates) do
+        if flag ~= nil and condition[flag] then
+            ResetStuckMonitor("busy state")
+            return
+        end
+    end
+
+    local player = Svc.ClientState.LocalPlayer
+    if player == nil or player.Position == nil then
+        ResetStuckMonitor("player unavailable")
+        return
+    end
+
+    if monitor.lastPosition == nil then
+        UpdateStuckMonitorMovement(player.Position)
+        return
+    end
+
+    local distance = DistanceBetween(player.Position, monitor.lastPosition)
+    if distance >= STUCK_MONITOR_MOVE_TOLERANCE then
+        UpdateStuckMonitorMovement(player.Position)
+        return
+    end
+
+    local now = os.clock()
+    local stagnantFor = now - (monitor.lastMovementTime or now)
+    if stagnantFor < STUCK_MONITOR_THRESHOLD_SECONDS then
+        return
+    end
+
+    local restartCooldown = now - (monitor.lastRestartTime or 0)
+    if restartCooldown < STUCK_MONITOR_RESTART_COOLDOWN then
+        return
+    end
+
+    HandleStuckMonitorTrigger(player.Position)
+end
+
+function WaitWithStuckMonitor(duration)
+    duration = duration or 0
+    if duration <= 0 then
+        UpdateStuckMonitor()
+        return
+    end
+    local step = 0.5
+    local deadline = os.clock() + duration
+    while os.clock() < deadline do
+        UpdateStuckMonitor()
+        local remaining = deadline - os.clock()
+        if remaining <= 0 then
+            break
+        end
+        local wait = math.min(step, remaining)
+        yield(string.format("/wait %.2f", wait))
+    end
 end
 
 local TELEPORT_LOCK_TIMEOUT = 180
@@ -2403,7 +2603,7 @@ function WaitForGemstoneGoal(goal)
         if ShouldProcessRetainersNow() then
             return false, "retainer"
         end
-        yield("/wait 5")
+        WaitWithStuckMonitor(5)
     end
 end
 
@@ -2702,41 +2902,60 @@ end
 function LogFeatureFlagsOnce()
     if Runtime.featureLogPrinted then return end
     local entries = {}
-    if Settings.pauseRetainers then
-        table.insert(entries, "Retainer processing enabled")
+
+    local function flagLabel(value)
+        return value and "enabled" or "disabled"
     end
-    if Settings.maintainGemstones and (Settings.gemstoneTarget or 0) > 0 then
-        table.insert(entries, string.format("Gemstone stockpile enabled (target=%d)", Settings.gemstoneTarget))
+
+    local function yesNo(value)
+        return value and "yes" or "no"
     end
-    if Settings.exchangeGemstones and Settings.bicolorItem ~= "None" then
-        local suffixParts = {}
-        if (Settings.purchaseCycleLimit or 0) > 0 then
-            table.insert(suffixParts, string.format("limit=%d", Settings.purchaseCycleLimit))
-        end
-        if Settings.purchaseLimitFollowUp ~= nil and Settings.purchaseLimitFollowUp ~= "" then
-            table.insert(suffixParts, string.format("follow-up=%s", Settings.purchaseLimitFollowUp))
-        elseif Settings.enableMultiModeOnLimit then
-            table.insert(suffixParts, "multi-mode-on-limit")
-        end
-        if Settings.purchaseLimitFollowUp ~= nil and Settings.purchaseLimitFollowUp ~= "" and Settings.enableMultiModeOnLimit then
-            table.insert(suffixParts, "multi-mode-disabled-by-follow-up")
-        end
-        local suffix = ""
-        if #suffixParts > 0 then
-            suffix = " | "..table.concat(suffixParts, ", ")
-        end
-        table.insert(entries, string.format("Gemstone exchange enabled (%s%s)", Settings.bicolorItem, suffix))
+
+    local gearsetLabel = "disabled"
+    if equipGearsetSlot ~= nil and equipGearsetSlot >= 0 then
+        gearsetLabel = tostring(equipGearsetSlot + 1)
     end
-    if Settings.useReturnToSolutionNine then
-        table.insert(entries, "Return to Solution Nine enabled")
+    table.insert(entries, string.format("Gearset slot: %s", gearsetLabel))
+
+    table.insert(entries, string.format("Pause for retainers: %s (close list: %s, check interval: %ds)",
+        flagLabel(Settings.pauseRetainers),
+        yesNo(Settings.closeRetainerList),
+        Settings.checkInterval or 0))
+
+    table.insert(entries, string.format("Maintain gemstone stockpile: %s (target=%d)",
+        flagLabel(Settings.maintainGemstones),
+        Settings.gemstoneTarget or 0))
+
+    table.insert(entries, string.format("Exchange gemstones: %s (item=%s)",
+        flagLabel(Settings.exchangeGemstones),
+        Settings.bicolorItem or "None"))
+
+    table.insert(entries, string.format("Gemstone purchase cycle limit: %d", Settings.purchaseCycleLimit or 0))
+
+    local followUp = Settings.purchaseLimitFollowUp
+    if followUp == nil or followUp == "" then
+        followUp = "none"
     end
-    if (Settings.repairThreshold or 0) > 0 then
-        local mode = Settings.selfRepair and "Self-repair" or "Mender-only"
-        table.insert(entries, string.format("%s enabled (threshold=%d%%)", mode, Settings.repairThreshold))
-    end
-    if #entries == 0 then
-        table.insert(entries, "No optional workflows enabled")
-    end
+    table.insert(entries, string.format("Follow-up script: %s", followUp))
+
+    table.insert(entries, string.format("Enable AutoRetainer multi-mode after limit: %s",
+        flagLabel(Settings.enableMultiModeOnLimit)))
+
+    table.insert(entries, string.format("Use Return for Solution Nine: %s",
+        flagLabel(Settings.useReturnToSolutionNine)))
+
+    table.insert(entries, string.format("Self repair: %s (auto-buy dark matter: %s, threshold=%d%%)",
+        flagLabel(Settings.selfRepair),
+        flagLabel(Settings.autoBuyDarkMatter),
+        Settings.repairThreshold or 0))
+
+    table.insert(entries, string.format("Enable stuck monitoring: %s (threshold=%ds)",
+        flagLabel(Settings.enableStuckMonitor),
+        STUCK_MONITOR_THRESHOLD_SECONDS))
+
+    table.insert(entries, string.format("Echo logs level: %s",
+        Settings.echoLevel or "none"))
+
     for _, msg in ipairs(entries) do
         Dalamud.Log("[Toolkit Helper] "..msg)
     end
@@ -3290,12 +3509,15 @@ State = CharacterState.idle
 
 Dalamud.Log("[Toolkit Helper] Starting toolkit helper loop")
 
+yield("/vfate")
+
 while not Runtime.stopScript do
     if not Svc.Condition[CharacterCondition.betweenAreas]
         and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
     then
         State()
     end
+    UpdateStuckMonitor()
     yield("/wait 0.25")
 end
 
