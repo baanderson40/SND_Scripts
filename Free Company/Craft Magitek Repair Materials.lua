@@ -1466,13 +1466,11 @@ Sleep(3)
 
 if not WaitForLifestreamIdle(90) then
     Log("Lifestream remained busy; aborting craft request.")
-    RunFollowUpAndMultiMode()
     return
 end
 
 if not WaitForTerritoryStable(nil, 4, 120) then
     Log("Territory/position did not stabilize before crafting; aborting.")
-    RunFollowUpAndMultiMode()
     return
 end
 
@@ -1481,6 +1479,6 @@ if not craftSuccess then
     Log("Crafting did not complete successfully.")
 end
 
-RunFollowUpAndMultiMode()
-
-if not craftSuccess then return end
+if craftSuccess then
+    RunFollowUpAndMultiMode()
+end
