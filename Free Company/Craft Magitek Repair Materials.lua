@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.7
+version: 1.1.8
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
