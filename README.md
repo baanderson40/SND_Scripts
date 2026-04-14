@@ -47,7 +47,7 @@ Collection of various SND scripts
   - Random scripts for different testing in snd
 
 ## Installation
-- Copy script's Github URL and paste into SND2 GitHub URL option to import and update.
+- Copy script's Github URL and paste into SND GitHub URL option to import and update.
 <img width="1186" height="297" alt="image" src="https://github.com/user-attachments/assets/e862f1f7-d8ae-4957-9e2c-d5fc471351cc" />
 
 ### or
