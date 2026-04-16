@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.3.0
+version: 1.4.0
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -83,6 +83,11 @@ configs:
       Use the Return instead of teleporting when traveling to Solution Nine.
       Solution Nine must be set as your home point.
     default: false
+  Chocobo stance:
+    description: Desired chocobo stance.
+    default: "Free Stance"
+    is_choice: true
+    choices: ["Disabled", "Free Stance", "Defender Stance", "Attacker Stance", "Healer Stance"]
   Self repair?:
     description: "Enabled: Self repair | Disabled: NPC repair"
     default: true
@@ -177,6 +182,8 @@ local BICOLOR_GEM_ITEM_ID = 26807
 local DARK_MATTER_ITEM_ID = 33916
 local REPAIR_GENERAL_ACTION_ID = 6
 local RETURN_GENERAL_ACTION_ID = 8
+local BUDDY_ACTION_TYPE_ID = 6
+local CHOCOBO_STANCE_CHECK_INTERVAL_SECONDS = 15
 local UNSYNRAEL_ROW_ID = 1001207
 local ALISTAIR_ROW_ID = 1001206
 local HAWKERS_ALLEY_POSITION = Vector3(-213.95, 15.99, 49.35)
@@ -184,6 +191,13 @@ local UNSYNRAEL_POSITION = Vector3(-257.71, 16.19, 50.11)
 local ALISTAIR_POSITION = Vector3(-246.87, 16.19, 49.83)
 local HAWKERS_MINI_AETHERYTE_ID = 49
 local SOLUTION_NINE_AETHERYTE_ROW_ID = 217
+
+local ChocoboStanceActionMap = {
+    ["Free Stance"] = 4,
+    ["Defender Stance"] = 5,
+    ["Attacker Stance"] = 6,
+    ["Healer Stance"] = 7
+}
 
 local GemstoneExchangeMap = {
     ["Alexandrian Axe Beak Wing"] = {
@@ -690,7 +704,9 @@ Settings = {
     purchaseLimitFollowUp = "",
     enableMultiModeOnLimit = false,
     useReturnToSolutionNine = false,
-    enableStuckMonitor = false
+    enableStuckMonitor = false,
+    chocoboStance = "Free Stance",
+    chocoboStanceActionId = 4
 }
 
 local equipGearsetSlot = -1
@@ -784,6 +800,15 @@ function RefreshSettings()
         Settings.useReturnToSolutionNine = false
     end
 
+    local chocoboStance = Config.Get("Chocobo stance")
+    if type(chocoboStance) == "string" and chocoboStance ~= "" then
+        Settings.chocoboStance = chocoboStance
+    end
+    if type(Settings.chocoboStance) ~= "string" or Settings.chocoboStance == "" then
+        Settings.chocoboStance = "Free Stance"
+    end
+    Settings.chocoboStanceActionId = ChocoboStanceActionMap[Settings.chocoboStance]
+
     local gearsetConfig = Config.Get("Gearset Slot")
     local numericGearset = nil
     if type(gearsetConfig) == "number" or type(gearsetConfig) == "string" then
@@ -860,6 +885,7 @@ Runtime = {
     pendingRepair = false,
     repairToolkitStopped = false,
     nextRepairCheck = 0,
+    nextChocoboStanceCheck = 0,
     purchaseCycleCount = 0,
     purchaseLimitReached = false,
     purchaseLimitHandled = false,
@@ -2296,6 +2322,66 @@ function ExecuteRepairGeneralAction()
     yield("/wait 0.5")
 end
 
+function GetCurrentChocoboStanceCommand()
+    if Instances == nil or Instances.Buddy == nil or Instances.Buddy.CompanionInfo == nil then
+        return nil
+    end
+    local ok, activeCommand = pcall(function()
+        return Instances.Buddy.CompanionInfo.ActiveCommand
+    end)
+    if not ok or activeCommand == nil then
+        return nil
+    end
+    local numericCommand = tonumber(activeCommand)
+    if numericCommand == nil then
+        return nil
+    end
+    return math.floor(numericCommand)
+end
+
+function ExecuteBuddyAction(actionId)
+    if Actions == nil or Actions.ExecuteAction == nil then
+        return false, "Actions.ExecuteAction unavailable"
+    end
+    local ok, err = pcall(function()
+        if ActionType ~= nil and ActionType.BuddyAction ~= nil then
+            Actions.ExecuteAction(actionId, ActionType.BuddyAction)
+        else
+            Actions.ExecuteAction(actionId, BUDDY_ACTION_TYPE_ID)
+        end
+    end)
+    if not ok then
+        return false, tostring(err)
+    end
+    return true
+end
+
+function ApplyChocoboStanceIfNeeded()
+    local now = os.clock()
+    if now < (Runtime.nextChocoboStanceCheck or 0) then
+        return
+    end
+    Runtime.nextChocoboStanceCheck = now + CHOCOBO_STANCE_CHECK_INTERVAL_SECONDS
+
+    local desiredCommand = Settings.chocoboStanceActionId
+    if desiredCommand == nil then
+        return
+    end
+
+    local currentCommand = GetCurrentChocoboStanceCommand()
+    if currentCommand == nil or currentCommand == desiredCommand then
+        return
+    end
+
+    local ok, err = ExecuteBuddyAction(desiredCommand)
+    if not ok then
+        Dalamud.Log("[Toolkit Helper] Failed to set chocobo stance: "..tostring(err))
+        return
+    end
+
+    EchoAll(string.format("Set chocobo stance to %s", tostring(Settings.chocoboStance)))
+end
+
 --## Retainer & Runtime Checks
 
 function CurrentCharacterRetainersReady()
@@ -2594,6 +2680,7 @@ function WaitForGemstoneGoal(goal)
         if Runtime.stopScript then
             return GetBicolorGemCount() >= gemstoneGoal
         end
+        ApplyChocoboStanceIfNeeded()
         if GetBicolorGemCount() >= gemstoneGoal then
             return true
         end
@@ -2944,6 +3031,10 @@ function LogFeatureFlagsOnce()
     table.insert(entries, string.format("Use Return for Solution Nine: %s",
         flagLabel(Settings.useReturnToSolutionNine)))
 
+    table.insert(entries, string.format("Chocobo stance: %s (check interval=%ds)",
+        Settings.chocoboStance or "Disabled",
+        CHOCOBO_STANCE_CHECK_INTERVAL_SECONDS))
+
     table.insert(entries, string.format("Self repair: %s (auto-buy dark matter: %s, threshold=%d%%)",
         flagLabel(Settings.selfRepair),
         flagLabel(Settings.autoBuyDarkMatter),
@@ -2985,6 +3076,8 @@ function Idle()
     if not Player.Available or Svc.Condition[CharacterCondition.betweenAreas] then
         return
     end
+
+    ApplyChocoboStanceIfNeeded()
 
     if HasReachedPurchaseCycleLimit() then
         HandlePurchaseLimitReached()
@@ -3176,6 +3269,8 @@ function MaintainGemstones()
         HandlePurchaseLimitReached()
         return
     end
+
+    ApplyChocoboStanceIfNeeded()
 
     if ShouldProcessRetainersNow() then
         Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for retainer processing")
