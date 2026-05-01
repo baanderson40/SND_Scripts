@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.0
+version: 1.4.1
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -183,6 +183,8 @@ local DARK_MATTER_ITEM_ID = 33916
 local REPAIR_GENERAL_ACTION_ID = 6
 local RETURN_GENERAL_ACTION_ID = 8
 local BUDDY_ACTION_TYPE_ID = 6
+local GADFRID_VENDOR_ID = 1037055
+local GADFRID_POSITION = Vec3(78.355, 5.150, -36.790)
 local CHOCOBO_STANCE_CHECK_INTERVAL_SECONDS = 15
 local UNSYNRAEL_ROW_ID = 1001207
 local ALISTAIR_ROW_ID = 1001206
@@ -984,10 +986,10 @@ function DistanceBetween(pos1, pos2)
 end
 
 function GetDistanceToPoint(vec3)
-    if Svc.ClientState.LocalPlayer == nil then
-        return math.maxinteger
+    if vec3 == nil or Entity == nil or Entity.Player == nil or Entity.Player.Position == nil then
+        return math.huge
     end
-    return DistanceBetween(Svc.ClientState.LocalPlayer.Position, vec3)
+    return DistanceBetween(Entity.Player.Position, vec3)
 end
 
 function Dismount()
@@ -3245,8 +3247,8 @@ function ProcessRetainers()
         if not InteractWithSummoningBell() then
             return
         end
-        local retainerList = Addons.GetAddon("RetainerList")
-        if retainerList ~= nil and retainerList.Ready then
+        local retainerList = WaitForAddonReady("RetainerList", 5)
+        if retainerList ~= nil then
             yield("/ays e")
             EchoAll("Processing retainers")
             Dalamud.Log("[Toolkit Helper] Handed control to AutoRetainer via /ays e")
@@ -3548,7 +3550,14 @@ function ExchangeGemstones()
         return
     end
 
-    if not MoveNearPosition(entry.position, 4.5) then
+    local targetPosition = entry.position
+    local stopDistance = 4.5
+    if entry.vendorId == GADFRID_VENDOR_ID then
+        targetPosition = GADFRID_POSITION
+        stopDistance = 5.5
+    end
+
+    if not MoveNearPosition(targetPosition, stopDistance) then
         return
     end
 
