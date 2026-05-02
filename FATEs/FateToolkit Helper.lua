@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.1
+version: 1.4.2
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -1441,20 +1441,20 @@ function UpdateStuckMonitor()
         end
     end
 
-    local player = Svc.ClientState.LocalPlayer
-    if player == nil or player.Position == nil then
+    local playerPos = Entity and Entity.Player and Entity.Player.Position
+    if playerPos == nil then
         ResetStuckMonitor("player unavailable")
         return
     end
 
     if monitor.lastPosition == nil then
-        UpdateStuckMonitorMovement(player.Position)
+        UpdateStuckMonitorMovement(playerPos)
         return
     end
 
-    local distance = DistanceBetween(player.Position, monitor.lastPosition)
+    local distance = DistanceBetween(playerPos, monitor.lastPosition)
     if distance >= STUCK_MONITOR_MOVE_TOLERANCE then
-        UpdateStuckMonitorMovement(player.Position)
+        UpdateStuckMonitorMovement(playerPos)
         return
     end
 
@@ -1469,7 +1469,7 @@ function UpdateStuckMonitor()
         return
     end
 
-    HandleStuckMonitorTrigger(player.Position)
+    HandleStuckMonitorTrigger(playerPos)
 end
 
 function WaitWithStuckMonitor(duration)
