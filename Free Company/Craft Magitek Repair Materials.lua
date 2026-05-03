@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.8
+version: 1.1.9
 description: Automatically craft Magitek Repair Material.
 configs:
   Target Magitek Repair Material:
@@ -319,8 +319,9 @@ function GetCharacterCondition(i, bool)
 end
 
 function GetCharacterPosition()
-    local player = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
-    return player and player.Position or nil
+    local player = Entity and Entity.Player
+    if not (player and player.Position) then return nil end
+    return player.Position
 end
 
 function GetCharacterJob()
@@ -593,48 +594,19 @@ function PlaceNameByTerritory(id)
     local tid = toNumberSafe(id, nil, 1)
     if not tid then return err("invalid territory id: "..tostring(id)) end
 
-    local terr = Excel.GetSheet("TerritoryType"); if not terr then return err("TerritoryType sheet not found") end
-    local row  = terr:GetRow(tid);                if not row  then return err("TerritoryType row not found for id "..tid) end
-
-    local pn = row.PlaceName
-    if not pn then return err("PlaceName field missing for territory id "..tid) end
-
-    if type(pn) == "string" and #pn > 0 then
-        return ok({ name = pn, territoryId = tid, source = "TerritoryType.PlaceName:string" })
+    if not (Excel and Excel.GetSheet) then return err("Excel sheet access unavailable") end
+    local terr = Excel.GetSheet("TerritoryType")
+    if not terr then return err("TerritoryType sheet not found") end
+    local row = terr:GetRow(tid)
+    if not row or not row.PlaceName or not row.PlaceName.Value then
+        return err("TerritoryType place name not found for id "..tid)
     end
 
-    if type(pn) == "userdata" then
-        local okv, val = pcall(function() return pn.Value end)
-        if okv and val then
-            local okn, nm = pcall(function() return val.Singular or val.Name or val:ToString() end)
-            if okn and nm and nm ~= "" then
-                return ok({ name = tostring(nm), territoryId = tid, source = "TerritoryType.PlaceName:userdata.Value" })
-            end
-        end
-        local okid, rid = pcall(function() return pn.RowId end)
-        if okid and type(rid) == "number" then
-            local place = Excel.GetSheet("PlaceName"); if not place then return err("PlaceName sheet not found (RowId="..tostring(rid)..")") end
-            local prow  = place:GetRow(rid);          if not prow  then return err("PlaceName row not found (RowId="..tostring(rid)..")") end
-            local okn2, nm2 = pcall(function() return prow.Singular or prow.Name or prow:ToString() end)
-            if okn2 and nm2 and nm2 ~= "" then
-                return ok({ name = tostring(nm2), territoryId = tid, source = "PlaceName(RowId)" })
-            end
-            return err("PlaceName values empty (RowId="..tostring(rid)..")")
-        end
-        return err("unsupported PlaceName userdata shape for territory id "..tid)
-    end
-
-    if type(pn) == "number" then
-        local place = Excel.GetSheet("PlaceName"); if not place then return err("PlaceName sheet not found") end
-        local prow  = place:GetRow(pn);            if not prow  then return err("PlaceName row not found (id="..tostring(pn)..")") end
-        local okn, nm = pcall(function() return prow.Singular or prow.Name or prow:ToString() end)
-        if okn and nm and nm ~= "" then
-            return ok({ name = tostring(nm), territoryId = tid, source = "PlaceName(numeric)" })
-        end
-        return err("PlaceName values empty (id="..tostring(pn)..")")
-    end
-
-    return err("unsupported PlaceName type: "..type(pn))
+    local placeName = row.PlaceName.Value.Name
+    if placeName == nil then return err("PlaceName value missing for territory id "..tid) end
+    local text = placeName.GetText and placeName:GetText() or tostring(placeName)
+    if text == nil or text == "" then return err("PlaceName text empty for territory id "..tid) end
+    return ok({ name = text, territoryId = tid, source = "TerritoryType.PlaceName.Value.Name" })
 end
 
 function GetZoneName(territoryType)
@@ -709,9 +681,9 @@ function GetNpcNameByRowId(rowId)
     local row = sheet:GetRow(rowId)
     if not row then return nil end
     local name = row.Singular or row.Name
-    if not name then return nil end
+    if name == nil then return nil end
     local text = name
-    if name.GetText then text = name:GetText() end
+    if name and name.GetText then text = name:GetText() end
     text = tostring(text or "")
     if text ~= nil and text ~= "" then
         _cacheStore(NpcNameCache, rowId, text)
@@ -735,33 +707,13 @@ function GetAetherytePlaceNameByRowId(rowId)
     if not sheet then return nil end
     local row = sheet:GetRow(rowId)
     if not row then return nil end
-    local place = row.PlaceName
-    local resolved = nil
-    if type(place) == "string" then
-        resolved = place
-    elseif place and place.Value then
-        local value = place.Value
-        if type(value) == "string" then
-            resolved = value
-        elseif value.Name then
-            local name = value.Name
-            resolved = name.GetText and name:GetText() or tostring(name)
-        elseif value.Singular or value.Name then
-            local candidate = value.Singular or value.Name
-            resolved = candidate.GetText and candidate:GetText() or tostring(candidate)
-        end
-    end
-    if not resolved or resolved == "" then
-        if place and place.Value and place.Value.PlaceName then
-            local pn = place.Value.PlaceName
-            resolved = pn.GetText and pn:GetText() or tostring(pn)
-        end
-    end
-    if resolved and resolved ~= "" then
-        _cacheStore(AetheryteNameCache, rowId, resolved)
-        return resolved
-    end
-    return nil
+    if not row.PlaceName or not row.PlaceName.Value then return nil end
+    local name = row.PlaceName.Value.Name
+    if name == nil then return nil end
+    local text = name.GetText and name:GetText() or tostring(name)
+    if text == nil or text == "" then return nil end
+    _cacheStore(AetheryteNameCache, rowId, text)
+    return text
 end
 
 local function ResolveDestinationDetails(dest)
@@ -1071,30 +1023,23 @@ NPC = {
         rowId = 1001207,
         fallbackName = "Unsynrael",
         position = Vector3(-257.71, 16.19, 50.11),
-        itemIndex = 38
+        itemIndex = 7
     }
-NPC.name = GetLocalizedNpcName(NPC.rowId, NPC.fallbackName)
-if not NPC.name or NPC.name == "" then
-    NPC.name = NPC.fallbackName
-    Log("Falling back to default NPC name for rowId=%s", tostring(NPC.rowId))
-else
-    Log("Resolved NPC name to %s (rowId=%s)", NPC.name, tostring(NPC.rowId))
-end
+NPC.name = NPC.fallbackName
 
 local limsaDestination = {
+    name = "Limsa Lominsa Lower Decks",
     rowId = LIMSA_AETHERYTE_ROW_ID,
     fallbackName = "Limsa Lominsa Lower Decks",
     territoryId = limsaZoneId
 }
 local hawkersDestination = {
+    name = "Hawkers' Alley",
     rowId = HAWKERS_MINI_AETHERYTE_ROW_ID,
     fallbackName = "Hawkers' Alley",
     isMini = true,
     territoryId = limsaZoneId
 }
-
-Log("Resolved Limsa destination to %s (rowId=%s)", GetAetherytePlaceNameByRowId(LIMSA_AETHERYTE_ROW_ID) or limsaDestination.fallbackName, tostring(LIMSA_AETHERYTE_ROW_ID))
-Log("Resolved Hawkers' Alley destination to %s (rowId=%s)", GetAetherytePlaceNameByRowId(HAWKERS_MINI_AETHERYTE_ROW_ID) or hawkersDestination.fallbackName, tostring(HAWKERS_MINI_AETHERYTE_ROW_ID))
 
 purchaseItem = {
                   itemId = 10386,
@@ -1343,12 +1288,14 @@ local function EnsureUnsynraelShopOpen(maxAttempts)
             WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 60)
             WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 60)
             WaitForTerritory(limsaZoneId, 60)
+            TeleportToDestination(hawkersDestination)
+            WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 30)
+            WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 30)
+            WaitForTerritory(limsaZoneId, 30)
+        else
+            Log("Already in Limsa; pathing directly to %s.", NPC.name)
         end
 
-        TeleportToDestination(hawkersDestination)
-        WaitConditionStable(CharacterCondition.betweenAreas, false, 0.5, 30)
-        WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 0.5, 30)
-        WaitForTerritory(limsaZoneId, 30)
         WaitForMovementStop(10)
 
         MoveNearVnav(NPC.position, 3, Player.CanFly)
@@ -1398,7 +1345,7 @@ local function PurchaseDarkMatter(targetTotal)
         local qty = math.min(remaining, 99)
         qty = math.floor(qty)
 
-        SafeCallback("Shop", 0, NPC.itemIndex, qty)
+        SafeCallback("Shop", true, 0, NPC.itemIndex, qty)
         WaitAddonStable("SelectYesno", 0.5, 5)
         SafeCallback("SelectYesno", 0)
 
