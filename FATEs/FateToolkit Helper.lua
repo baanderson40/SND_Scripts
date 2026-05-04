@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.2
+version: 1.4.3
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -1139,7 +1139,8 @@ function EnsureInLimsa(reason)
     local limsaDestination = {
         name = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks",
         aetheryteId = SUMMONING_BELL.aetheryteRowId,
-        rowId = SUMMONING_BELL.aetheryteRowId
+        rowId = SUMMONING_BELL.aetheryteRowId,
+        territoryId = SUMMONING_BELL.territoryId
     }
     if TeleportTo(limsaDestination) then
         EchoAll("Teleporting to "..limsaDestination.name)
@@ -1699,10 +1700,10 @@ function RestoreBossModPreferredState()
 end
 
 function HasStatusId(statusId)
-    if Svc.ClientState == nil or Svc.ClientState.LocalPlayer == nil then
+    if Svc == nil or Svc.Objects == nil or Svc.Objects.LocalPlayer == nil then
         return false
     end
-    local statusList = Svc.ClientState.LocalPlayer.StatusList
+    local statusList = Svc.Objects.LocalPlayer.StatusList
     if statusList == nil then
         return false
     end
@@ -2015,44 +2016,30 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         return WaitForLifestreamBusyState(false, timeout or 5)
     end
 
-    function retryableCall(label, fn, maxAttempts)
-        maxAttempts = maxAttempts or 1
-        for attempt = 1, maxAttempts do
-            Dalamud.Log(string.format("[Toolkit Helper] %s attempt %d preparing", label, attempt))
-            local ready = WaitForLifestreamReady(5)
-            if not ready then
-                Dalamud.Log("[Toolkit Helper] Lifestream is still busy before "..label.."; delaying attempt")
-                yield("/wait 0.5")
-            end
-            local sinceLast = os.clock() - (Runtime.lastLifestreamCommand or 0)
-            if sinceLast < 2 then
-                local waitTime = 2 - sinceLast
-                Dalamud.Log(string.format("[Toolkit Helper] %s attempt %d throttling %.3fs", label, attempt, waitTime))
-                yield(string.format("/wait %.3f", waitTime))
-            end
-            Runtime.lastLifestreamCommand = os.clock()
-            local ok, result = pcall(fn)
-            if not ok then
-                Dalamud.Log(string.format("[Toolkit Helper] %s error: %s", label, tostring(result)))
-            elseif result == true then
-                yield("/wait 0.3")
-                if WaitForLifestreamBusyState(true, 3) then
-                    Dalamud.Log(string.format("[Toolkit Helper] %s succeeded%s", label, attempt > 1 and string.format(" on attempt %d", attempt) or ""))
-                    return true
-                else
-                    Dalamud.Log(string.format("[Toolkit Helper] %s reported success but never became busy", label))
-                end
-            else
-                Dalamud.Log(string.format("[Toolkit Helper] %s attempt %d returned false", label, attempt))
-            end
-            if attempt < maxAttempts then
-                yield("/wait 0.3")
-            end
+    function dispatchCall(label, fn)
+        Dalamud.Log(string.format("[Toolkit Helper] %s preparing", label))
+        local ready = WaitForLifestreamReady(5)
+        if not ready then
+            Dalamud.Log("[Toolkit Helper] Lifestream is still busy before "..label.."; delaying attempt")
+            yield("/wait 0.5")
         end
-        return false
+        local sinceLast = os.clock() - (Runtime.lastLifestreamCommand or 0)
+        if sinceLast < 2 then
+            local waitTime = 2 - sinceLast
+            Dalamud.Log(string.format("[Toolkit Helper] %s throttling %.3fs", label, waitTime))
+            yield(string.format("/wait %.3f", waitTime))
+        end
+        Runtime.lastLifestreamCommand = os.clock()
+        local ok, err = pcall(fn)
+        if not ok then
+            Dalamud.Log(string.format("[Toolkit Helper] %s error: %s", label, tostring(err)))
+            return false
+        end
+        Dalamud.Log(string.format("[Toolkit Helper] %s dispatched", label))
+        return true
     end
 
-    function tryTeleportById(maxAttempts)
+    function tryTeleportById()
         if not destId then
             Dalamud.Log("[Toolkit Helper] tryTeleportById skipped: destId missing")
             return false
@@ -2061,16 +2048,15 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
             Dalamud.Log("[Toolkit Helper] tryTeleportById skipped: IPC.Lifestream.Teleport unavailable")
             return false
         end
-        return retryableCall(
+        return dispatchCall(
             "IPC.Lifestream.Teleport (id="..tostring(destId)..")",
             function()
-                return IPC.Lifestream.Teleport(destId, isMini and 1 or 0)
-            end,
-            maxAttempts
+                IPC.Lifestream.Teleport(destId, isMini and 1 or 0)
+            end
         )
     end
 
-    function tryMiniAethernetTeleport(maxAttempts)
+    function tryMiniAethernetTeleport()
         if not isMini then
             Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: not mini destination")
             return false
@@ -2083,12 +2069,11 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
             Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: IPC method unavailable")
             return false
         end
-        return retryableCall(
+        return dispatchCall(
             "IPC.Lifestream.AethernetTeleportById (id="..tostring(destId)..")",
             function()
-                return IPC.Lifestream.AethernetTeleportById(destId)
-            end,
-            maxAttempts
+                IPC.Lifestream.AethernetTeleportById(destId)
+            end
         )
     end
 
@@ -2101,22 +2086,19 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
             Dalamud.Log("[Toolkit Helper] tryTeleportByName skipped: IPC execute command unavailable")
             return false
         end
-        return retryableCall(
+        return dispatchCall(
             "IPC.Lifestream.ExecuteCommand ("..tostring(destName)..")",
             function()
-                return IPC.Lifestream.ExecuteCommand(destName)
-            end,
-            1
+                IPC.Lifestream.ExecuteCommand(destName)
+            end
         )
     end
 
-    local retryAttempts = 2
-
-    if isMini and tryMiniAethernetTeleport(retryAttempts) then
+    if isMini and tryMiniAethernetTeleport() then
         return true
     end
 
-    if tryTeleportById(retryAttempts) then
+    if tryTeleportById() then
         return true
     end
 
@@ -2128,12 +2110,63 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
     return false
 end
 
+function GetCurrentTerritoryType()
+    if Svc == nil or Svc.ClientState == nil then
+        return nil
+    end
+    return Svc.ClientState.TerritoryType
+end
+
+function IsInExpectedTerritory(expectedTerritoryId)
+    if expectedTerritoryId == nil then
+        return false
+    end
+    local currentTerritory = GetCurrentTerritoryType()
+    return currentTerritory ~= nil and currentTerritory == expectedTerritoryId
+end
+
+function WaitForTeleportStart(startTerritoryId, expectedTerritoryId, timeout)
+    local deadline = os.clock() + (timeout or 8)
+    repeat
+        if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+            local ok, busy = pcall(IPC.Lifestream.IsBusy)
+            if ok and busy == true then
+                Dalamud.Log("[Toolkit Helper] Teleport start detected via Lifestream busy state")
+                return true
+            end
+        end
+        if Svc and Svc.Condition then
+            if Svc.Condition[CharacterCondition.casting] then
+                Dalamud.Log("[Toolkit Helper] Teleport start detected via casting condition")
+                return true
+            end
+            if Svc.Condition[CharacterCondition.betweenAreas] then
+                Dalamud.Log("[Toolkit Helper] Teleport start detected via betweenAreas condition")
+                return true
+            end
+        end
+        local currentTerritory = GetCurrentTerritoryType()
+        if expectedTerritoryId ~= nil and currentTerritory == expectedTerritoryId and currentTerritory ~= startTerritoryId then
+            Dalamud.Log("[Toolkit Helper] Teleport arrival detected via destination territory")
+            return true
+        end
+        if startTerritoryId ~= nil and currentTerritory ~= nil and currentTerritory ~= 0 and currentTerritory ~= startTerritoryId then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport start detected via territory change (%s -> %s)", tostring(startTerritoryId), tostring(currentTerritory)))
+            return true
+        end
+        yield("/wait 0.1")
+    until os.clock() > deadline
+    return false
+end
+
 function TeleportTo(destination)
     local destName
     local isMini = false
     local destId = nil
+    local expectedTerritoryId = nil
     if type(destination) == "table" then
         destName, isMini, destId = ResolveDestinationName(destination)
+        expectedTerritoryId = destination.territoryId or destination.destinationTerritoryId
     else
         destName = destination
     end
@@ -2143,9 +2176,18 @@ function TeleportTo(destination)
         return false
     end
 
+    if IsInExpectedTerritory(expectedTerritoryId) then
+        Dalamud.Log(string.format("[Toolkit Helper] Already in destination territory for %s", tostring(destName)))
+        return true
+    end
+
     local maxAttempts = 3
     for attempt = 1, maxAttempts do
         Dalamud.Log(string.format("[Toolkit Helper] Teleport attempt %d/%d to %s", attempt, maxAttempts, tostring(destName)))
+        if IsInExpectedTerritory(expectedTerritoryId) then
+            Dalamud.Log(string.format("[Toolkit Helper] Destination territory already reached before attempt %d for %s", attempt, tostring(destName)))
+            return true
+        end
         if not WaitForTeleportIdle(15) then
             Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; teleport channel busy", tostring(destName)))
             return false
@@ -2168,6 +2210,7 @@ function TeleportTo(destination)
 
         AcceptTeleportOfferLocation(destName)
         local start = os.clock()
+        local startTerritoryId = GetCurrentTerritoryType()
 
         while Instances ~= nil and Instances.Framework ~= nil and EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - Runtime.lastTeleport < 5 do
             Dalamud.Log("[Toolkit Helper] Too soon since last teleport. Waiting...")
@@ -2181,17 +2224,22 @@ function TeleportTo(destination)
         if not AcquireTeleportLock(destName) then
             return false
         end
-        local lockHeld = true
 
         local executed = ExecuteLifestreamCommand(destName, destId, isMini)
-        Dalamud.Log(string.format("[Toolkit Helper] ExecuteLifestreamCommand returned %s for %s", tostring(executed), tostring(destName)))
         local success = false
         if executed then
-            yield("/wait 3")
-            success = WaitForTeleportCompletion(start)
-            Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
+            yield("/wait 1")
+            if WaitForTeleportStart(startTerritoryId, expectedTerritoryId, 8) then
+                success = WaitForTeleportCompletion(start)
+                Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
+            elseif IsInExpectedTerritory(expectedTerritoryId) then
+                Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached for %s without observable start conditions", tostring(destName)))
+                success = true
+            else
+                Dalamud.Log(string.format("[Toolkit Helper] No teleport start detected for %s; retrying if attempts remain", tostring(destName)))
+            end
         else
-            Dalamud.Log(string.format("[Toolkit Helper] Teleport command for %s failed; retrying if attempts remain", tostring(destName)))
+            Dalamud.Log(string.format("[Toolkit Helper] Unable to dispatch teleport command for %s", tostring(destName)))
         end
         ReleaseTeleportLock(success)
 
@@ -2200,6 +2248,10 @@ function TeleportTo(destination)
         end
 
         if attempt < maxAttempts then
+            if IsInExpectedTerritory(expectedTerritoryId) then
+                Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached after attempt %d for %s", attempt, tostring(destName)))
+                return true
+            end
             Dalamud.Log(string.format("[Toolkit Helper] Teleport retry scheduled for %s", tostring(destName)))
         end
     end
