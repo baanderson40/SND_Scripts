@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.0
+version: 1.1.0
 description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
@@ -225,6 +225,8 @@ local SAFE_ANCHORS = {
     [1139] = { -103.6203994751,   2.000935792923, -50.288391113281, 102.09278869629, 2.0002493858337, 50.151763916016 }, -- Red Sands (alt)
     [1293] = { 187.177, -2.000, 99.600,  11.792, -2.000, 100.139 }, -- Bayside Battleground
     [1294] = { 187.177, -2.000, 99.600,  11.792, -2.000, 100.139 }, -- Bayside Battleground (alt)
+    [1357] = { 24.983, 1.001, 117.666, 174.256, 1.001, 82.660 }, -- Archeia Harmonias
+    [1358] = { 24.983, 1.001, 117.666, 174.256, 1.001, 82.660 }, -- Archeia Harmonias (alt)
 }
 
 -- JobId -> Limit Break action name
@@ -279,8 +281,15 @@ local function myName()
     return "Unknown"
 end
 
+local function localPlayer()
+    if Svc and Svc.Objects and Svc.Objects.LocalPlayer then
+        return Svc.Objects.LocalPlayer
+    end
+    return nil
+end
+
 local function classJobId()
-    local lp = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
+    local lp = localPlayer()
     if lp and lp.ClassJob then return lp.ClassJob.RowId end
     return 0
 end
@@ -310,7 +319,7 @@ local function distToName(name)
 end
 
 local function hasStatus(statusId)
-    local lp = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
+    local lp = localPlayer()
     if not lp or not lp.StatusList then return false end
 
     for i = 0, lp.StatusList.Length - 1 do
