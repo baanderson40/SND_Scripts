@@ -22,7 +22,7 @@ configs:
     description: The dungeon AutoDuty should run..
     default: "Mistwake"
     is_choice: true
-    choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria"]
+    choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria", "The Clyteum"]
   Arcanite type:
     description: The type of arcanite to purchase with tomes.
     default: "Waning Arcanite"
@@ -449,6 +449,7 @@ local DungList = {
     {name = "The Underkeep",            id = 1266, amount = 80},
     {name = "Yuweyawata Field Station", id = 1242, amount = 60},
     {name = "Alexandria",               id = 1199, amount = 50},
+    {name = "The Clyteum",              id = 1345, amount = 80},
 }
 
 local ArcaniteMap = {}
