@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1
+version: 1.1.2
 description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
@@ -10,15 +10,17 @@ configs:
   garoTitles:
     default: false
     description: Set Garo Titles
-    type: bool
   Hello on entry:
     default: true
     description: Send /quickchat Hello during the portrait phase.
-    type: bool
   Good Match on results:
     default: true
     description: Send /quickchat "Good Match" when the results addon appears.
-    type: bool
+  Match Limit:
+    default: 0
+    min: 0
+    max: 999
+    description: Stop after this many completed matches. Set to 0 for unlimited.
 [[End Metadata]]
 --]=====]
 -- =========================================================
@@ -189,6 +191,7 @@ local RUN_LOOP = true
 local SET_GARO_TITLES = Config.Get("garoTitles")
 local SEND_HELLO_ON_ENTRY = Config.Get("Hello on entry") ~= false
 local SEND_GOOD_MATCH_ON_RESULTS = Config.Get("Good Match on results") ~= false
+local MATCH_LIMIT = toNumberSafe(Config.Get("Match Limit"), 0, 0, 999)
 local TITLE_1 = "barago"
 local TITLE_2 = "garo"
 
@@ -406,6 +409,8 @@ timerMovedFromBaseline = false
 portraitHelloThreshold = nil
 portraitHelloSent = false
 goodMatchSent = false
+completedMatches = 0
+stopAfterCurrentMatch = false
 
 local function inPvPArea()
     local terr = Svc and Svc.ClientState and Svc.ClientState.TerritoryType
@@ -444,6 +449,7 @@ if UI.ECHO_ON_START then
     _echoLine(_fmt("script starting"))
 end
 Log("script starting")
+Log("match limit -> %d", MATCH_LIMIT)
 
 -- =========================================================
 -- Optional title flips
@@ -474,6 +480,16 @@ while RUN_LOOP do
         end, 0.5, 0.10, 0.25)
 
         if endScreenStable then
+            completedMatches = completedMatches + 1
+            if MATCH_LIMIT > 0 then
+                Log("completed match %d/%d", completedMatches, MATCH_LIMIT)
+                if completedMatches >= MATCH_LIMIT then
+                    stopAfterCurrentMatch = true
+                end
+            else
+                Log("completed match %d", completedMatches)
+            end
+
             if SEND_GOOD_MATCH_ON_RESULTS and not goodMatchSent then
                 yield('/quickchat "Good Match"')
                 goodMatchSent = true
@@ -502,6 +518,12 @@ while RUN_LOOP do
     if not inDuty then
         if inMatchLive or announcedEntered or ranSafetyMoveThisDuty or baselineCaptured then
             resetAllState("out of duty")
+        end
+
+        if stopAfterCurrentMatch then
+            Log("match limit reached -> stopping script")
+            RUN_LOOP = false
+            goto continue_loop
         end
 
         Sleep(5.0)
