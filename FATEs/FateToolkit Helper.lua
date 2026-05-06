@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.3
+version: 1.4.4
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -892,6 +892,7 @@ Runtime = {
     purchaseLimitReached = false,
     purchaseLimitHandled = false,
     purchaseLimitFollowUpIssued = false,
+    textAdvanceEnabledByScript = false,
     bossmodRecordedState = nil,
     bossmodStateChanged = false,
     stuckMonitor = {
@@ -1655,6 +1656,28 @@ function SetPluginEnabledState(name, enabled)
     Dalamud.Log(string.format("[Toolkit Helper] %s plugin %s", enabled and "Enabling" or "Disabling", name))
     yield(command)
     yield("/wait 2")
+end
+
+function EnsureTextAdvanceEnabled()
+    if not IPC or not IPC.TextAdvance or not IPC.TextAdvance.IsEnabled then
+        return
+    end
+    local ok, enabled = pcall(IPC.TextAdvance.IsEnabled)
+    if not ok or enabled then
+        return
+    end
+    Dalamud.Log("[Toolkit Helper] Enabling TextAdvance")
+    yield("/at y")
+    Runtime.textAdvanceEnabledByScript = true
+end
+
+function RestoreTextAdvanceState()
+    if not Runtime.textAdvanceEnabledByScript then
+        return
+    end
+    Dalamud.Log("[Toolkit Helper] Disabling TextAdvance")
+    yield("/at n")
+    Runtime.textAdvanceEnabledByScript = false
 end
 
 function EnsureBossModPreferredState()
@@ -3117,6 +3140,7 @@ function OnStop()
             IPC.Lifestream.Abort()
         end)
     end
+    RestoreTextAdvanceState()
     RestoreBossModPreferredState()
 end
 --#endregion Helpers
@@ -3646,6 +3670,8 @@ end
 --#endregion State Functions
 
 --#region Main
+
+EnsureTextAdvanceEnabled()
 
 EnsureBossModPreferredState()
 
