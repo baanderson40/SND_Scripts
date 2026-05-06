@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.3
+version: 0.1.4
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
