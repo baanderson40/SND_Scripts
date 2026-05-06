@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.0
+version: 1.1.1
 description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
@@ -11,35 +11,16 @@ configs:
     default: false
     description: Set Garo Titles
     type: bool
+  Hello on entry:
+    default: true
+    description: Send /quickchat Hello during the portrait phase.
+    type: bool
+  Good Match on results:
+    default: true
+    description: Send /quickchat "Good Match" when the results addon appears.
+    type: bool
 [[End Metadata]]
 --]=====]
---[[
-Logging policy (standardized):
-- Everything logs to Dalamud with [PVP] prefix.
-- Only echo once on script start.
-
-Queueing:
-- If not in duty and not in duty queue, open Duty Finder and callback.
-
-Gate detection (ContentTimeLeft method, hardened + fixed for requeue):
-- Do NOT treat tLeft < 5 as gate open (tLeft can be 0 while zoning / before PvP area)
-- Only capture baseline AFTER we are actually in the PvP area (pvpDisplayActive) OR in a known PvP territory
-- Detect intro/portrait band: 1 < t < 32  (sawIntroBand = true)
-- Gate open / match live when:
-    t > 100 AND (sawIntroBand OR timerMovedFromBaseline)
-
-Portrait quickchat:
-- During portraits, pick a random threshold between 5..29 seconds remaining.
-- Fire /quickchat Hello once when tLeft drops to/below that threshold (and still > 5).
-
-Match end:
-- When MKSRecord addon becomes visible at end of match, call InstancedContent.LeaveCurrentContent() to exit duty.
-
-Other:
-- /rotation auto nearest is re-applied after death/respawn because RSR disables it.
-
---]]
-
 -- =========================================================
 -- PvP Utilities (Log/Sleep/WaitUntil/Addons/Conditions)
 -- =========================================================
@@ -47,8 +28,8 @@ import("System.Numerics")
 
 local UI = {
     PREFIX = "[PVP]",
-    ECHO_ON_START = true, -- only echo once at script start
-    ECHO_TO_CHAT = false,  -- NOTE: this echoes ALL logs; if you truly want only 1 echo, set false
+    ECHO_ON_START = true,
+    ECHO_TO_CHAT = false,
 }
 
 local function _echoLine(s) yield("/echo " .. tostring(s)) end
@@ -206,6 +187,8 @@ end
 local RUN_LOOP = true
 
 local SET_GARO_TITLES = Config.Get("garoTitles")
+local SEND_HELLO_ON_ENTRY = Config.Get("Hello on entry") ~= false
+local SEND_GOOD_MATCH_ON_RESULTS = Config.Get("Good Match on results") ~= false
 local TITLE_1 = "barago"
 local TITLE_2 = "garo"
 
@@ -412,7 +395,6 @@ enemyNames = { myName(), myName(), myName(), myName(), myName() }
 lbTick = 0
 hasEnabledRotationThisLife = false
 
--- gate detection state
 announcedEntered = false
 announcedPortrait = false
 sawIntroBand = false
@@ -421,9 +403,9 @@ dutyBaselineTime = nil
 baselineCaptured = false
 timerMovedFromBaseline = false
 
--- portrait quickchat threshold state
-portraitHelloThreshold = nil   -- number in [5..29]
+portraitHelloThreshold = nil
 portraitHelloSent = false
+goodMatchSent = false
 
 local function inPvPArea()
     local terr = Svc and Svc.ClientState and Svc.ClientState.TerritoryType
@@ -448,9 +430,9 @@ local function resetAllState(reason)
     baselineCaptured = false
     timerMovedFromBaseline = false
 
-    -- reset portrait hello
     portraitHelloThreshold = nil
     portraitHelloSent = false
+    goodMatchSent = false
 
     if reason then Log("reset: %s", tostring(reason)) end
 end
@@ -484,7 +466,7 @@ while RUN_LOOP do
     local inDuty = GetCondition(CharacterCondition.boundByDuty34, true)
 
     -- =====================================================
-    -- Match-end detector: if MKSRecord is visible, leave duty
+    -- Match-end detector
     -- =====================================================
     if inDuty then
         local endScreenStable = WaitUntil(function()
@@ -492,6 +474,13 @@ while RUN_LOOP do
         end, 0.5, 0.10, 0.25)
 
         if endScreenStable then
+            if SEND_GOOD_MATCH_ON_RESULTS and not goodMatchSent then
+                yield('/quickchat "Good Match"')
+                goodMatchSent = true
+                Log("quickchat Good Match sent on results screen")
+                Sleep(0.5)
+            end
+
             Log("match ended (MKSRecord visible) -> leaving duty")
             yield("/vnav stop")
 
@@ -581,7 +570,8 @@ while RUN_LOOP do
                 announcedPortrait = true
             end
 
-            if (not portraitHelloSent)
+            if SEND_HELLO_ON_ENTRY
+                and (not portraitHelloSent)
                 and portraitHelloThreshold ~= nil
                 and tLeft <= portraitHelloThreshold
                 and tLeft > 1
