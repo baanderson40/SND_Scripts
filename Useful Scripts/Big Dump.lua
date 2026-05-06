@@ -109,8 +109,8 @@ dumpInstance("Svc.ClientState", Svc.ClientState)
 
 -- Useful bits from LocalPlayer if present
 do
-  local lp = Svc.ClientState and Svc.ClientState.LocalPlayer or nil
-  dumpInstance("Svc.ClientState.LocalPlayer (instance)", lp)
+  local lp = Svc.Objects and Svc.Objects.LocalPlayer or nil
+  dumpInstance("Svc.Objects.LocalPlayer (instance)", lp)
   if lp then
     local function try(fn) local ok,v=pcall(fn); return ok and v or nil end
     local curWorld = try(function() return lp.CurrentWorld.Value.Name:ToString() end)

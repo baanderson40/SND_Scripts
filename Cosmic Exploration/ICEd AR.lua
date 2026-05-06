@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.0
+version: 0.1.1
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -341,7 +341,7 @@ function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
 end
 
 function GetCharacterPosition()
-    local player = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
+    local player = Svc and Svc.Objects and Svc.Objects.LocalPlayer
     return player and player.Position or nil
 end
 

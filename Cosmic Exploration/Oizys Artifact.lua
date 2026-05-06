@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.1
+version: 0.1.2
 description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
@@ -380,7 +380,7 @@ function GetCharacterCondition(i, bool)
 end
 
 function GetCharacterPosition()
-    local player = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
+    local player = Svc and Svc.Objects and Svc.Objects.LocalPlayer
     return player and player.Position or nil
 end
 

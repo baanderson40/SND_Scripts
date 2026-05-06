@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.0.1
 description: Teleport to Limsa and process retainers when they are ready.
 
 [[End Metadata]]
@@ -74,8 +74,12 @@ function ShouldRetainer()
             sleep(2)
         end
         while IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() do
-                sleep(.2)
-            curPos = Svc.ClientState.LocalPlayer.Position
+            sleep(.2)
+            local player = Svc and Svc.Objects and Svc.Objects.LocalPlayer
+            curPos = player and player.Position or nil
+            if curPos == nil then
+                break
+            end
             if DistanceBetweenPositions(curPos, SummoningBell[1].position) < 3 then
                 Dalamud.Log("[AR processing] Close enough to summoning bell")
                 IPC.vnavmesh.Stop()

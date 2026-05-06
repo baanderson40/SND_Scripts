@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
+version: 0.0.2
 description: SND script (standardized logging/echo aliases; sleep alias usage)
 configs:
   Mount:
@@ -364,7 +364,7 @@ local function GetCharacterName()
 end
 
 local function GetCharacterPosition()
-    local player = Svc and Svc.ClientState and Svc.ClientState.LocalPlayer
+    local player = Svc and Svc.Objects and Svc.Objects.LocalPlayer
     return player and player.Position or nil
 end
 

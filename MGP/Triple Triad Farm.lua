@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.2
+version: 1.0.3
 description: | 
   Support via https://ko-fi.com/baanderson40
   Farm MGP by playing Triple Triad NPCs and Saucy.
@@ -154,8 +154,8 @@ end
 -- Returns distance from player to a target Vector3
 -- Returns math.huge if no position or local player is found
 function GetDistanceToPoint(vec3)
-    local lp = Svc.ClientState.LocalPlayer
-    if not lp or not vec3 then
+    local lp = Svc and Svc.Objects and Svc.Objects.LocalPlayer
+    if not lp or not lp.Position or not vec3 then
         Dalamud.Log("[TT Farm] GetDistanceToPoint(): missing LocalPlayer or target; returning inf")
         return math.huge
     end
