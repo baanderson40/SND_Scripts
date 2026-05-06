@@ -1664,11 +1664,19 @@ function EnsureTextAdvanceEnabled()
     end
     local ok, enabled = pcall(IPC.TextAdvance.IsEnabled)
     if not ok or enabled then
+        enabled = ok and enabled
+    else
+        Dalamud.Log("[Toolkit Helper] Enabling TextAdvance")
+        yield("/at y")
+        Runtime.textAdvanceEnabledByScript = true
+    end
+    if not IPC.TextAdvance.GetEnableTalkSkip then
         return
     end
-    Dalamud.Log("[Toolkit Helper] Enabling TextAdvance")
-    yield("/at y")
-    Runtime.textAdvanceEnabledByScript = true
+    local talkSkipOk, talkSkipEnabled = pcall(IPC.TextAdvance.GetEnableTalkSkip)
+    if talkSkipOk and talkSkipEnabled == false then
+        yield("/echo [Toolkit Helper] Warning: TextAdvance TalkSkip is disabled; NPC text boxes will not be accepted.")
+    end
 end
 
 function RestoreTextAdvanceState()
