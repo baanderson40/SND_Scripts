@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.2
+version: 1.1.3
 description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
@@ -21,6 +21,9 @@ configs:
     min: 0
     max: 999
     description: Stop after this many completed matches. Set to 0 for unlimited.
+  Follow-up script:
+    default: ""
+    description: Optional SND script to run after the script stops from Match Limit.
 [[End Metadata]]
 --]=====]
 -- =========================================================
@@ -65,6 +68,12 @@ function toNumberSafe(s, default, min, max)
     if min ~= nil and n < min then n = min end
     if max ~= nil and n > max then n = max end
     return n
+end
+
+local function trimString(value)
+    if type(value) ~= "string" then return "" end
+    local trimmed = value:match("^%s*(.-)%s*$")
+    return trimmed or value
 end
 
 local function _getAddon(name)
@@ -192,6 +201,10 @@ local SET_GARO_TITLES = Config.Get("garoTitles")
 local SEND_HELLO_ON_ENTRY = Config.Get("Hello on entry") ~= false
 local SEND_GOOD_MATCH_ON_RESULTS = Config.Get("Good Match on results") ~= false
 local MATCH_LIMIT = toNumberSafe(Config.Get("Match Limit"), 0, 0, 999)
+local FOLLOW_UP_SCRIPT = trimString(Config.Get("Follow-up script"))
+if FOLLOW_UP_SCRIPT ~= "" and string.lower(FOLLOW_UP_SCRIPT) == "none" then
+    FOLLOW_UP_SCRIPT = ""
+end
 local TITLE_1 = "barago"
 local TITLE_2 = "garo"
 
@@ -411,6 +424,17 @@ portraitHelloSent = false
 goodMatchSent = false
 completedMatches = 0
 stopAfterCurrentMatch = false
+limitStopTriggered = false
+followUpIssued = false
+
+local function runFollowUpScript()
+    if followUpIssued or FOLLOW_UP_SCRIPT == "" then return false end
+    local sanitized = FOLLOW_UP_SCRIPT:gsub('"', '\\"')
+    Log("running follow-up script -> %s", FOLLOW_UP_SCRIPT)
+    yield(string.format('/snd run "%s"', sanitized))
+    followUpIssued = true
+    return true
+end
 
 local function inPvPArea()
     local terr = Svc and Svc.ClientState and Svc.ClientState.TerritoryType
@@ -485,6 +509,7 @@ while RUN_LOOP do
                 Log("completed match %d/%d", completedMatches, MATCH_LIMIT)
                 if completedMatches >= MATCH_LIMIT then
                     stopAfterCurrentMatch = true
+                    limitStopTriggered = true
                 end
             else
                 Log("completed match %d", completedMatches)
@@ -704,4 +729,8 @@ while RUN_LOOP do
 
     Sleep(0.50)
     ::continue_loop::
+end
+
+if limitStopTriggered then
+    runFollowUpScript()
 end
