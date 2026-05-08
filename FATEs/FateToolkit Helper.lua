@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.4
+version: 1.4.5
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -887,6 +887,11 @@ Runtime = {
     pendingRepair = false,
     repairToolkitStopped = false,
     nextRepairCheck = 0,
+    repairActionPending = false,
+    repairActionStartedAt = 0,
+    repairConditionSeen = false,
+    repairRetryCount = 0,
+    repairUseNpcFallback = false,
     nextChocoboStanceCheck = 0,
     purchaseCycleCount = 0,
     purchaseLimitReached = false,
@@ -2663,6 +2668,72 @@ function GetDarkMatterCount()
     return count
 end
 
+function GetRequiredDarkMatterCount(needsCount)
+    local required = tonumber(needsCount) or 0
+    if required < 0 then
+        required = 0
+    end
+    return math.floor(required)
+end
+
+function ResetRepairActionState()
+    Runtime.repairActionPending = false
+    Runtime.repairActionStartedAt = 0
+    Runtime.repairConditionSeen = false
+    Runtime.repairRetryCount = 0
+end
+
+function BeginRepairActionAttempt()
+    Runtime.repairActionPending = true
+    Runtime.repairActionStartedAt = os.clock()
+    Runtime.repairConditionSeen = false
+end
+
+function HandlePendingRepairAction(maxWaitSeconds, maxRetries)
+    maxWaitSeconds = maxWaitSeconds or 5
+    maxRetries = maxRetries or 2
+
+    if not Runtime.repairActionPending then
+        return false, false
+    end
+
+    if Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] then
+        if not Runtime.repairConditionSeen then
+            Dalamud.Log("[Toolkit Helper] Repair condition detected; waiting for repair to finish")
+            Runtime.repairConditionSeen = true
+        end
+        return true, false
+    end
+
+    if Runtime.repairConditionSeen then
+        Dalamud.Log("[Toolkit Helper] Repair condition cleared")
+        Runtime.repairActionPending = false
+        Runtime.repairActionStartedAt = 0
+        Runtime.repairConditionSeen = false
+        Runtime.repairRetryCount = 0
+        return false, true
+    end
+
+    if (os.clock() - (Runtime.repairActionStartedAt or 0)) < maxWaitSeconds then
+        return true, false
+    end
+
+    Runtime.repairRetryCount = (Runtime.repairRetryCount or 0) + 1
+    if Runtime.repairRetryCount >= maxRetries then
+        Dalamud.Log(string.format("[Toolkit Helper] Repair condition timeout after %d attempts; falling back to NPC repair", Runtime.repairRetryCount))
+        Runtime.repairActionPending = false
+        Runtime.repairActionStartedAt = 0
+        Runtime.repairConditionSeen = false
+        Runtime.repairRetryCount = 0
+        Runtime.repairUseNpcFallback = true
+        return false, false
+    end
+
+    Dalamud.Log(string.format("[Toolkit Helper] Repair condition timeout; retrying repair callback (%d/%d)", Runtime.repairRetryCount, maxRetries))
+    Runtime.repairActionStartedAt = os.clock()
+    return false, false
+end
+
 function GetRepairItemsCount()
     local threshold = Settings.repairThreshold or 0
     if threshold <= 0 then
@@ -3064,6 +3135,8 @@ function FinishRepairWorkflow(reason)
     if reason then
         Dalamud.Log("[Toolkit Helper] "..reason)
     end
+    ResetRepairActionState()
+    Runtime.repairUseNpcFallback = false
     Runtime.pendingRepair = false
     Runtime.nextRepairCheck = os.clock() + 120
     AttemptReturnToSavedLocation("repair workflow")
@@ -3139,7 +3212,6 @@ function LogFeatureFlagsOnce()
 end
 
 function OnStop()
-    StopVnav()
     StopToolkitRun("script stop")
     Runtime.pendingRepair = false
     Runtime.repairToolkitStopped = false
@@ -3148,6 +3220,7 @@ function OnStop()
             IPC.Lifestream.Abort()
         end)
     end
+    StopVnav()
     RestoreTextAdvanceState()
     RestoreBossModPreferredState()
 end
@@ -3423,6 +3496,8 @@ function RepairGear()
     RefreshSettings()
     local threshold = Settings.repairThreshold or 0
     if threshold <= 0 then
+        ResetRepairActionState()
+        Runtime.repairUseNpcFallback = false
         Runtime.pendingRepair = false
         ResumeToolkitAfterRepair("repair disabled")
         ChangeState(CharacterState.idle)
@@ -3432,11 +3507,15 @@ function RepairGear()
     local needsRepair = Inventory.GetItemsInNeedOfRepairs(threshold)
     local needsCount = needsRepair and needsRepair.Count or 0
     local darkMatterCount = GetDarkMatterCount()
-    Dalamud.Log(string.format("[Toolkit Helper] RepairGear state: threshold=%d%%, needs=%d, darkMatter=%d", threshold, needsCount or 0, darkMatterCount))
+    local requiredDarkMatter = GetRequiredDarkMatterCount(needsCount)
+    Dalamud.Log(string.format("[Toolkit Helper] RepairGear state: threshold=%d%%, needs=%d, darkMatter=%d, requiredDarkMatter=%d", threshold, needsCount or 0, darkMatterCount, requiredDarkMatter))
 
     local yesno = Addons.GetAddon("SelectYesno")
     if yesno ~= nil and yesno.Ready then
+        Dalamud.Log("[Toolkit Helper] Confirming repair prompt")
         yield("/callback SelectYesno true 0")
+        WaitForAddonClosed("SelectYesno", 3)
+        yield("/wait 0.5")
         return
     end
 
@@ -3445,13 +3524,51 @@ function RepairGear()
         if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] then
             Dalamud.Log("[Toolkit Helper] Mount detected while repair addon open; closing and retrying")
             CloseAddonIfMounted("Repair")
+            ResetRepairActionState()
             return
         end
         if needsCount == nil or needsCount == 0 then
+            ResetRepairActionState()
+            Dalamud.Log("[Toolkit Helper] Repairs complete; closing repair menu")
             yield("/callback Repair true -1")
+            WaitForAddonClosed("Repair", 3)
             FinishRepairWorkflow("repair menu closed")
         else
-            yield("/callback Repair true 0")
+            if Runtime.repairUseNpcFallback then
+                Dalamud.Log("[Toolkit Helper] Repair menu open; issuing repair callback")
+                yield("/callback Repair true 0")
+                local confirmAddon = WaitForAddonVisible("SelectYesno", 3)
+                if confirmAddon ~= nil and confirmAddon.Ready then
+                    Dalamud.Log("[Toolkit Helper] Confirming repair after repair callback")
+                    yield("/callback SelectYesno true 0")
+                    WaitForAddonClosed("SelectYesno", 3)
+                    yield("/wait 0.5")
+                else
+                    Dalamud.Log("[Toolkit Helper] Repair confirmation did not appear; retrying")
+                end
+            else
+                local waitingOnRepair, repairFinished = HandlePendingRepairAction(5, 2)
+                if waitingOnRepair then
+                    if Runtime.repairConditionSeen then
+                        yield("/wait 0.5")
+                    end
+                    return
+                end
+                if Runtime.repairUseNpcFallback then
+                    Dalamud.Log("[Toolkit Helper] Closing self-repair menu before NPC fallback")
+                    yield("/callback Repair true -1")
+                    WaitForAddonClosed("Repair", 3)
+                    return
+                end
+                if repairFinished then
+                    yield("/wait 0.5")
+                    return
+                end
+
+                Dalamud.Log("[Toolkit Helper] Repair menu open; issuing repair callback")
+                yield("/callback Repair true 0")
+                BeginRepairActionAttempt()
+            end
         end
         return
     end
@@ -3471,7 +3588,7 @@ function RepairGear()
     end
 
     local shopAddon = Addons.GetAddon("Shop")
-    if shopAddon ~= nil and shopAddon.Ready and darkMatterCount > 0 then
+    if shopAddon ~= nil and shopAddon.Ready and darkMatterCount >= requiredDarkMatter then
         Dalamud.Log("[Toolkit Helper] Closing vendor shop before resuming repairs")
         yield("/callback Shop true -1")
         WaitForAddonClosed("Shop", 2)
@@ -3480,16 +3597,18 @@ function RepairGear()
     end
 
     if Settings.selfRepair then
-        if darkMatterCount > 0 then
+        if darkMatterCount >= requiredDarkMatter and not Runtime.repairUseNpcFallback then
             Dalamud.Log("[Toolkit Helper] Ensuring character is dismounted before repair")
             if not EnsureDismounted() then
                 Dalamud.Log("[Toolkit Helper] Dismount failed; retrying later")
                 return
             end
             Dalamud.Log("[Toolkit Helper] Executing self-repair general action")
+            ResetRepairActionState()
             ExecuteRepairGeneralAction()
             return
         elseif Settings.autoBuyDarkMatter then
+            Dalamud.Log(string.format("[Toolkit Helper] Insufficient Dark Matter for self-repair (have=%d, need=%d); purchasing more", darkMatterCount, requiredDarkMatter))
             if not EnsureInLimsa("dark matter purchase") then
                 return
             end
@@ -3509,13 +3628,24 @@ function RepairGear()
                 end
             end
             Dalamud.Log("[Toolkit Helper] Purchasing Grade 8 Dark Matter from "..GetLocalizedNpcName(UNSYNRAEL_ROW_ID, "Unsynrael"))
-            yield("/callback Shop true 0 40 99")
+            yield("/callback Shop true 0 9 99")
+            local purchaseConfirm = WaitForAddonVisible("SelectYesno", 3)
+            if purchaseConfirm ~= nil and purchaseConfirm.Ready then
+                Dalamud.Log("[Toolkit Helper] Confirming Dark Matter purchase")
+                yield("/callback SelectYesno true 0")
+                WaitForAddonClosed("SelectYesno", 3)
+                yield("/wait 0.5")
+            else
+                Dalamud.Log("[Toolkit Helper] Dark Matter purchase confirmation did not appear yet; retrying")
+            end
             return
         end
     end
 
-    if Settings.selfRepair and not Settings.autoBuyDarkMatter then
-        Dalamud.Log("[Toolkit Helper] Dark Matter depleted and auto-buy disabled; falling back to Limsa mender")
+    if Runtime.repairUseNpcFallback then
+        Dalamud.Log("[Toolkit Helper] Self-repair failed; falling back to Limsa mender")
+    elseif Settings.selfRepair and not Settings.autoBuyDarkMatter then
+        Dalamud.Log(string.format("[Toolkit Helper] Insufficient Dark Matter (have=%d, need=%d) and auto-buy disabled; falling back to Limsa mender", darkMatterCount, requiredDarkMatter))
     end
     if not EnsureInLimsa("mender repair") then
         return
@@ -3702,8 +3832,9 @@ Dalamud.Log("[Toolkit Helper] Starting toolkit helper loop")
 yield("/vfate")
 
 while not Runtime.stopScript do
+    local allowRepairBusy = State == CharacterState.repairGear
     if not Svc.Condition[CharacterCondition.betweenAreas]
-        and not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair]
+        and (allowRepairBusy or not Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair])
     then
         State()
     end
