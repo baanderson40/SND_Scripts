@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.3
+version: 1.1.6
 description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
@@ -21,6 +21,14 @@ configs:
     min: 0
     max: 999
     description: Stop after this many completed matches. Set to 0 for unlimited.
+  Gearset Slot:
+    description: Optional gearset slot number to equip before queueing (0 disables).
+    default: 0
+    min: 0
+    max: 100
+  Lifestream Command:
+    default: ""
+    description: Optional Lifestream command to run before initial queueing.
   Follow-up script:
     default: ""
     description: Optional SND script to run after the script stops from Match Limit.
@@ -127,6 +135,22 @@ function AwaitAddonReady(name, timeoutSec)
     return ok
 end
 
+function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
+    if want == nil then want = true end
+    timeoutSec = toNumberSafe(timeoutSec, TIME.TIMEOUT, 0.1)
+    pollSec    = toNumberSafe(pollSec, TIME.POLL, 0.01)
+    stableSec  = toNumberSafe(stableSec, 0.0, 0.0)
+
+    local ok = WaitUntil(function()
+        return GetCondition(idx, want)
+    end, timeoutSec, pollSec, stableSec)
+
+    if not ok then
+        Log("WaitConditionStable timeout: idx=%s want=%s stable=%.1f", tostring(idx), tostring(want), stableSec)
+    end
+    return ok
+end
+
 local function _quoteArg(s)
     s = tostring(s)
     s = s:gsub("\\", "\\\\"):gsub('"', '\\"')
@@ -181,7 +205,10 @@ end
 CharacterCondition = CharacterCondition or {
     normalConditions = 1,
     dead             = 2,
+    casting          = 27,
     boundByDuty34    = 34,
+    betweenAreas     = 45,
+    betweenAreasForDuty = 51,
     pvpDisplayActive = 62,
     inDutyQueue      = 91,
     editingPortrait  = 100,
@@ -201,6 +228,11 @@ local SET_GARO_TITLES = Config.Get("garoTitles")
 local SEND_HELLO_ON_ENTRY = Config.Get("Hello on entry") ~= false
 local SEND_GOOD_MATCH_ON_RESULTS = Config.Get("Good Match on results") ~= false
 local MATCH_LIMIT = toNumberSafe(Config.Get("Match Limit"), 0, 0, 999)
+local GEARSET_SLOT = toNumberSafe(Config.Get("Gearset Slot"), 0, 0, 100)
+local LIFESTREAM_COMMAND = trimString(Config.Get("Lifestream Command"))
+if LIFESTREAM_COMMAND ~= "" and string.lower(LIFESTREAM_COMMAND) == "none" then
+    LIFESTREAM_COMMAND = ""
+end
 local FOLLOW_UP_SCRIPT = trimString(Config.Get("Follow-up script"))
 if FOLLOW_UP_SCRIPT ~= "" and string.lower(FOLLOW_UP_SCRIPT) == "none" then
     FOLLOW_UP_SCRIPT = ""
@@ -426,9 +458,118 @@ completedMatches = 0
 stopAfterCurrentMatch = false
 limitStopTriggered = false
 followUpIssued = false
+local equipGearsetSlot = -1
+local gearsetEquipped = false
+
+if GEARSET_SLOT >= 1 then
+    equipGearsetSlot = math.floor(GEARSET_SLOT) - 1
+end
+
+local function equipConfiguredGearset()
+    if gearsetEquipped then return true end
+
+    local slot = tonumber(equipGearsetSlot)
+    if slot == nil or slot < 0 then
+        gearsetEquipped = true
+        return true
+    end
+
+    local slotDisplay = slot + 1
+    if not Player or not Player.GetGearset then
+        Log("gearset equip requested but Player.GetGearset unavailable")
+        return false
+    end
+
+    local gearset = Player.GetGearset(slot)
+    if not gearset or gearset.IsValid ~= true then
+        Log("configured gearset slot %d invalid or unavailable", slotDisplay)
+        return false
+    end
+
+    local gearsetName = gearset.Name
+    if gearsetName and gearsetName.GetText then
+        local ok, resolved = pcall(function()
+            return gearsetName:GetText()
+        end)
+        if ok and type(resolved) == "string" and resolved ~= "" then
+            gearsetName = resolved
+        end
+    end
+    gearsetName = tostring(gearsetName or ("Gearset " .. slotDisplay))
+
+    Log("equipping gearset slot %d (%s)", slotDisplay, gearsetName)
+    local ok, err = pcall(function()
+        return gearset:Equip()
+    end)
+    if not ok then
+        Log("failed to equip gearset slot %d: %s", slotDisplay, tostring(err))
+        return false
+    end
+
+    yield("/wait 1")
+    gearsetEquipped = true
+    return true
+end
+
+local function isLifestreamBusy()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        return ok and busy == true
+    end
+    return false
+end
+
+local function runStartupLifestreamCommand()
+    if LIFESTREAM_COMMAND == "" then return true end
+    if not (IPC and IPC.Lifestream and IPC.Lifestream.ExecuteCommand) then
+        Log("lifestream command configured but IPC unavailable")
+        return false
+    end
+
+    Log("issuing lifestream command -> %s", LIFESTREAM_COMMAND)
+    pcall(function()
+        IPC.Lifestream.ExecuteCommand(LIFESTREAM_COMMAND)
+    end)
+
+    local started = WaitUntil(function()
+        return GetCondition(CharacterCondition.casting, true)
+            or GetCondition(CharacterCondition.betweenAreas, true)
+            or GetCondition(CharacterCondition.betweenAreasForDuty, true)
+            or isLifestreamBusy()
+            or IsAddonVisible("FadeMiddle")
+    end, 2.0, TIME.POLL, 0.0)
+
+    if not started then
+        Log("no lifestream activity detected after command; continuing")
+        return false
+    end
+
+    Log("lifestream activity detected; waiting for zoning completion")
+    local completed = WaitUntil(function()
+        return (not IsAddonReady("FadeMiddle"))
+            and (not isLifestreamBusy())
+            and GetCondition(CharacterCondition.betweenAreas, false)
+            and GetCondition(CharacterCondition.betweenAreasForDuty, false)
+            and Player ~= nil
+            and Player.Available == true
+    end, 300.0, TIME.POLL, 1.0)
+
+    if not completed then
+        Log("lifestream zoning completion timed out")
+        return false
+    end
+
+    Log("lifestream zoning complete")
+    return true
+end
 
 local function runFollowUpScript()
     if followUpIssued or FOLLOW_UP_SCRIPT == "" then return false end
+    WaitConditionStable(CharacterCondition.betweenAreas, false, 1.0, 30.0, TIME.POLL)
+    WaitConditionStable(CharacterCondition.betweenAreasForDuty, false, 1.0, 30.0, TIME.POLL)
+    WaitUntil(function()
+        return Player ~= nil and Player.Available == true
+    end, 10.0, TIME.POLL, 1.0)
     local sanitized = FOLLOW_UP_SCRIPT:gsub('"', '\\"')
     Log("running follow-up script -> %s", FOLLOW_UP_SCRIPT)
     yield(string.format('/snd run "%s"', sanitized))
@@ -483,6 +624,9 @@ if SET_GARO_TITLES then
     yield("/title set " .. TITLE_1); Sleep(3)
     yield("/title set " .. TITLE_2); Sleep(3)
 end
+
+equipConfiguredGearset()
+runStartupLifestreamCommand()
 
 -- =========================================================
 -- Initial DF clicks
