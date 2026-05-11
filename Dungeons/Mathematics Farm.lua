@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.4
+version: 0.1.5
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -10,6 +10,11 @@ plugin_dependencies:
 - Lifestream
 - vnavmesh
 configs:
+  Gearset Slot:
+    description: Optional gearset slot number to equip before farming (0 disables).
+    default: 0
+    min: 0
+    max: 100
   Mathematics Tome Limit:
     description: The number of Mathematics tomes to gather before spending them.
     default: 1500
@@ -19,8 +24,8 @@ configs:
     description: How many times the script should spend tomes before stopping. Set to 0 for unlimited.
     default: 1
   Dungeon:
-    description: The dungeon AutoDuty should run..
-    default: "Mistwake"
+    description: The dungeon AutoDuty should run.
+    default: "The Clyteum"
     is_choice: true
     choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria", "The Clyteum"]
   Arcanite type:
@@ -31,11 +36,18 @@ configs:
   Pause for AutoRetainer:
     description: |
       Pause the script while AutoRetainer handles retainer interactions.
-      This script does not interact with retainers; AutoRetainer MultiMode or RetainerSense must be enabled for processing.
+    default: true
+  Close Retainer List:
+    description: Automatically close retainer list.
     default: true
   Enable AutoRetainer MultiMode:
     description: Enable AutoRetainer MultiMode when the script completes.
     default: true
+  Follow-up Script:
+    description: |
+      SND script to run after this script finishes.
+      Must be a valid name for a script.
+    default: ""
 [[End Metadata]]
 --]=====]
 
@@ -45,7 +57,6 @@ configs:
 import("System.Numerics")
 echoLog = false
 PREFIX  = "[Mathematics Farmer]"
-closeRetainer = true
 
 -- ==============================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
@@ -376,6 +387,57 @@ local function EnableAutoRetainer()
     return true
 end
 
+local changedYesAlready = false
+local yesAlreadyOriginalState = nil
+
+local function YesAlreadyAvailable()
+    return IPC and IPC.YesAlready
+       and IPC.YesAlready.IsPluginEnabled
+       and IPC.YesAlready.SetPluginEnabled
+end
+
+local function ToggleYesAlready(wanted)
+    local desired = nil
+
+    if wanted == "disable" then
+        desired = false
+    elseif wanted == "restore" then
+        if changedYesAlready and yesAlreadyOriginalState ~= nil and YesAlreadyAvailable() then
+            local current = IPC.YesAlready.IsPluginEnabled()
+            if current ~= yesAlreadyOriginalState then
+                Log("YesAlready: restoring enabled=%s", tostring(yesAlreadyOriginalState))
+                IPC.YesAlready.SetPluginEnabled(yesAlreadyOriginalState)
+            end
+        end
+
+        changedYesAlready = false
+        yesAlreadyOriginalState = nil
+        return true
+    else
+        Log("YesAlready: invalid wanted=%s (use disable|restore)", tostring(wanted))
+        return false
+    end
+
+    if not YesAlreadyAvailable() then
+        return false
+    end
+
+    local current = IPC.YesAlready.IsPluginEnabled()
+    if yesAlreadyOriginalState == nil then
+        yesAlreadyOriginalState = current
+    end
+
+    if current ~= desired then
+        Log("YesAlready: setting enabled=%s", tostring(desired))
+        IPC.YesAlready.SetPluginEnabled(desired)
+        changedYesAlready = true
+    else
+        Log("YesAlready: already enabled=%s", tostring(desired))
+    end
+
+    return true
+end
+
 local function CloseRetainerList()
     Log("CloseRetainerList: begin")
 
@@ -410,6 +472,7 @@ end
 -- =========================================================
 function OnStop()
     StopVNAV()
+    ToggleYesAlready("restore")
 end
 
 -- =========================================================
@@ -432,6 +495,94 @@ function GetENpcResidentName(dataId)
     if not name or name == "" then return err("ENpcResident: name missing for id "..tostring(id)) end
 
     return ok({ name = tostring(name), source = "ENpcResident", id = id })
+end
+
+function GetEObjName(rowId)
+    local id = toNumberSafe(rowId, nil)
+    if not id then return err("EObjName: invalid id '"..tostring(rowId).."'") end
+
+    local sheet = Excel.GetSheet("EObjName")
+    if not sheet then return err("EObjName sheet not available") end
+
+    local row = sheet:GetRow(id)
+    if not row then return err("EObjName: no row for id "..tostring(id)) end
+
+    local textSource = row.Singular or row.Name or row.Unknown0
+    if textSource == nil and row.Text then
+        textSource = row.Text
+    end
+
+    local text = textSource
+    if textSource and textSource.GetText then
+        text = textSource:GetText()
+    end
+
+    text = tostring(text or "")
+    if text == "" then return err("EObjName: name missing for id "..tostring(id)) end
+
+    return ok({ name = text, source = "EObjName", id = id })
+end
+
+function PlaceNameByTerritory(id)
+    local terr = Excel.GetSheet("TerritoryType")
+    if not terr then return nil end
+
+    local row = terr:GetRow(id)
+    if not row then return nil end
+
+    local pn = row.PlaceName
+    if not pn then return nil end
+
+    if type(pn) == "string" and #pn > 0 then
+        return pn
+    end
+
+    if type(pn) == "userdata" then
+        local okValue, value = pcall(function() return pn.Value end)
+        if okValue and value then
+            local okName, name = pcall(function()
+                return value.Singular or value.Name or value:ToString()
+            end)
+            if okName and name and name ~= "" then
+                return name
+            end
+        end
+
+        local okId, rowId = pcall(function() return pn.RowId end)
+        if okId and type(rowId) == "number" then
+            local place = Excel.GetSheet("PlaceName")
+            if not place then return nil end
+
+            local placeRow = place:GetRow(rowId)
+            if not placeRow then return nil end
+
+            local okName, name = pcall(function()
+                return placeRow.Singular or placeRow.Name or placeRow:ToString()
+            end)
+            if okName and name and name ~= "" then
+                return name
+            end
+        end
+
+        return nil
+    end
+
+    if type(pn) == "number" then
+        local place = Excel.GetSheet("PlaceName")
+        if not place then return nil end
+
+        local placeRow = place:GetRow(pn)
+        if not placeRow then return nil end
+
+        local okName, name = pcall(function()
+            return placeRow.Singular or placeRow.Name or placeRow:ToString()
+        end)
+        if okName and name and name ~= "" then
+            return name
+        end
+    end
+
+    return nil
 end
 
 -- =========================================================
@@ -466,21 +617,38 @@ end
 
 -- Config reads
 local mathematicsLimit    = toNumberSafe(Config.Get("Mathematics Tome Limit"), 1500, 0)
-local maxPurchases        = toNumberSafe(Config.Get("Max Purchase Cycles"), 0, 0)
+local maxPurchases        = toNumberSafe(Config.Get("Max Purchase Cycles"), 1, 0)
 local arcanitePick        = tostring(Config.Get("Arcanite type") or "Waning Arcanite")
-local dungeonPick         = tostring(Config.Get("Dungeon") or "Mistwake")
+local dungeonPick         = tostring(Config.Get("Dungeon") or "The Clyteum")
 local pauseAutoRetainer   = (Config.Get("Pause for AutoRetainer") ~= false)
+local closeRetainer       = (Config.Get("Close Retainer List") ~= false)
 local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
+local followupScript      = tostring(Config.Get("Follow-up Script") or "")
+local gearsetSlotConfig   = toNumberSafe(Config.Get("Gearset Slot"), 0, 0, 100)
 
 local ItemToBuy           = (ArcaniteMap[arcanitePick] or 0)
 local DungeonToDo         = (DungMap[dungeonPick] and DungMap[dungeonPick].id or 0)
 local MathematicsFromDung = (DungMap[dungeonPick] and DungMap[dungeonPick].amount or 0)
 local purchaseCounter     = 0
+local spendMoveFailures   = 0
+local summoningBellNames  = nil
+local equipGearsetSlot    = -1
+local gearsetEquipped     = false
+local skipBellPauseUntilRetainerClears = false
+local phantomVillageCommand = "Phantom Village"
+
+if gearsetSlotConfig >= 1 then
+    equipGearsetSlot = math.floor(gearsetSlotConfig) - 1
+end
 
 -- IDs / locations
 local INN_TERRITORY_ID     = 177
 local PHANTOM_VILLAGE_ID   = 1278
 local MATHEMATICS_ITEM_ID  = 48
+local SUMMONING_BELL_ROW_IDS = {
+    2000072, 2000401, 2000403, 2000439, 2000441, 2000661,
+    2000127, 2000138, 2000656, 2001028, 2001498, 2001513,
+}
 
 -- Tome Exchange NPC (localized name from ENpcResident)
 local TOME_EXCHANGE_NPC_ID = 1053904
@@ -497,6 +665,16 @@ do
         Log("TomeExchange NPC: %s (id=%d)", npc.name, npc.id)
     else
         Log("TomeExchange NPC lookup failed: %s", npc)
+    end
+end
+
+do
+    local localizedPlaceName = PlaceNameByTerritory(PHANTOM_VILLAGE_ID)
+    if localizedPlaceName and localizedPlaceName ~= "" then
+        phantomVillageCommand = tostring(localizedPlaceName)
+        Log("Phantom Village destination: %s (territory=%d)", phantomVillageCommand, PHANTOM_VILLAGE_ID)
+    else
+        Log("Phantom Village destination lookup failed; using fallback '%s'", phantomVillageCommand)
     end
 end
 
@@ -527,6 +705,14 @@ local function RunsToGo()
     return math.ceil(remaining / perRun)
 end
 
+local function SpendPurchaseQuantity()
+    local limitQty = math.floor((tonumber(mathematicsLimit) or 0) / 500)
+    local availableQty = math.floor(MathematicsOnHand() / 500)
+    return math.min(limitQty, availableQty)
+end
+
+local gotoState
+
 local function StartAutoDuty()
     if not (IPC and IPC.AutoDuty and IPC.AutoDuty.Run) then
         Log("StartAutoDuty: AutoDuty IPC missing")
@@ -538,27 +724,232 @@ local function StartAutoDuty()
     return true
 end
 
-local function TravelToZone(command, targetZoneId)
-    IPC.Lifestream.ExecuteCommand(command)
-    while IPC.Lifestream.IsBusy() do
-        if WaitZoneChange() and (GetZoneId() or 0) == targetZoneId then
-            IPC.Lifestream.Abort()
-        end
-        sleep(TIME.POLL)
+local function IsLifestreamBusy()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        return ok and busy == true
     end
+    return false
+end
+
+local function TravelToZone(command, targetZoneId, timeoutSec)
+    if not (IPC and IPC.Lifestream and IPC.Lifestream.ExecuteCommand and IPC.Lifestream.IsBusy and IPC.Lifestream.Abort) then
+        Log("TravelToZone: Lifestream IPC missing for '%s'", tostring(command))
+        return false
+    end
+
+    timeoutSec = toNumberSafe(timeoutSec, 120, 1)
+    IPC.Lifestream.ExecuteCommand(command)
+    local started = WaitUntil(function()
+        return GetCharacterCondition(CharacterCondition.casting, true)
+            or GetCharacterCondition(CharacterCondition.betweenAreas, true)
+            or GetCharacterCondition(CharacterCondition.betweenAreasForDuty, true)
+            or IsLifestreamBusy()
+            or IsAddonVisible("FadeMiddle")
+    end, 2.0, TIME.POLL, 0.0)
+
+    if not started then
+        Log("TravelToZone: no lifestream activity detected for '%s'", tostring(command))
+        return false
+    end
+
+    local completed = WaitUntil(function()
+        return (not IsAddonReady("FadeMiddle"))
+            and (not IsLifestreamBusy())
+            and GetCharacterCondition(CharacterCondition.betweenAreas, false)
+            and GetCharacterCondition(CharacterCondition.betweenAreasForDuty, false)
+            and Player ~= nil
+            and Player.Available == true
+    end, timeoutSec, TIME.POLL, 1.0)
+
+    if not completed then
+        Log("TravelToZone: lifestream zoning completion timed out for '%s'", tostring(command))
+        IPC.Lifestream.Abort()
+        return false
+    end
+
+    if (GetZoneId() or 0) ~= targetZoneId then
+        Log("TravelToZone: expected zone %s, got %s", tostring(targetZoneId), tostring(GetZoneId()))
+        return false
+    end
+
+    return true
 end
 
 local function ReturnToInn()
-    TravelToZone("Inn", INN_TERRITORY_ID)
+    return TravelToZone("Inn", INN_TERRITORY_ID)
 end
 
 local function MoveToPhantomVillage()
-    TravelToZone("Phantom Village", PHANTOM_VILLAGE_ID)
+    return TravelToZone(phantomVillageCommand, PHANTOM_VILLAGE_ID)
+end
+
+local function EquipConfiguredGearset()
+    if gearsetEquipped then return true end
+
+    local slot = tonumber(equipGearsetSlot)
+    if slot == nil or slot < 0 then
+        gearsetEquipped = true
+        return true
+    end
+
+    local slotDisplay = slot + 1
+    if not Player or not Player.GetGearset then
+        Log("gearset equip requested but Player.GetGearset unavailable")
+        return false
+    end
+
+    local gearset = Player.GetGearset(slot)
+    if not gearset or gearset.IsValid ~= true then
+        Log("configured gearset slot %d invalid or unavailable", slotDisplay)
+        return false
+    end
+
+    local gearsetName = gearset.Name
+    if gearsetName and gearsetName.GetText then
+        local ok, resolved = pcall(function()
+            return gearsetName:GetText()
+        end)
+        if ok and type(resolved) == "string" and resolved ~= "" then
+            gearsetName = resolved
+        end
+    end
+    gearsetName = tostring(gearsetName or ("Gearset " .. slotDisplay))
+
+    Log("equipping gearset slot %d (%s)", slotDisplay, gearsetName)
+    local ok, err = pcall(function()
+        return gearset:Equip()
+    end)
+    if not ok then
+        Log("failed to equip gearset slot %d: %s", slotDisplay, tostring(err))
+        return false
+    end
+
+    yield("/wait 1")
+    gearsetEquipped = true
+    return true
 end
 
 -- =========================================================
 -- AutoRetainer readiness (retainer fix)
 -- =========================================================
+local function GetSummoningBellNames()
+    if summoningBellNames ~= nil then
+        return summoningBellNames
+    end
+
+    local names = {}
+    local seen = {}
+    for i = 1, #SUMMONING_BELL_ROW_IDS do
+        local okName, entry = GetEObjName(SUMMONING_BELL_ROW_IDS[i])
+        if okName then
+            local name = tostring(entry.name or "")
+            if name ~= "" and not seen[name] then
+                seen[name] = true
+                table.insert(names, name)
+            end
+        else
+            Log("Summoning bell row lookup failed for %d: %s", SUMMONING_BELL_ROW_IDS[i], tostring(entry))
+        end
+    end
+
+    summoningBellNames = names
+    Log("Resolved %d summoning bell name(s)", #names)
+    if #names > 0 then
+        Log("Summoning bell names: %s", table.concat(names, ", "))
+    end
+    return summoningBellNames
+end
+
+local function GetPlayerPosition()
+    local player = Svc and Svc.Objects and Svc.Objects.LocalPlayer
+    if player and player.Position then
+        return player.Position
+    end
+    local entPlayer = Entity and Entity.Player
+    if entPlayer and entPlayer.Position then
+        return entPlayer.Position
+    end
+    return nil
+end
+
+local function FindNearbySummoningBell()
+    local playerPos = GetPlayerPosition()
+    if not playerPos then
+        Log("FindNearbySummoningBell: missing player position")
+        return nil
+    end
+
+    local names = GetSummoningBellNames()
+    local closest, closestDistance = nil, math.huge
+    for i = 1, #names do
+        local bell = Entity and Entity.GetEntityByName and Entity.GetEntityByName(names[i]) or nil
+        if bell and bell.Position then
+            local dist = Vector3.Distance(playerPos, bell.Position)
+            if dist < closestDistance then
+                closest = bell
+                closestDistance = dist
+            end
+        end
+    end
+
+    if closest then
+        Log("Found nearby summoning bell '%s' at distance %.2f", tostring(closest.Name), closestDistance)
+    else
+        Log("No nearby summoning bell entity is loaded")
+    end
+    return closest
+end
+
+local function InteractWithEntity(ent, timeout)
+    if not (ent and ent.Position) then
+        Log("InteractWithEntity: invalid entity")
+        return false
+    end
+
+    timeout = toNumberSafe(timeout, 5, 0.1)
+    local targetName = tostring(ent.Name or "")
+    local start = os.clock()
+    while (os.clock() - start) < timeout do
+        ent:SetAsTarget()
+        sleep(TIME.POLL)
+        local tgt = Entity and Entity.Target
+        if tgt and tostring(tgt.Name or "") == targetName then
+            ent:Interact()
+            return true
+        end
+        sleep(TIME.POLL)
+    end
+
+    Log("InteractWithEntity: timeout '%s'", targetName)
+    return false
+end
+
+local function TryOpenRetainerListFromBell(bell)
+    if not InteractWithEntity(bell, 3.0) then
+        return false
+    end
+
+    if AwaitAddonReady("RetainerList", 2.5) then
+        return true
+    end
+
+    Log("RetainerList did not open; attempting lock-on recovery")
+    yield("/lockon")
+    sleep(0.2)
+
+    if not InteractWithEntity(bell, 3.0) then
+        return false
+    end
+
+    if AwaitAddonReady("RetainerList", 2.5) then
+        return true
+    end
+
+    Log("RetainerList did not open after lock-on retry")
+    return false
+end
+
 local function IsRetainerWorkPending()
     if not (IPC and IPC.AutoRetainer and IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara) then
         return false
@@ -575,6 +966,67 @@ local function WaitRetainersFinished()
     return true
 end
 
+local function ReturnToSavedPosition(savedPosition, movedToBell)
+    if not movedToBell or not savedPosition then
+        return true
+    end
+
+    if Vector3.Distance(GetPlayerPosition() or savedPosition, savedPosition) <= 1.5 then
+        return true
+    end
+
+    if not MoveNearVnav(savedPosition, 1.5, false) then
+        Log("ReturnToSavedPosition: could not return to original position")
+        return false
+    end
+
+    return true
+end
+
+local function HandleNearbySummoningBellForRetainers()
+    local bell = FindNearbySummoningBell()
+    if not bell then
+        Log("WAIT_BELL: skipping AutoRetainer pause (no nearby summoning bell)")
+        return false, "no bell found"
+    end
+
+    local playerPos = GetPlayerPosition()
+    if not playerPos then
+        Log("WAIT_BELL: skipping AutoRetainer pause (missing player position)")
+        return false, "missing player position"
+    end
+
+    local movedToBell = false
+    if Vector3.Distance(playerPos, bell.Position) > 4.0 then
+        Log("WAIT_BELL: moving to nearby summoning bell")
+        if not MoveNearVnav(bell.Position, 4.0, false) then
+            Log("WAIT_BELL: could not move to summoning bell; skipping pause")
+            return false, "move to bell failed"
+        end
+        movedToBell = true
+    else
+        Log("WAIT_BELL: already close to nearby summoning bell")
+    end
+
+    if not AtSummoningBell() and not TryOpenRetainerListFromBell(bell) then
+        Log("WAIT_BELL: could not open RetainerList from summoning bell; skipping pause")
+        ReturnToSavedPosition(playerPos, movedToBell)
+        return false, "retainer interaction failed"
+    end
+
+    EnableAutoRetainer()
+    WaitRetainersFinished()
+    Sleep(TIME.STABLE)
+
+    if closeRetainer and WaitAddonStable("RetainerList", TIME.STABLE, 10, TIME.POLL) then
+        CloseRetainerList()
+    end
+
+    WaitUntil(function() return not AtSummoningBell() end, 10, TIME.POLL, 0.5)
+    ReturnToSavedPosition(playerPos, movedToBell)
+    return true, nil
+end
+
 -- =========================================================
 -- STATE MACHINE
 -- =========================================================
@@ -589,9 +1041,12 @@ STATE = {
 
 local sm = { s = STATE.READY, t0 = os.clock() }
 
-local function gotoState(s)
+gotoState = function(s)
     sm.s = s
     sm.t0 = os.clock()
+    if s ~= STATE.SPEND_TOMES then
+        spendMoveFailures = 0
+    end
     Log("STATE -> %s", s)
 end
 
@@ -600,12 +1055,18 @@ end
 -- =========================================================
 EchoOnce("Starting Mathematics Farmer script.")
 
+EquipConfiguredGearset()
+
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- ======================
     -- READY
     -- ======================
     if sm.s == STATE.READY then
-        if (AtSummoningBell() or IsRetainerWorkPending()) and pauseAutoRetainer then
+        if not IsRetainerWorkPending() then
+            skipBellPauseUntilRetainerClears = false
+        end
+
+        if (AtSummoningBell() or IsRetainerWorkPending()) and pauseAutoRetainer and not skipBellPauseUntilRetainerClears then
             Log("READY: bell/retainer active; entering WAIT_BELL")
             gotoState(STATE.WAIT_BELL)
             goto continue
@@ -640,10 +1101,16 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- ======================
     elseif sm.s == STATE.SPEND_TOMES then
         Log("Moving to Phantom Village to spend tomes")
-        MoveToPhantomVillage()
+        if not MoveToPhantomVillage() then
+            Log("SPEND_TOMES: failed to travel to Phantom Village")
+            ToggleYesAlready("restore")
+            gotoState(STATE.FAIL)
+            goto continue
+        end
 
         if not TomeExchange.name or TomeExchange.name == "" then
             Log("SPEND_TOMES: TomeExchange.name missing (Excel lookup failed)")
+            ToggleYesAlready("restore")
             gotoState(STATE.FAIL)
             goto continue
         end
@@ -651,65 +1118,86 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         local ent = (Entity and Entity.GetEntityByName) and Entity.GetEntityByName(TomeExchange.name) or nil
         if not (ent and ent.Position and ent.Name and ent.Name ~= "") then
             Log("SPEND_TOMES: TomeExchange entity not found/invalid (sheetName='%s')", tostring(TomeExchange.name))
+            ToggleYesAlready("restore")
             gotoState(STATE.FAIL)
             goto continue
         end
 
         Log("SPEND_TOMES: Moving to tome exchange NPC (%s)", ent.Name)
         if not MoveNearVnav(ent.Position, 3.0, false) then
+            spendMoveFailures = spendMoveFailures + 1
+            Log("SPEND_TOMES: move to NPC failed (%d/3)", spendMoveFailures)
+            if spendMoveFailures >= 3 then
+                ToggleYesAlready("restore")
+                gotoState(STATE.FAIL)
+            end
             goto continue
         end
+        spendMoveFailures = 0
+
+        ToggleYesAlready("disable")
 
         Log("SPEND_TOMES: Interacting with tome exchange NPC (%s)", ent.Name)
         if not InteractByName(ent.Name, 5.0) then
             Log("SPEND_TOMES: could not interact with NPC (%s)", ent.Name)
+            ToggleYesAlready("restore")
             gotoState(STATE.FAIL)
             goto continue
         end
 
         if not AwaitAddonReady("ShopExchangeCurrency", 5.0) then
             Log("SPEND_TOMES: ShopExchangeCurrency did not open")
+            ToggleYesAlready("restore")
             gotoState(STATE.FAIL)
             goto continue
         end
 
-        while MathematicsOnHand() >= 500 do
-            SafeCallback("ShopExchangeCurrency", true, 0, ItemToBuy, 1)
-
-            if not AwaitAddonReady("SelectYesno", 5.0) then
-                Log("SPEND_TOMES: SelectYesno missing")
-                gotoState(STATE.FAIL)
-                break
-            end
-            SafeCallback("SelectYesno", true, 0)
-
-            if not AwaitAddonReady("ShopExchangeCurrency", 5.0) then
-                Log("SPEND_TOMES: ShopExchangeCurrency not ready after confirm")
-                gotoState(STATE.FAIL)
-                break
-            end
-
-            sleep(TIME.STABLE)
+        local qty = SpendPurchaseQuantity()
+        if qty <= 0 then
+            Log("SPEND_TOMES: no purchases available for limit=%d tomes=%d", mathematicsLimit, MathematicsOnHand())
+            ToggleYesAlready("restore")
+            gotoState(STATE.FAIL)
+            goto continue
         end
 
-        if sm.s ~= STATE.FAIL then
-            Log("Closing shop window")
-            for i = 1, 10 do
-                if not IsAddonVisible("ShopExchangeCurrency") then break end
-                SafeCallback("ShopExchangeCurrency", true, -1)
-                Sleep(TIME.STABLE)
-            end
+        local startingTomes = MathematicsOnHand()
+        Log("SPEND_TOMES: purchasing %d item(s) using %d tomes", qty, qty * 500)
+        SafeCallback("ShopExchangeCurrency", true, 0, ItemToBuy, qty)
 
+        WaitUntil(function()
+            return IsAddonReady("SelectYesno") or MathematicsOnHand() < startingTomes
+        end, 3.0, TIME.POLL, 0.0)
+
+        if IsAddonReady("SelectYesno") then
+            SafeCallback("SelectYesno", true, 0)
+        end
+
+        if not WaitUntil(function()
+            return MathematicsOnHand() < startingTomes
+        end, 5.0, TIME.POLL, 0.0) then
+            Log("SPEND_TOMES: purchase did not change tome count (start=%d now=%d)", startingTomes, MathematicsOnHand())
+            ToggleYesAlready("restore")
+            gotoState(STATE.FAIL)
+            goto continue
+        end
+
+        Log("Closing shop window")
+        for i = 1, 10 do
+            if not IsAddonVisible("ShopExchangeCurrency") then break end
+            SafeCallback("ShopExchangeCurrency", true, -1)
             Sleep(TIME.STABLE)
+        end
 
-            purchaseCounter = purchaseCounter + 1
-            Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
+        ToggleYesAlready("restore")
+        Sleep(TIME.STABLE)
 
-            if maxPurchases == 0 or purchaseCounter < maxPurchases then
-                gotoState(STATE.READY)
-            else
-                gotoState(STATE.DONE)
-            end
+        purchaseCounter = purchaseCounter + 1
+        Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
+
+        if maxPurchases == 0 or purchaseCounter < maxPurchases then
+            gotoState(STATE.READY)
+        else
+            gotoState(STATE.DONE)
         end
 
     -- ======================
@@ -731,8 +1219,13 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         end
 
         if IsRetainerWorkPending() then
-            WaitRetainersFinished()
-            Sleep(TIME.POLL)
+            local handled, reason = HandleNearbySummoningBellForRetainers()
+            if not handled then
+                skipBellPauseUntilRetainerClears = true
+                Log("WAIT_BELL: suppressing bell retries until retainer work clears (%s)", tostring(reason or "unknown reason"))
+            end
+            Sleep(TIME.STABLE)
+            gotoState(STATE.READY)
             goto continue
         end
 
@@ -752,6 +1245,16 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
 
     ::continue::
     Sleep(TIME.POLL)
+end
+
+if sm.s == STATE.DONE and followupScript ~= "" then
+    local sanitized = followupScript:gsub('"', '\\"')
+    Log("running follow-up script -> %s", followupScript)
+    yield(string.format('/snd run "%s"', sanitized))
+    if multiMode then
+        multiMode = false
+        EchoOnce("MultiMode not being enabled due to follow-up script running")
+    end
 end
 
 if multiMode then

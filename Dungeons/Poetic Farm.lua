@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.6
+version: 1.1.7
 description: |
   Run porta decumana for tomes to get manderville relic mats.
 plugin_dependencies:
@@ -410,6 +410,57 @@ local function EnableAutoRetainer()
     return true
 end
 
+local changedYesAlready = false
+local yesAlreadyOriginalState = nil
+
+local function YesAlreadyAvailable()
+    return IPC and IPC.YesAlready
+       and IPC.YesAlready.IsPluginEnabled
+       and IPC.YesAlready.SetPluginEnabled
+end
+
+local function ToggleYesAlready(wanted)
+    local desired = nil
+
+    if wanted == "disable" then
+        desired = false
+    elseif wanted == "restore" then
+        if changedYesAlready and yesAlreadyOriginalState ~= nil and YesAlreadyAvailable() then
+            local current = IPC.YesAlready.IsPluginEnabled()
+            if current ~= yesAlreadyOriginalState then
+                Log("YesAlready: restoring enabled=%s", tostring(yesAlreadyOriginalState))
+                IPC.YesAlready.SetPluginEnabled(yesAlreadyOriginalState)
+            end
+        end
+
+        changedYesAlready = false
+        yesAlreadyOriginalState = nil
+        return true
+    else
+        Log("YesAlready: invalid wanted=%s (use disable|restore)", tostring(wanted))
+        return false
+    end
+
+    if not YesAlreadyAvailable() then
+        return false
+    end
+
+    local current = IPC.YesAlready.IsPluginEnabled()
+    if yesAlreadyOriginalState == nil then
+        yesAlreadyOriginalState = current
+    end
+
+    if current ~= desired then
+        Log("YesAlready: setting enabled=%s", tostring(desired))
+        IPC.YesAlready.SetPluginEnabled(desired)
+        changedYesAlready = true
+    else
+        Log("YesAlready: already enabled=%s", tostring(desired))
+    end
+
+    return true
+end
+
 local function CloseRetainerList()
     Log("CloseRetainerList: begin")
 
@@ -444,6 +495,7 @@ end
 -- =========================================================
 function OnStop()
     StopVNAV()
+    ToggleYesAlready("restore")
 end
 
 -- =========================================================
@@ -896,15 +948,19 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
+        ToggleYesAlready("disable")
+
         Log("SPEND_TOMES: Interacting with tome exchange NPC (%s)", ent.Name)
         if not InteractByName(ent.Name, 5.0) then
             Log("SPEND_TOMES: could not interact with NPC (%s)", ent.Name)
+            ToggleYesAlready("restore")
             gotoState(STATE.FAIL)
             goto continue
         end
 
         if not AwaitAddonReady("ShopExchangeCurrency", 5.0) then
             Log("SPEND_TOMES: ShopExchangeCurrency did not open")
+            ToggleYesAlready("restore")
             gotoState(STATE.FAIL)
             goto continue
         end
@@ -941,17 +997,22 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 Log("Auto restock purchasing %s (%d/%d)", purchaseName, selectedMat.count, selectedMat.target)
             end
 
+            local startingPoetics = PoeticOnHand()
             SafeCallback("ShopExchangeCurrency", true, 0, purchaseId, 1)
 
-            if not AwaitAddonReady("SelectYesno", 5.0) then
-                Log("SPEND_TOMES: SelectYesno missing")
-                gotoState(STATE.FAIL)
-                break
-            end
-            SafeCallback("SelectYesno", true, 0)
+            WaitUntil(function()
+                return IsAddonReady("SelectYesno") or PoeticOnHand() < startingPoetics
+            end, 3.0, TIME.POLL, 0.0)
 
-            if not AwaitAddonReady("ShopExchangeCurrency", 5.0) then
-                Log("SPEND_TOMES: ShopExchangeCurrency not ready after confirm")
+            if IsAddonReady("SelectYesno") then
+                SafeCallback("SelectYesno", true, 0)
+            end
+
+            if not WaitUntil(function()
+                return PoeticOnHand() < startingPoetics
+            end, 5.0, TIME.POLL, 0.0) then
+                Log("SPEND_TOMES: purchase did not change poetic count (start=%d now=%d)", startingPoetics, PoeticOnHand())
+                ToggleYesAlready("restore")
                 gotoState(STATE.FAIL)
                 break
             end
@@ -979,6 +1040,7 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                 Sleep(TIME.STABLE)
             end
 
+            ToggleYesAlready("restore")
             Sleep(TIME.STABLE)
 
             if autoRestockActive then
@@ -1001,6 +1063,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
                     gotoState(STATE.DONE)
                 end
             end
+        else
+            ToggleYesAlready("restore")
         end
 
     -- ======================
