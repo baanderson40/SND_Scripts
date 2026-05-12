@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.5
+version: 0.1.6
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -15,24 +15,44 @@ configs:
     default: 0
     min: 0
     max: 100
+  Dungeon:
+    description: The dungeon AutoDuty should run.
+    default: "The Clyteum"
+    is_choice: true
+    choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria", "The Clyteum"]
   Mathematics Tome Limit:
     description: The number of Mathematics tomes to gather before spending them.
     default: 1500
     min: 500
     max: 2000
   Max Purchase Cycles:
-    description: How many times the script should spend tomes before stopping. Set to 0 for unlimited.
+    description: How many times the script should spend tomes before stopping in simple mode. Set to 0 for unlimited.
     default: 1
-  Dungeon:
-    description: The dungeon AutoDuty should run.
-    default: "The Clyteum"
-    is_choice: true
-    choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria", "The Clyteum"]
   Arcanite type:
-    description: The type of arcanite to purchase with tomes.
+    description: The type of arcanite to purchase with tomes in simple mode.
     default: "Waning Arcanite"
     is_choice: true
     choices: ["Waning Arcanite", "Waxing Arcanite", "Arcanite"]
+  Advanced Purchase Mode:
+    description: |
+      Enable target-based arcanite purchasing.
+      When enabled, Arcanite type and Max Purchase Cycles are ignored and the script buys toward the target counts below until all enabled targets are met.
+    default: false
+  Target Arcanite Count:
+    description: Desired Arcanite count in advanced purchase mode. Set to 0 to disable this item.
+    default: 3
+    min: 0
+    max: 99
+  Target Waxing Arcanite Count:
+    description: Desired Waxing Arcanite count in advanced purchase mode. Set to 0 to disable this item.
+    default: 3
+    min: 0
+    max: 99
+  Target Waning Arcanite Count:
+    description: Desired Waning Arcanite count in advanced purchase mode. Set to 0 to disable this item.
+    default: 3
+    min: 0
+    max: 99
   Pause for AutoRetainer:
     description: |
       Pause the script while AutoRetainer handles retainer interactions.
@@ -176,16 +196,6 @@ function AwaitAddonReady(name, timeoutSec)
     return ok
 end
 
-function AwaitAddonVisible(name, timeoutSec)
-    Log("awaiting visible: %s", tostring(name))
-    local ok = WaitUntil(function()
-        local addon = _get_addon(name)
-        return addon and addon.Exists
-    end, timeoutSec or TIME.TIMEOUT, TIME.POLL, 0.0)
-    if not ok then Log("AwaitAddonVisible timeout: %s", tostring(name)) end
-    return ok
-end
-
 function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
     return WaitUntil(function()
         local addon = _get_addon(addonName)
@@ -214,19 +224,6 @@ end
 function GetZoneId()
     local cs = Svc and Svc.ClientState
     return cs and cs.TerritoryType or nil
-end
-
-function WaitZoneChange()
-    sleep(1.0)
-    while GetCharacterCondition(CharacterCondition.casting, true)
-       or GetCharacterCondition(CharacterCondition.betweenAreas, true)
-       or GetCharacterCondition(CharacterCondition.betweenAreasForDuty, true)
-       or GetCharacterCondition(CharacterCondition.occupiedInQuestEvent, true)
-       or Player.IsBusy do
-        sleep(TIME.POLL)
-    end
-    sleep(1.0)
-    return true
 end
 
 local function InDuty()
@@ -589,9 +586,9 @@ end
 -- Variable State + Tables
 -- =========================================================
 local ArcaniteTypes  = {
-    {name = "Arcanite",         id = 0},
-    {name = "Waxing Arcanite",  id = 1},
-    {name = "Waning Arcanite",  id = 2}
+    {name = "Arcanite",        purchaseId = 0, itemId = 47750, configTarget = "Target Arcanite Count"},
+    {name = "Waxing Arcanite", purchaseId = 1, itemId = 46850, configTarget = "Target Waxing Arcanite Count"},
+    {name = "Waning Arcanite", purchaseId = 2, itemId = 50058, configTarget = "Target Waning Arcanite Count"},
 }
 
 local DungList = {
@@ -606,7 +603,7 @@ local DungList = {
 local ArcaniteMap = {}
 for i = 1, #ArcaniteTypes do
     local t = ArcaniteTypes[i]
-    ArcaniteMap[t.name] = t.id
+    ArcaniteMap[t.name] = t
 end
 
 local DungMap = {}
@@ -615,34 +612,90 @@ for i = 1, #DungList do
     DungMap[t.name] = { id = t.id, amount = t.amount }
 end
 
--- Config reads
-local mathematicsLimit    = toNumberSafe(Config.Get("Mathematics Tome Limit"), 1500, 0)
-local maxPurchases        = toNumberSafe(Config.Get("Max Purchase Cycles"), 1, 0)
-local arcanitePick        = tostring(Config.Get("Arcanite type") or "Waning Arcanite")
-local dungeonPick         = tostring(Config.Get("Dungeon") or "The Clyteum")
-local pauseAutoRetainer   = (Config.Get("Pause for AutoRetainer") ~= false)
-local closeRetainer       = (Config.Get("Close Retainer List") ~= false)
-local multiMode           = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
-local followupScript      = tostring(Config.Get("Follow-up Script") or "")
-local gearsetSlotConfig   = toNumberSafe(Config.Get("Gearset Slot"), 0, 0, 100)
-
-local ItemToBuy           = (ArcaniteMap[arcanitePick] or 0)
-local DungeonToDo         = (DungMap[dungeonPick] and DungMap[dungeonPick].id or 0)
-local MathematicsFromDung = (DungMap[dungeonPick] and DungMap[dungeonPick].amount or 0)
+local mathematicsLimit    = 1500
+local maxPurchases        = 1
+local arcanitePick        = "Waning Arcanite"
+local dungeonPick         = "The Clyteum"
+local pauseAutoRetainer   = true
+local closeRetainer       = true
+local multiMode           = true
+local followupScript      = ""
+local equipGearsetSlot    = -1
+local advancedPurchaseMode = false
+local ArcaniteTargetSettings = {}
+local advancedAnyEnabled  = false
+local ItemToBuyEntry      = nil
+local ItemToBuy           = 0
+local DungeonToDo         = 0
+local MathematicsFromDung = 0
 local purchaseCounter     = 0
 local spendMoveFailures   = 0
 local summoningBellNames  = nil
-local equipGearsetSlot    = -1
 local gearsetEquipped     = false
 local skipBellPauseUntilRetainerClears = false
 local phantomVillageCommand = "Phantom Village"
 
-if gearsetSlotConfig >= 1 then
-    equipGearsetSlot = math.floor(gearsetSlotConfig) - 1
+local function SyncSettings(force)
+    force = force == true
+
+    local newMathematicsLimit = toNumberSafe(Config.Get("Mathematics Tome Limit"), 1500, 0)
+    local newMaxPurchases     = toNumberSafe(Config.Get("Max Purchase Cycles"), 1, 0)
+    local newArcanitePick     = tostring(Config.Get("Arcanite type") or "Waning Arcanite")
+    local newDungeonPick      = tostring(Config.Get("Dungeon") or "The Clyteum")
+    local newPauseBell        = (Config.Get("Pause for AutoRetainer") ~= false)
+    local newCloseRetainer    = (Config.Get("Close Retainer List") ~= false)
+    local newMultiMode        = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
+    local newFollowupScript   = tostring(Config.Get("Follow-up Script") or "")
+    local newAdvancedMode     = (Config.Get("Advanced Purchase Mode") ~= false)
+    local newGearsetSlot      = toNumberSafe(Config.Get("Gearset Slot"), 0, 0, 100)
+    if newGearsetSlot and newGearsetSlot >= 1 then
+        newGearsetSlot = math.floor(newGearsetSlot) - 1
+    else
+        newGearsetSlot = -1
+    end
+
+    if force or mathematicsLimit ~= newMathematicsLimit then mathematicsLimit = newMathematicsLimit end
+    if force or maxPurchases ~= newMaxPurchases then maxPurchases = newMaxPurchases end
+    if force or arcanitePick ~= newArcanitePick then arcanitePick = newArcanitePick end
+    if force or dungeonPick ~= newDungeonPick then dungeonPick = newDungeonPick end
+    if force or pauseAutoRetainer ~= newPauseBell then pauseAutoRetainer = newPauseBell end
+    if force or closeRetainer ~= newCloseRetainer then closeRetainer = newCloseRetainer end
+    if force or multiMode ~= newMultiMode then multiMode = newMultiMode end
+    if force or followupScript ~= newFollowupScript then followupScript = newFollowupScript end
+    if force or advancedPurchaseMode ~= newAdvancedMode then advancedPurchaseMode = newAdvancedMode end
+    if force or equipGearsetSlot ~= newGearsetSlot then equipGearsetSlot = newGearsetSlot end
+
+    local newTargetSettings = {}
+    local anyEnabled = false
+    for i = 1, #ArcaniteTypes do
+        local mat = ArcaniteTypes[i]
+        local target = toNumberSafe(Config.Get(mat.configTarget), 3, 0, 99) or 0
+        local enabled = target > 0
+        newTargetSettings[mat.name] = {
+            enabled = enabled,
+            target = target,
+            purchaseId = mat.purchaseId,
+            itemId = mat.itemId,
+            meta = mat,
+        }
+        if enabled then
+            anyEnabled = true
+        end
+    end
+
+    ArcaniteTargetSettings = newTargetSettings
+    advancedAnyEnabled = anyEnabled
+
+    ItemToBuyEntry = ArcaniteMap[arcanitePick]
+    ItemToBuy = (ItemToBuyEntry and ItemToBuyEntry.purchaseId or 0)
+    local dungInfo = DungMap[dungeonPick]
+    DungeonToDo = (dungInfo and dungInfo.id or 0)
+    MathematicsFromDung = (dungInfo and dungInfo.amount or 0)
 end
 
+SyncSettings(true)
+
 -- IDs / locations
-local INN_TERRITORY_ID     = 177
 local PHANTOM_VILLAGE_ID   = 1278
 local MATHEMATICS_ITEM_ID  = 48
 local SUMMONING_BELL_ROW_IDS = {
@@ -655,14 +708,12 @@ local TOME_EXCHANGE_NPC_ID = 1053904
 local TomeExchange = {
     id       = TOME_EXCHANGE_NPC_ID,
     name     = nil,
-    position = Vector3(40.818, 0.000, 20.828),
 }
 
 do
     local okNpc, npc = GetENpcResidentName(TomeExchange.id)
     if okNpc then
         TomeExchange.name = npc.name
-        Log("TomeExchange NPC: %s (id=%d)", npc.name, npc.id)
     else
         Log("TomeExchange NPC lookup failed: %s", npc)
     end
@@ -672,7 +723,6 @@ do
     local localizedPlaceName = PlaceNameByTerritory(PHANTOM_VILLAGE_ID)
     if localizedPlaceName and localizedPlaceName ~= "" then
         phantomVillageCommand = tostring(localizedPlaceName)
-        Log("Phantom Village destination: %s (territory=%d)", phantomVillageCommand, PHANTOM_VILLAGE_ID)
     else
         Log("Phantom Village destination lookup failed; using fallback '%s'", phantomVillageCommand)
     end
@@ -697,6 +747,88 @@ local function MathematicsOnHand()
     return tonumber(Inventory.GetItemCount(MATHEMATICS_ITEM_ID)) or 0
 end
 
+local function ArcaniteCount(itemId)
+    return tonumber(Inventory.GetItemCount(itemId)) or 0
+end
+
+local function BuildArcaniteStates()
+    local states = {}
+    for i = 1, #ArcaniteTypes do
+        local mat = ArcaniteTypes[i]
+        local cfg = ArcaniteTargetSettings[mat.name] or {}
+        local enabled = cfg.enabled == true
+        local target = tonumber(cfg.target) or 0
+        local count = ArcaniteCount(mat.itemId)
+        local deficit = target - count
+        if deficit < 0 then deficit = 0 end
+        states[mat.name] = {
+            mat = mat,
+            enabled = enabled,
+            target = target,
+            count = count,
+            deficit = deficit,
+        }
+    end
+    return states
+end
+
+local function NeedsAdvancedPurchase(states)
+    states = states or BuildArcaniteStates()
+    for i = 1, #ArcaniteTypes do
+        local mat = ArcaniteTypes[i]
+        local info = states[mat.name]
+        if info and info.enabled and info.deficit > 0 then
+            return true, states
+        end
+    end
+    return false, states
+end
+
+local function SelectArcaniteForPurchase(states)
+    for i = 1, #ArcaniteTypes do
+        local mat = ArcaniteTypes[i]
+        local info = states[mat.name]
+        if info and info.enabled and info.deficit > 0 then
+            return info
+        end
+    end
+    return nil
+end
+
+local function LogArcaniteTargets(states)
+    if not states then return end
+    for i = 1, #ArcaniteTypes do
+        local mat = ArcaniteTypes[i]
+        local info = states[mat.name]
+        if info then
+            Log("Advanced target: %s %d/%d (enabled=%s deficit=%d)", mat.name, info.count, info.target, tostring(info.enabled), info.deficit)
+        end
+    end
+end
+
+local function LogStartupSettings()
+    Log("Settings:")
+    Log("  Purchase mode: %s", advancedPurchaseMode and "Advanced" or "Simple")
+    Log("  Gearset Slot: %s", equipGearsetSlot >= 0 and tostring(equipGearsetSlot + 1) or "Disabled")
+    Log("  Dungeon: %s", dungeonPick)
+    Log("  Mathematics Tome Limit: %d", mathematicsLimit)
+    Log("  Max Purchase Cycles: %s", advancedPurchaseMode and "Ignored in advanced mode" or tostring(maxPurchases))
+    Log("  Arcanite type: %s", advancedPurchaseMode and (arcanitePick .. " (ignored in advanced mode)") or arcanitePick)
+    Log("  Advanced Purchase Mode: %s", tostring(advancedPurchaseMode))
+    for i = 1, #ArcaniteTypes do
+        local mat = ArcaniteTypes[i]
+        local cfg = ArcaniteTargetSettings[mat.name] or {}
+        local target = tonumber(cfg.target) or 0
+        Log("  %s target: %d%s", mat.name, target, target > 0 and "" or " (disabled)")
+    end
+    Log("  Pause for AutoRetainer: %s", tostring(pauseAutoRetainer))
+    Log("  Close Retainer List: %s", tostring(closeRetainer))
+    Log("  Enable AutoRetainer MultiMode: %s", tostring(multiMode))
+    Log("  Follow-up Script: %s", followupScript ~= "" and followupScript or "<none>")
+    Log("  Phantom Village destination: %s", phantomVillageCommand)
+    Log("  TomeExchange NPC: %s", tostring(TomeExchange.name or "<missing>"))
+end
+
 local function RunsToGo()
     local perRun = tonumber(MathematicsFromDung) or 0
     if perRun <= 0 then return 0 end
@@ -709,6 +841,35 @@ local function SpendPurchaseQuantity()
     local limitQty = math.floor((tonumber(mathematicsLimit) or 0) / 500)
     local availableQty = math.floor(MathematicsOnHand() / 500)
     return math.min(limitQty, availableQty)
+end
+
+local function ExecuteShopPurchase(purchaseId, qty, label)
+    qty = tonumber(qty) or 0
+    if qty <= 0 then
+        Log("SPEND_TOMES: invalid purchase quantity for %s", tostring(label or purchaseId))
+        return false
+    end
+
+    local startingTomes = MathematicsOnHand()
+    Log("SPEND_TOMES: purchasing %d item(s) of %s using %d tomes", qty, tostring(label or purchaseId), qty * 500)
+    SafeCallback("ShopExchangeCurrency", true, 0, purchaseId, qty)
+
+    WaitUntil(function()
+        return IsAddonReady("SelectYesno") or MathematicsOnHand() < startingTomes
+    end, 3.0, TIME.POLL, 0.0)
+
+    if IsAddonReady("SelectYesno") then
+        SafeCallback("SelectYesno", true, 0)
+    end
+
+    if not WaitUntil(function()
+        return MathematicsOnHand() < startingTomes
+    end, 5.0, TIME.POLL, 0.0) then
+        Log("SPEND_TOMES: purchase did not change tome count for %s (start=%d now=%d)", tostring(label or purchaseId), startingTomes, MathematicsOnHand())
+        return false
+    end
+
+    return true
 end
 
 local gotoState
@@ -774,10 +935,6 @@ local function TravelToZone(command, targetZoneId, timeoutSec)
     end
 
     return true
-end
-
-local function ReturnToInn()
-    return TravelToZone("Inn", INN_TERRITORY_ID)
 end
 
 local function MoveToPhantomVillage()
@@ -1055,6 +1212,8 @@ end
 -- =========================================================
 EchoOnce("Starting Mathematics Farmer script.")
 
+LogStartupSettings()
+
 EquipConfiguredGearset()
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
@@ -1077,7 +1236,24 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
-        if MathematicsOnHand() >= mathematicsLimit then
+        if advancedPurchaseMode then
+            local needsPurchase, states = NeedsAdvancedPurchase()
+            if not advancedAnyEnabled then
+                Log("Advanced Purchase Mode enabled but no target items are enabled; stopping script")
+                gotoState(STATE.DONE)
+            elseif not needsPurchase then
+                Log("Advanced Purchase Mode: all enabled targets satisfied")
+                LogArcaniteTargets(states)
+                gotoState(STATE.DONE)
+            elseif MathematicsOnHand() >= mathematicsLimit then
+                gotoState(STATE.SPEND_TOMES)
+            elseif RunsToGo() > 0 then
+                gotoState(STATE.RUN_AUTODUTY)
+            else
+                gotoState(STATE.DONE)
+            end
+
+        elseif MathematicsOnHand() >= mathematicsLimit then
             gotoState(STATE.SPEND_TOMES)
 
         elseif RunsToGo() > 0 then
@@ -1152,33 +1328,54 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
             goto continue
         end
 
-        local qty = SpendPurchaseQuantity()
-        if qty <= 0 then
-            Log("SPEND_TOMES: no purchases available for limit=%d tomes=%d", mathematicsLimit, MathematicsOnHand())
-            ToggleYesAlready("restore")
-            gotoState(STATE.FAIL)
-            goto continue
-        end
+        if advancedPurchaseMode then
+            local needsPurchase, matStates = NeedsAdvancedPurchase()
+            if not advancedAnyEnabled then
+                Log("Advanced Purchase Mode enabled but no target items are enabled; stopping script")
+                ToggleYesAlready("restore")
+                gotoState(STATE.DONE)
+                goto continue
+            end
 
-        local startingTomes = MathematicsOnHand()
-        Log("SPEND_TOMES: purchasing %d item(s) using %d tomes", qty, qty * 500)
-        SafeCallback("ShopExchangeCurrency", true, 0, ItemToBuy, qty)
+            Log("Advanced Purchase Mode: evaluating inventory targets")
+            LogArcaniteTargets(matStates)
 
-        WaitUntil(function()
-            return IsAddonReady("SelectYesno") or MathematicsOnHand() < startingTomes
-        end, 3.0, TIME.POLL, 0.0)
+            while needsPurchase and MathematicsOnHand() >= 500 do
+                local selectedMat = SelectArcaniteForPurchase(matStates)
+                if not selectedMat then
+                    break
+                end
 
-        if IsAddonReady("SelectYesno") then
-            SafeCallback("SelectYesno", true, 0)
-        end
+                local availableQty = math.floor(MathematicsOnHand() / 500)
+                local qty = math.min(selectedMat.deficit, availableQty)
+                if qty <= 0 then
+                    break
+                end
 
-        if not WaitUntil(function()
-            return MathematicsOnHand() < startingTomes
-        end, 5.0, TIME.POLL, 0.0) then
-            Log("SPEND_TOMES: purchase did not change tome count (start=%d now=%d)", startingTomes, MathematicsOnHand())
-            ToggleYesAlready("restore")
-            gotoState(STATE.FAIL)
-            goto continue
+                if not ExecuteShopPurchase(selectedMat.mat.purchaseId, qty, selectedMat.mat.name) then
+                    ToggleYesAlready("restore")
+                    gotoState(STATE.FAIL)
+                    goto continue
+                end
+
+                Sleep(TIME.STABLE)
+                needsPurchase, matStates = NeedsAdvancedPurchase()
+                LogArcaniteTargets(matStates)
+            end
+        else
+            local qty = SpendPurchaseQuantity()
+            if qty <= 0 then
+                Log("SPEND_TOMES: no purchases available for limit=%d tomes=%d", mathematicsLimit, MathematicsOnHand())
+                ToggleYesAlready("restore")
+                gotoState(STATE.FAIL)
+                goto continue
+            end
+
+            if not ExecuteShopPurchase(ItemToBuy, qty, arcanitePick) then
+                ToggleYesAlready("restore")
+                gotoState(STATE.FAIL)
+                goto continue
+            end
         end
 
         Log("Closing shop window")
@@ -1191,13 +1388,26 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         ToggleYesAlready("restore")
         Sleep(TIME.STABLE)
 
-        purchaseCounter = purchaseCounter + 1
-        Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
-
-        if maxPurchases == 0 or purchaseCounter < maxPurchases then
-            gotoState(STATE.READY)
+        if advancedPurchaseMode then
+            local needsPurchase, states = NeedsAdvancedPurchase()
+            if needsPurchase then
+                Log("Advanced Purchase Mode: additional tomes needed to satisfy targets")
+                LogArcaniteTargets(states)
+                gotoState(STATE.READY)
+            else
+                Log("Advanced Purchase Mode complete: all enabled targets satisfied")
+                LogArcaniteTargets(states)
+                gotoState(STATE.DONE)
+            end
         else
-            gotoState(STATE.DONE)
+            purchaseCounter = purchaseCounter + 1
+            Log("Purchase complete: %s/%d", purchaseCounter, maxPurchases)
+
+            if maxPurchases == 0 or purchaseCounter < maxPurchases then
+                gotoState(STATE.READY)
+            else
+                gotoState(STATE.DONE)
+            end
         end
 
     -- ======================
