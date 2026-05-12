@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.6
+version: 1.1.7
 description: PvP script - Inspired by Dhog | Improved by SudoStitch
 plugin_dependencies:
 - vnavmesh
@@ -292,6 +292,10 @@ local LIMIT_BREAK_BY_JOB = {
 -- Minimal gameplay helpers
 -- =========================================================
 local function randInt(min, max) return math.random(min, max) end
+
+local function ClearEnemySignTarget()
+    yield("/enemysign clear <me>")
+end
 
 local function playerAvailable()
     return Player ~= nil and Player.Available == true
@@ -800,6 +804,9 @@ while RUN_LOOP do
     -- =====================================================
     if inMatchLive then
         checkDeathAndReapplyRotation()
+        if not isDead() then
+            ClearEnemySignTarget()
+        end
 
         if isNormal() and not isDead() and not hasEnabledRotationThisLife then
             yield("/rotation auto nearest")
@@ -859,7 +866,7 @@ while RUN_LOOP do
         end
 
         lbTick = lbTick + 1
-        if lbTick > 5 and inDuty then
+        if lbTick > 5 and inDuty and not isDead() then
             lbTick = 0
             local jobId = classJobId()
             for i = 1, #LIMIT_BREAK_BY_JOB do
