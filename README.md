@@ -28,7 +28,7 @@ Collection of various SND scripts
   - Mathematics Farm
     
 - Fate
-  - Moved to public archive - [SND Fate Scripts](https://github.com/baanderson40/FFXIV-SND-Fate-Scripts)
+  - Fate Toolkit Helper
     
 - Guild Company Seals
   - Sigmascape Parts Trade
