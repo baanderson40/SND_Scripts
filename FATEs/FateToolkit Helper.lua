@@ -1601,6 +1601,7 @@ function StopToolkitRun(reason)
     end
     Dalamud.Log("[Toolkit Helper] Issuing /vfate stop"..suffix)
     yield("/vfate stop")
+    StopVnav()
     yield("/wait 0.5")
     Dalamud.Log("[Toolkit Helper] Confirming /vfate stop"..suffix)
     yield("/vfate stop")
