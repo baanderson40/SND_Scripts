@@ -994,39 +994,6 @@ local function beginFlyToFlag()
     return started
 end
 
-local function beginFlyToTarget()
-    if not (Svc and Svc.Targets and Svc.Targets.Target) then
-        log("No current target available for /vnav flytarget.")
-        return false
-    end
-
-    log("Starting vnav flytarget movement toward the current target.")
-    yield("/vnav flytarget")
-
-    local started = WaitUntil(function()
-        local running = false
-        local pathing = false
-
-        if IPC and IPC.vnavmesh and IPC.vnavmesh.IsRunning then
-            local okRun, value = pcall(IPC.vnavmesh.IsRunning)
-            running = okRun and value == true
-        end
-
-        if IPC and IPC.vnavmesh and IPC.vnavmesh.PathfindInProgress then
-            local okPath, value = pcall(IPC.vnavmesh.PathfindInProgress)
-            pathing = okPath and value == true
-        end
-
-        return running or pathing
-    end, 5, POLL_INTERVAL, 0)
-
-    if not started then
-        log("/vnav flytarget did not start in time.")
-    end
-
-    return started
-end
-
 local function beginFlyToPosition(position)
     if position == nil then
         log("No destination available for /vnav flyto.")
@@ -1285,13 +1252,8 @@ local function MoveToFlagWithRedirect(flagPosition)
                 local currentPosition = currentEntity.Position
                 if chaseMode == "hunt_position" then
                     if TargetHuntEntityIfClose(chasedHuntName, HUNT_TARGET_DISTANCE) then
-                        StopVnav()
-                        sleep(POLL_INTERVAL)
-                        if not beginFlyToTarget() then
-                            return false, string.format("failed to start flytarget for hunt '%s'", tostring(chasedHuntName))
-                        end
                         chaseMode = "hunt_target"
-                        logf("Hunt '%s' targeted; switching to flytarget.", tostring(chasedHuntName))
+                        logf("Hunt '%s' targeted; continuing flyto to hunt position.", tostring(chasedHuntName))
                     end
                 end
 
@@ -1321,12 +1283,12 @@ local function MoveToFlagWithRedirect(flagPosition)
                 if TargetHuntEntityIfClose(huntName, HUNT_TARGET_DISTANCE) then
                     StopVnav()
                     sleep(POLL_INTERVAL)
-                    if not beginFlyToTarget() then
-                        return false, string.format("failed to start flytarget for hunt '%s'", tostring(huntName))
+                    if not beginFlyToPosition(huntEntity.Position) then
+                        return false, string.format("failed to start flyto for targeted hunt '%s'", tostring(huntName))
                     end
                     chasedHuntName = huntName
                     chaseMode = "hunt_target"
-                    logf("Hunt '%s' targeted; switching to flytarget.", tostring(huntName))
+                    logf("Hunt '%s' targeted; switching to flyto hunt position.", tostring(huntName))
                 else
                     StopVnav()
                     sleep(POLL_INTERVAL)
