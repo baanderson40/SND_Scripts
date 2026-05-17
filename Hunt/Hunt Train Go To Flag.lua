@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.0.1
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -20,6 +20,21 @@ configs:
   BossMod Autorotation Preset:
     description: Autorotation preset to apply after the hunt is targeted. Leave empty to disable.
     default: ""
+  Flight Speed:
+    description: Estimated mounted flight speed in yalms per second for same-zone travel decisions.
+    default: 20
+    min: 1
+    max: 200
+  Teleport Penalty:
+    description: Estimated seconds spent teleporting, loading, and remounting.
+    default: 13
+    min: 0
+    max: 60
+  Minimum Teleport Savings:
+    description: Minimum seconds saved before teleporting to a closer aetheryte.
+    default: 0
+    min: 0
+    max: 30
   Zone Timeout:
     description: Maximum seconds to wait for teleport, zoning, or instance-switch completion.
     default: 30
@@ -36,7 +51,6 @@ configs:
 import("System.Numerics")
 
 local PREFIX = "[Hunt Flag]"
-local TELEPORT_DISTANCE_PENALTY = 650
 local TELEPORT_START_TIMEOUT = 2.0
 local HUNT_TARGET_DISTANCE = 45
 local INSTANCE_WATCH_TIMEOUT = 2.0
@@ -69,11 +83,17 @@ end
 
 local POLL_INTERVAL = 0.25
 local BOSSMOD_AUTOROTATION_PRESET = tostring(getConfigValue("BossMod Autorotation Preset", "") or "")
+local FLIGHT_SPEED = tonumber(getConfigValue("Flight Speed", 20)) or 20
+local TELEPORT_PENALTY = tonumber(getConfigValue("Teleport Penalty", 13)) or 13
+local MINIMUM_TELEPORT_SAVINGS = tonumber(getConfigValue("Minimum Teleport Savings", 0)) or 0
 local FLAG_STOP_DISTANCE = tonumber(getConfigValue("Flag Stop Distance", 10)) or 10
 local HUNT_STOP_DISTANCE = tonumber(getConfigValue("Hunt Stop Distance", 4)) or 4
 local ZONE_TIMEOUT = tonumber(getConfigValue("Zone Timeout", 30)) or 30
 local MOUNT_TIMEOUT = tonumber(getConfigValue("Mount Timeout", 10)) or 10
 
+FLIGHT_SPEED = math.max(1, math.min(200, FLIGHT_SPEED))
+TELEPORT_PENALTY = math.max(0, math.min(60, TELEPORT_PENALTY))
+MINIMUM_TELEPORT_SAVINGS = math.max(0, math.min(30, MINIMUM_TELEPORT_SAVINGS))
 FLAG_STOP_DISTANCE = math.max(1, math.min(20, FLAG_STOP_DISTANCE))
 HUNT_STOP_DISTANCE = math.max(1, math.min(20, HUNT_STOP_DISTANCE))
 ZONE_TIMEOUT = math.max(10, math.min(300, ZONE_TIMEOUT))
@@ -593,6 +613,16 @@ local function WaitForInstancedZoneSettle(timeoutSec)
     return true
 end
 
+local function distanceBetweenFlat(a, b)
+    if not (a and b) then
+        return math.huge
+    end
+
+    local dx = a.X - b.X
+    local dz = a.Z - b.Z
+    return math.sqrt((dx * dx) + (dz * dz))
+end
+
 local function GetAetherytesInTerritory(territoryId)
     local results = {}
     if territoryId == nil or not (Svc and Svc.AetheryteList) then
@@ -658,13 +688,13 @@ local function BuildTerritoryAetheryteList(territoryId)
     return results
 end
 
-local function GetClosestAetheryteToPoint(position, territoryId, teleportPenalty)
+local function GetClosestAetheryteToPoint(position, territoryId)
     local aetherytes = BuildTerritoryAetheryteList(territoryId)
     local closestAetheryte = nil
     local closestDistance = math.huge
 
     for _, aetheryte in ipairs(aetherytes) do
-        local comparisonDistance = Vector3.Distance(aetheryte.position, position) + (tonumber(teleportPenalty) or 0)
+        local comparisonDistance = distanceBetweenFlat(aetheryte.position, position)
         if comparisonDistance < closestDistance then
             closestDistance = comparisonDistance
             closestAetheryte = aetheryte
@@ -722,22 +752,27 @@ local function MaybeTeleportCloserToFlag(flag)
         return true
     end
 
-    local playerDistance = Vector3.Distance(playerPosition, flag.position)
-    local closestAetheryte, adjustedAetheryteDistance = GetClosestAetheryteToPoint(flag.position, flag.territoryId, TELEPORT_DISTANCE_PENALTY)
-    if closestAetheryte == nil or adjustedAetheryteDistance == nil then
+    local playerDistance = distanceBetweenFlat(playerPosition, flag.position)
+    local closestAetheryte, aetheryteDistance = GetClosestAetheryteToPoint(flag.position, flag.territoryId)
+    if closestAetheryte == nil or aetheryteDistance == nil then
         logf("No eligible aetheryte shortcut found for territory %s.", tostring(flag.territoryId))
         return true
     end
 
+    local playerTravelTime = playerDistance / FLIGHT_SPEED
+    local aetheryteTravelTime = (aetheryteDistance / FLIGHT_SPEED) + TELEPORT_PENALTY
+    local timeSavings = playerTravelTime - aetheryteTravelTime
+
     logf(
-        "Player-to-flag distance %.2f, best aetheryte '%s' adjusted distance %.2f.",
-        playerDistance,
+        "Direct %.2fs, best aetheryte '%s' %.2fs, savings %.2fs.",
+        playerTravelTime,
         tostring(closestAetheryte.aetheryteName),
-        adjustedAetheryteDistance
+        aetheryteTravelTime,
+        timeSavings
     )
 
-    if adjustedAetheryteDistance >= playerDistance then
-        log("Skipping aetheryte teleport because direct travel is faster after penalty.")
+    if timeSavings < MINIMUM_TELEPORT_SAVINGS then
+        logf("Skipping aetheryte teleport because it saves less than %.2fs.", MINIMUM_TELEPORT_SAVINGS)
         return true
     end
 
@@ -855,16 +890,6 @@ local function distanceToFlat(position)
 
     local dx = playerPosition.X - position.X
     local dz = playerPosition.Z - position.Z
-    return math.sqrt((dx * dx) + (dz * dz))
-end
-
-local function distanceBetweenFlat(a, b)
-    if not (a and b) then
-        return math.huge
-    end
-
-    local dx = a.X - b.X
-    local dz = a.Z - b.Z
     return math.sqrt((dx * dx) + (dz * dz))
 end
 
@@ -1212,6 +1237,7 @@ local function MoveToFlagWithRedirect(flagPosition)
     local bestFlagDistance = math.huge
     local lastFlagProgressTime = os.clock()
     local huntScanActivated = false
+    local huntCommitted = false
 
     local chasedHuntName = nil
     local detectedHuntName = nil
@@ -1286,6 +1312,7 @@ local function MoveToFlagWithRedirect(flagPosition)
                     if not beginFlyToPosition(huntEntity.Position) then
                         return false, string.format("failed to start flyto for targeted hunt '%s'", tostring(huntName))
                     end
+                    huntCommitted = true
                     chasedHuntName = huntName
                     chaseMode = "hunt_target"
                     logf("Hunt '%s' targeted; switching to flyto hunt position.", tostring(huntName))
@@ -1295,6 +1322,7 @@ local function MoveToFlagWithRedirect(flagPosition)
                     if not beginFlyToPosition(huntEntity.Position) then
                         return false, string.format("failed to start flyto for hunt '%s'", tostring(huntName))
                     end
+                    huntCommitted = true
                     chasedHuntName = huntName
                     chaseMode = "hunt_position"
                     logf("Hunt '%s' detected; switching to flyto until targetable.", tostring(huntName))
@@ -1304,14 +1332,14 @@ local function MoveToFlagWithRedirect(flagPosition)
             end
         end
 
-        if chaseMode == "flag" and currentFlagDistance <= FLAG_STOP_DISTANCE then
+        if chaseMode == "flag" and not huntCommitted and currentFlagDistance <= FLAG_STOP_DISTANCE then
             logf("Reached flag within %.2f flat yalms before hunt loaded.", FLAG_STOP_DISTANCE)
             StopVnav()
             return true, "reached flag before any hunt loaded"
         end
 
         local stalledNearFlag = (os.clock() - lastFlagProgressTime) >= 2.5 and currentFlagDistance <= (FLAG_STOP_DISTANCE + 5)
-        if chaseMode == "flag" and stalledNearFlag then
+        if chaseMode == "flag" and not huntCommitted and stalledNearFlag then
             logf(
                 "Stopping near flag after stalled progress at %.2f yalms (best %.2f).",
                 currentFlagDistance,
