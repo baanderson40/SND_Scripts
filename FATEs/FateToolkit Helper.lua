@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.5
+version: 1.4.6
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -905,6 +905,8 @@ Runtime = {
         lastPosition = nil,
         lastMovementTime = 0,
         lastRestartTime = 0,
+        lastRecoveryType = nil,
+        consecutiveTriggers = 0,
         triggered = false,
         lastLogMessage = nil,
         lastLogTime = 0
@@ -1189,29 +1191,140 @@ function CloseAddonIfMounted(addonName)
     end
 end
 
- function WaitForTeleportCompletion(start)
-    yield("/wait 1")
-    while Svc.Condition[CharacterCondition.casting] do
-        yield("/wait 1")
-        if os.clock() - start > 60 then
-            EchoAll("Teleport failed: timeout during cast")
-            return false
+function IsAddonReady(name)
+    return _addon_ready(_get_addon(name))
+end
+
+function IsLifestreamBusy()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        return ok and busy == true
+    end
+    return false
+end
+
+function IsPlayerAvailable()
+    return Player ~= nil and Player.Available == true
+end
+
+function DescribeZoneTransitionState()
+    local states = {}
+    if Svc and Svc.Condition then
+        if Svc.Condition[CharacterCondition.casting] then
+            table.insert(states, "casting")
+        end
+        if Svc.Condition[CharacterCondition.betweenAreas] then
+            table.insert(states, "betweenAreas")
+        end
+        if CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty] then
+            table.insert(states, "betweenAreasForDuty")
         end
     end
+    if IsLifestreamBusy() then
+        table.insert(states, "lifestreamBusy")
+    end
+    if #states == 0 then
+        return "idle"
+    end
+    return table.concat(states, ",")
+end
 
-    yield("/wait 1")
-    while Svc.Condition[CharacterCondition.betweenAreas] do
-        yield("/wait 1")
-        if os.clock() - start > 120 then
-            EchoAll("Teleport failed: timeout during zone transition")
-            return false
+function IsZoneTransitionActive()
+    if not Svc or not Svc.Condition then
+        return IsLifestreamBusy()
+    end
+    return Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or (CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty])
+        or IsLifestreamBusy()
+end
+
+function IsZoneTransitionComplete()
+    return (not IsAddonReady("FadeMiddle"))
+        and (not IsLifestreamBusy())
+        and (not (Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting]))
+        and (not (Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas]))
+        and (not (Svc and Svc.Condition and CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty]))
+        and IsPlayerAvailable()
+end
+
+function WaitForTeleportCompletion(targetTerritoryId, timeoutSec, sourceLabel)
+    timeoutSec = tonumber(timeoutSec) or 30
+    sourceLabel = tostring(sourceLabel or "teleport")
+    local deadline = os.clock() + timeoutSec
+    local sawCastEnd = false
+    local sawBetweenAreas = false
+    local stableStart = nil
+
+    Dalamud.Log(string.format("[Toolkit Helper] Waiting up to %.2fs for %s to complete", timeoutSec, sourceLabel))
+
+    while os.clock() < deadline do
+        local currentTerritoryId = GetCurrentTerritoryType()
+        local casting = Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting]
+        local betweenAreas = Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas]
+        local betweenAreasForDuty = Svc and Svc.Condition and CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty]
+        local lifestreamBusy = IsLifestreamBusy()
+        local fadeReady = IsAddonReady("FadeMiddle")
+
+        if not casting and not sawCastEnd then
+            sawCastEnd = true
+            Dalamud.Log(string.format("[Toolkit Helper] %s cast phase finished", sourceLabel))
         end
+
+        if betweenAreas or betweenAreasForDuty then
+            if not sawBetweenAreas then
+                sawBetweenAreas = true
+                Dalamud.Log(string.format(
+                    "[Toolkit Helper] %s entered zone transition state (betweenAreas=%s, betweenAreasForDuty=%s)",
+                    sourceLabel,
+                    tostring(betweenAreas),
+                    tostring(betweenAreasForDuty)
+                ))
+            end
+            stableStart = nil
+        end
+
+        local fullySettled = sawCastEnd
+            and (not casting)
+            and (not betweenAreas)
+            and (not betweenAreasForDuty)
+            and (not lifestreamBusy)
+            and (not fadeReady)
+            and IsPlayerAvailable()
+            and (targetTerritoryId == nil or currentTerritoryId == targetTerritoryId)
+
+        if fullySettled then
+            if stableStart == nil then
+                stableStart = os.clock()
+                Dalamud.Log(string.format("[Toolkit Helper] %s appears settled; starting stability confirmation", sourceLabel))
+            elseif (os.clock() - stableStart) >= 1.0 then
+                Dalamud.Log(string.format(
+                    "[Toolkit Helper] %s completion confirmed in territory %s after castEnd=%s, sawBetweenAreas=%s",
+                    sourceLabel,
+                    tostring(currentTerritoryId),
+                    tostring(sawCastEnd),
+                    tostring(sawBetweenAreas)
+                ))
+                if Instances ~= nil and Instances.Framework ~= nil then
+                    Runtime.lastTeleport = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
+                end
+                return true
+            end
+        else
+            stableStart = nil
+        end
+
+        yield("/wait 0.25")
     end
 
-    if Instances ~= nil and Instances.Framework ~= nil then
-        Runtime.lastTeleport = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
-    end
-    return true
+    Dalamud.Log(string.format(
+        "[Toolkit Helper] %s completion timed out after castEnd=%s, sawBetweenAreas=%s, finalState=%s",
+        sourceLabel,
+        tostring(sawCastEnd),
+        tostring(sawBetweenAreas),
+        DescribeZoneTransitionState()
+    ))
+    return false
 end
 
 function StopVnav()
@@ -1322,9 +1435,10 @@ function WaitForMountStable(stabilitySeconds, timeoutSeconds)
     return false
 end
 
-local STUCK_MONITOR_THRESHOLD_SECONDS = 15
-local STUCK_MONITOR_MOVE_TOLERANCE = 0.8
-local STUCK_MONITOR_RESTART_COOLDOWN = 60
+local STUCK_MONITOR_THRESHOLD_SECONDS = 5
+local STUCK_MONITOR_MOVE_TOLERANCE = 4.0
+local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_RESTART = 0
+local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_TELEPORT = 15
 
 local function CloneVector3(vec)
     if vec == nil then
@@ -1364,7 +1478,28 @@ function ResetStuckMonitor(reason)
     end
 end
 
+function ClearStuckMonitor(reason)
+    if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    Runtime.stuckMonitor.consecutiveTriggers = 0
+    Runtime.stuckMonitor.lastRecoveryType = nil
+    ResetStuckMonitor(reason)
+end
+
 local function UpdateStuckMonitorMovement(position)
+    if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
+    monitor.lastPosition = CloneVector3(position)
+    monitor.lastMovementTime = os.clock()
+    monitor.consecutiveTriggers = 0
+    monitor.lastRecoveryType = nil
+    monitor.triggered = false
+end
+
+local function PrimeStuckMonitorPosition(position)
     if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
@@ -1374,14 +1509,145 @@ local function UpdateStuckMonitorMovement(position)
     monitor.triggered = false
 end
 
+local function GetStuckMonitorCooldown(monitor)
+    if monitor == nil then
+        return 0
+    end
+    if monitor.lastRecoveryType == "teleport" then
+        return STUCK_MONITOR_RESTART_COOLDOWN_AFTER_TELEPORT
+    end
+    return STUCK_MONITOR_RESTART_COOLDOWN_AFTER_RESTART
+end
+
+local function DistanceBetweenFlat(pos1, pos2)
+    if pos1 == nil or pos2 == nil then
+        return math.huge
+    end
+    local dx = pos1.X - pos2.X
+    local dz = pos1.Z - pos2.Z
+    return math.sqrt(dx * dx + dz * dz)
+end
+
+local function GetAetherytesInTerritory(territoryId)
+    local results = {}
+    if territoryId == nil or not (Svc and Svc.AetheryteList) then
+        return results
+    end
+    for _, aetheryte in ipairs(Svc.AetheryteList) do
+        if tonumber(aetheryte.TerritoryId) == tonumber(territoryId) then
+            table.insert(results, aetheryte)
+        end
+    end
+    return results
+end
+
+local function GetAetheryteName(aetheryte)
+    if aetheryte == nil then
+        return nil
+    end
+    local data = aetheryte.AetheryteData
+    local value = data and data.Value
+    local placeName = value and value.PlaceName
+    local placeValue = placeName and placeName.Value
+    local name = placeValue and placeValue.Name
+    if name and name.GetText then
+        local ok, text = pcall(function()
+            return name:GetText()
+        end)
+        if ok and text and text ~= "" then
+            return tostring(text)
+        end
+    end
+    return tostring(name or "")
+end
+
+local function BuildTerritoryAetheryteList(territoryId)
+    local results = {}
+    if territoryId == nil or not (Instances and Instances.Telepo and Instances.Telepo.GetAetherytePosition) then
+        return results
+    end
+    local aetherytes = GetAetherytesInTerritory(territoryId)
+    for _, aetheryte in ipairs(aetherytes) do
+        local aetheryteId = tonumber(aetheryte.AetheryteId)
+        local name = GetAetheryteName(aetheryte)
+        if aetheryteId ~= nil and name ~= nil and name ~= "" then
+            local ok, position = pcall(function()
+                return Instances.Telepo:GetAetherytePosition(aetheryteId)
+            end)
+            if ok and position ~= nil then
+                table.insert(results, {
+                    aetheryteId = aetheryteId,
+                    aetheryteName = name,
+                    position = position,
+                    territoryId = tonumber(territoryId)
+                })
+            end
+        end
+    end
+    return results
+end
+
+local function GetClosestAetheryteToPlayer(territoryId, playerPosition)
+    local aetherytes = BuildTerritoryAetheryteList(territoryId)
+    local closestAetheryte = nil
+    local closestDistance = math.huge
+    for _, aetheryte in ipairs(aetherytes) do
+        local comparisonDistance = DistanceBetweenFlat(aetheryte.position, playerPosition)
+        if comparisonDistance < closestDistance then
+            closestDistance = comparisonDistance
+            closestAetheryte = aetheryte
+        end
+    end
+    return closestAetheryte, closestDistance
+end
+
+local function TeleportToClosestLocalAetheryte(position)
+    local territoryId = GetCurrentTerritoryType()
+    if territoryId == nil or position == nil then
+        return false
+    end
+    local aetheryte, distance = GetClosestAetheryteToPlayer(territoryId, position)
+    if aetheryte == nil or aetheryte.aetheryteId == nil then
+        StuckMonitorLog("Local aetheryte recovery unavailable: no aetheryte found")
+        return false
+    end
+    StuckMonitorLog(string.format("Local aetheryte recovery: teleporting to %s (%.1f yalms)", tostring(aetheryte.aetheryteName), tonumber(distance) or -1))
+    local destination = {
+        name = aetheryte.aetheryteName,
+        aetheryteId = aetheryte.aetheryteId,
+        rowId = aetheryte.aetheryteId,
+        territoryId = territoryId,
+        forceTeleport = true
+    }
+    return TeleportTo(destination)
+end
+
 local function HandleStuckMonitorTrigger(position)
     local monitor = Runtime.stuckMonitor
     monitor.lastRestartTime = os.clock()
     monitor.triggered = true
-    StuckMonitorLog("Trigger: no movement for "..STUCK_MONITOR_THRESHOLD_SECONDS.."s")
-    StopToolkitRun("stuck monitor")
-    yield("/wait 2")
-    ResumeToolkitRun("stuck recovery")
+    monitor.consecutiveTriggers = math.min((monitor.consecutiveTriggers or 0) + 1, 2)
+    if monitor.consecutiveTriggers >= 2 then
+        StuckMonitorLog("Trigger 2/2: teleporting to closest local aetheryte")
+        StopToolkitRun("stuck monitor local teleport")
+        local teleported = TeleportToClosestLocalAetheryte(position)
+        if teleported then
+            monitor.lastRecoveryType = "teleport"
+            ResumeToolkitRun("stuck local teleport recovery")
+            monitor.consecutiveTriggers = 0
+        else
+            StuckMonitorLog("Local aetheryte recovery failed; falling back to restart")
+            monitor.lastRecoveryType = "restart"
+            yield("/wait 2")
+            ResumeToolkitRun("stuck recovery")
+        end
+    else
+        StuckMonitorLog("Trigger 1/2: no movement for "..STUCK_MONITOR_THRESHOLD_SECONDS.."s")
+        StopToolkitRun("stuck monitor")
+        monitor.lastRecoveryType = "restart"
+        yield("/wait 2")
+        ResumeToolkitRun("stuck recovery")
+    end
     monitor.lastPosition = CloneVector3(position)
     monitor.lastMovementTime = os.clock()
 end
@@ -1393,7 +1659,7 @@ function UpdateStuckMonitor()
     local monitor = Runtime.stuckMonitor
     if not Settings.enableStuckMonitor then
         if monitor.enabled then
-            ResetStuckMonitor("disabled")
+            ClearStuckMonitor("disabled")
             monitor.enabled = false
         end
         return
@@ -1401,7 +1667,7 @@ function UpdateStuckMonitor()
     monitor.enabled = true
 
     if Runtime.stopScript then
-        ResetStuckMonitor("script stopping")
+        ClearStuckMonitor("script stopping")
         return
     end
 
@@ -1417,7 +1683,7 @@ function UpdateStuckMonitor()
 
     local allowedState = State == CharacterState.idle or State == CharacterState.maintainGemstones
     if not allowedState then
-        ResetStuckMonitor("state unmonitored")
+        ClearStuckMonitor("state unmonitored")
         return
     end
 
@@ -1429,6 +1695,21 @@ function UpdateStuckMonitor()
     local condition = Svc.Condition
     if condition == nil then
         ResetStuckMonitor("condition unavailable")
+        return
+    end
+
+    if condition[CharacterCondition.inCombat] then
+        ResetStuckMonitor("in combat")
+        return
+    end
+
+    if condition[CharacterCondition.casting] then
+        ResetStuckMonitor("casting")
+        return
+    end
+
+    if condition[CharacterCondition.mounting57] or condition[CharacterCondition.mounting64] then
+        ResetStuckMonitor("mounting")
         return
     end
 
@@ -1455,11 +1736,11 @@ function UpdateStuckMonitor()
     end
 
     if monitor.lastPosition == nil then
-        UpdateStuckMonitorMovement(playerPos)
+        PrimeStuckMonitorPosition(playerPos)
         return
     end
 
-    local distance = DistanceBetween(playerPos, monitor.lastPosition)
+    local distance = DistanceBetweenFlat(playerPos, monitor.lastPosition)
     if distance >= STUCK_MONITOR_MOVE_TOLERANCE then
         UpdateStuckMonitorMovement(playerPos)
         return
@@ -1471,8 +1752,9 @@ function UpdateStuckMonitor()
         return
     end
 
+    local cooldown = GetStuckMonitorCooldown(monitor)
     local restartCooldown = now - (monitor.lastRestartTime or 0)
-    if restartCooldown < STUCK_MONITOR_RESTART_COOLDOWN then
+    if restartCooldown < cooldown then
         return
     end
 
@@ -2163,36 +2445,33 @@ function IsInExpectedTerritory(expectedTerritoryId)
 end
 
 function WaitForTeleportStart(startTerritoryId, expectedTerritoryId, timeout)
+    local sourceLabel = "teleport"
     local deadline = os.clock() + (timeout or 8)
+    Dalamud.Log(string.format(
+        "[Toolkit Helper] Waiting up to %.2fs for %s to start (from %s to %s)",
+        (timeout or 8),
+        sourceLabel,
+        tostring(startTerritoryId),
+        tostring(expectedTerritoryId)
+    ))
     repeat
-        if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
-            local ok, busy = pcall(IPC.Lifestream.IsBusy)
-            if ok and busy == true then
-                Dalamud.Log("[Toolkit Helper] Teleport start detected via Lifestream busy state")
-                return true
-            end
-        end
-        if Svc and Svc.Condition then
-            if Svc.Condition[CharacterCondition.casting] then
-                Dalamud.Log("[Toolkit Helper] Teleport start detected via casting condition")
-                return true
-            end
-            if Svc.Condition[CharacterCondition.betweenAreas] then
-                Dalamud.Log("[Toolkit Helper] Teleport start detected via betweenAreas condition")
-                return true
-            end
-        end
         local currentTerritory = GetCurrentTerritoryType()
+        local transitionState = DescribeZoneTransitionState()
+        if transitionState ~= "idle" then
+            Dalamud.Log(string.format("[Toolkit Helper] %s start detected via state: %s", sourceLabel, transitionState))
+            return true
+        end
         if expectedTerritoryId ~= nil and currentTerritory == expectedTerritoryId and currentTerritory ~= startTerritoryId then
-            Dalamud.Log("[Toolkit Helper] Teleport arrival detected via destination territory")
+            Dalamud.Log(string.format("[Toolkit Helper] %s start detected via territory arrival: %s", sourceLabel, tostring(currentTerritory)))
             return true
         end
         if startTerritoryId ~= nil and currentTerritory ~= nil and currentTerritory ~= 0 and currentTerritory ~= startTerritoryId then
-            Dalamud.Log(string.format("[Toolkit Helper] Teleport start detected via territory change (%s -> %s)", tostring(startTerritoryId), tostring(currentTerritory)))
+            Dalamud.Log(string.format("[Toolkit Helper] %s start detected via territory change: %s -> %s", sourceLabel, tostring(startTerritoryId), tostring(currentTerritory)))
             return true
         end
-        yield("/wait 0.1")
+        yield("/wait 0.25")
     until os.clock() > deadline
+    Dalamud.Log(string.format("[Toolkit Helper] %s did not start within %.2fs", sourceLabel, (timeout or 8)))
     return false
 end
 
@@ -2201,9 +2480,11 @@ function TeleportTo(destination)
     local isMini = false
     local destId = nil
     local expectedTerritoryId = nil
+    local forceTeleport = false
     if type(destination) == "table" then
         destName, isMini, destId = ResolveDestinationName(destination)
         expectedTerritoryId = destination.territoryId or destination.destinationTerritoryId
+        forceTeleport = destination.forceTeleport == true
     else
         destName = destination
     end
@@ -2213,7 +2494,7 @@ function TeleportTo(destination)
         return false
     end
 
-    if IsInExpectedTerritory(expectedTerritoryId) then
+    if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
         Dalamud.Log(string.format("[Toolkit Helper] Already in destination territory for %s", tostring(destName)))
         return true
     end
@@ -2221,7 +2502,7 @@ function TeleportTo(destination)
     local maxAttempts = 3
     for attempt = 1, maxAttempts do
         Dalamud.Log(string.format("[Toolkit Helper] Teleport attempt %d/%d to %s", attempt, maxAttempts, tostring(destName)))
-        if IsInExpectedTerritory(expectedTerritoryId) then
+        if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
             Dalamud.Log(string.format("[Toolkit Helper] Destination territory already reached before attempt %d for %s", attempt, tostring(destName)))
             return true
         end
@@ -2267,7 +2548,7 @@ function TeleportTo(destination)
         if executed then
             yield("/wait 1")
             if WaitForTeleportStart(startTerritoryId, expectedTerritoryId, 8) then
-                success = WaitForTeleportCompletion(start)
+                success = WaitForTeleportCompletion(expectedTerritoryId, 30, tostring(destName))
                 Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
             elseif IsInExpectedTerritory(expectedTerritoryId) then
                 Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached for %s without observable start conditions", tostring(destName)))
@@ -2285,7 +2566,7 @@ function TeleportTo(destination)
         end
 
         if attempt < maxAttempts then
-            if IsInExpectedTerritory(expectedTerritoryId) then
+            if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
                 Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached after attempt %d for %s", attempt, tostring(destName)))
                 return true
             end
@@ -2354,7 +2635,7 @@ function TryReturnToSolutionNine(expectedTerritoryId)
         return false
     end
     local lockHeld = true
-    local start = os.clock()
+    local startTerritoryId = GetCurrentTerritoryType()
     local usedNative = false
     if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
         local ok, err = pcall(function()
@@ -2369,8 +2650,13 @@ function TryReturnToSolutionNine(expectedTerritoryId)
         Dalamud.Log("[Toolkit Helper] Using /generalaction return fallback")
         yield("/generalaction return")
     end
-    yield("/wait 3")
-    local success = WaitForTeleportCompletion(start)
+    yield("/wait 1")
+    local success = false
+    if WaitForTeleportStart(startTerritoryId, expectedTerritoryId, 8) then
+        success = WaitForTeleportCompletion(expectedTerritoryId, 30, "return")
+    elseif expectedTerritoryId ~= nil and GetCurrentTerritoryType() == expectedTerritoryId then
+        success = true
+    end
     if success and expectedTerritoryId ~= nil then
         local confirmDeadline = os.clock() + 5
         repeat
