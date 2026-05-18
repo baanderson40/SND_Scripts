@@ -1435,7 +1435,7 @@ function WaitForMountStable(stabilitySeconds, timeoutSeconds)
     return false
 end
 
-local STUCK_MONITOR_THRESHOLD_SECONDS = 5
+local STUCK_MONITOR_THRESHOLD_SECONDS = 10
 local STUCK_MONITOR_MOVE_TOLERANCE = 4.0
 local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_RESTART = 0
 local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_TELEPORT = 15
@@ -1447,7 +1447,7 @@ local function CloneVector3(vec)
     return Vector3(vec.X, vec.Y, vec.Z)
 end
 
-local function StuckMonitorLog(message)
+local function StuckMonitorLog(message, verboseOnly)
     if not Settings.enableStuckMonitor then
         return
     end
@@ -1459,7 +1459,12 @@ local function StuckMonitorLog(message)
     local lastMessage = monitor.lastLogMessage
     local lastTime = monitor.lastLogTime or 0
     if message ~= lastMessage or (now - lastTime) >= 5 then
-        Dalamud.Log("[Toolkit Helper][Stuck] "..message)
+        local text = "[Toolkit Helper][Stuck] "..message
+        if verboseOnly == true and Dalamud ~= nil and Dalamud.LogVerbose ~= nil then
+            Dalamud.LogVerbose(text)
+        else
+            Dalamud.Log(text)
+        end
         monitor.lastLogMessage = message
         monitor.lastLogTime = now
     end
@@ -1474,7 +1479,7 @@ function ResetStuckMonitor(reason)
     monitor.lastMovementTime = os.clock()
     monitor.triggered = false
     if reason ~= nil and reason ~= "" then
-        StuckMonitorLog("Reset: "..reason)
+        StuckMonitorLog("Reset: "..reason, true)
     end
 end
 
@@ -1517,6 +1522,19 @@ local function GetStuckMonitorCooldown(monitor)
         return STUCK_MONITOR_RESTART_COOLDOWN_AFTER_TELEPORT
     end
     return STUCK_MONITOR_RESTART_COOLDOWN_AFTER_RESTART
+end
+
+local function IsPlayerInFateArea()
+    local okCurrent, currentFate = pcall(function()
+        return Fates and Fates.CurrentFate
+    end)
+    if not okCurrent or currentFate == nil then
+        return false
+    end
+    local okInFate, inFate = pcall(function()
+        return currentFate.InFate
+    end)
+    return okInFate and inFate == true
 end
 
 local function DistanceBetweenFlat(pos1, pos2)
@@ -1620,6 +1638,16 @@ local function TeleportToClosestLocalAetheryte(position)
         forceTeleport = true
     }
     return TeleportTo(destination)
+end
+
+local function HandleMountedFateStuck(position)
+    StuckMonitorLog("Mounted in FATE for "..STUCK_MONITOR_THRESHOLD_SECONDS.."s; dismounting")
+    if not EnsureDismounted() then
+        StuckMonitorLog("Mounted FATE recovery failed to dismount")
+        return false
+    end
+    PrimeStuckMonitorPosition(position)
+    return true
 end
 
 local function HandleStuckMonitorTrigger(position)
@@ -1749,6 +1777,11 @@ function UpdateStuckMonitor()
     local now = os.clock()
     local stagnantFor = now - (monitor.lastMovementTime or now)
     if stagnantFor < STUCK_MONITOR_THRESHOLD_SECONDS then
+        return
+    end
+
+    if condition[CharacterCondition.mounted] and IsPlayerInFateArea() then
+        HandleMountedFateStuck(playerPos)
         return
     end
 
