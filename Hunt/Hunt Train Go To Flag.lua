@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.1
+version: 1.0.2
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -12,11 +12,11 @@ configs:
     default: 10
     min: 1
     max: 20
-  Hunt Stop Distance:
-    description: Distance from the hunt that triggers the dismount sequence.
-    default: 4
-    min: 1
-    max: 20
+  Hunt Handoff Distance:
+    description: Distance from the hunt required before applying autorotation, dismounting, and stopping.
+    default: 15
+    min: 10
+    max: 30
   BossMod Autorotation Preset:
     description: Autorotation preset to apply after the hunt is targeted. Leave empty to disable.
     default: ""
@@ -57,8 +57,26 @@ local INSTANCE_WATCH_TIMEOUT = 2.0
 local INSTANCE_WATCH_POLL = 0.05
 local FLAG_ACQUIRE_TIMEOUT = 5.0
 local MOUNT_RETRY_COOLDOWN = 1.0
-local HUNT_SCAN_START_DISTANCE = 100
+local HUNT_SCAN_START_DISTANCE = 60
 local autorotationPrefix = nil
+
+local CHASE_MODE_FLAG = "flag"
+local CHASE_MODE_HUNT_POSITION = "hunt_position"
+local CHASE_MODE_HUNT_TARGET = "hunt_target"
+
+local INSTANCE_ACTIVITY_NONE = "none"
+local INSTANCE_ACTIVITY_TRANSITION = "transition_active"
+local INSTANCE_ACTIVITY_SELECT_STRING = "select_string"
+local INSTANCE_ACTIVITY_CHANGED = "instance_changed"
+
+local RESULT_CONTINUE = "continue"
+local RESULT_SUCCESS = "success"
+local RESULT_ERROR = "error"
+
+-- Hunt distance roles:
+-- scan start: begin looking for hunts only after getting near the flag area
+-- target acquire: attempt to set target when close enough for reliable target lock
+-- handoff: only apply autorotation and stop after getting close enough to the hunt
 
 CharacterCondition = {
     mounted = 4,
@@ -87,7 +105,7 @@ local FLIGHT_SPEED = tonumber(getConfigValue("Flight Speed", 20)) or 20
 local TELEPORT_PENALTY = tonumber(getConfigValue("Teleport Penalty", 13)) or 13
 local MINIMUM_TELEPORT_SAVINGS = tonumber(getConfigValue("Minimum Teleport Savings", 0)) or 0
 local FLAG_STOP_DISTANCE = tonumber(getConfigValue("Flag Stop Distance", 10)) or 10
-local HUNT_STOP_DISTANCE = tonumber(getConfigValue("Hunt Stop Distance", 4)) or 4
+local HUNT_HANDOFF_DISTANCE = tonumber(getConfigValue("Hunt Handoff Distance", 15)) or 15
 local ZONE_TIMEOUT = tonumber(getConfigValue("Zone Timeout", 30)) or 30
 local MOUNT_TIMEOUT = tonumber(getConfigValue("Mount Timeout", 10)) or 10
 
@@ -95,7 +113,7 @@ FLIGHT_SPEED = math.max(1, math.min(200, FLIGHT_SPEED))
 TELEPORT_PENALTY = math.max(0, math.min(60, TELEPORT_PENALTY))
 MINIMUM_TELEPORT_SAVINGS = math.max(0, math.min(30, MINIMUM_TELEPORT_SAVINGS))
 FLAG_STOP_DISTANCE = math.max(1, math.min(20, FLAG_STOP_DISTANCE))
-HUNT_STOP_DISTANCE = math.max(1, math.min(20, HUNT_STOP_DISTANCE))
+HUNT_HANDOFF_DISTANCE = math.max(10, math.min(30, HUNT_HANDOFF_DISTANCE))
 ZONE_TIMEOUT = math.max(10, math.min(300, ZONE_TIMEOUT))
 MOUNT_TIMEOUT = math.max(2, math.min(60, MOUNT_TIMEOUT))
 
@@ -112,6 +130,20 @@ end
 
 local function logf(fmt, ...)
     log(string.format(fmt, ...))
+end
+
+local function verboseLog(message)
+    local text = string.format("%s %s", PREFIX, tostring(message))
+    pcall(function()
+        Dalamud.LogVerbose(text)
+    end)
+end
+
+local function verboseLogf(fmt, ...)
+    local ok, formatted = pcall(string.format, fmt, ...)
+    if ok then
+        verboseLog(formatted)
+    end
 end
 
 local function trimString(value)
@@ -160,38 +192,8 @@ local function _addon_ready(addon)
     return false
 end
 
-local function _addon_exists(addon)
-    if not addon then
-        return false
-    end
-
-    if addon.Exists == true or addon.Visible == true or addon.IsVisible == true or addon.IsOpen == true or addon.IsShown == true then
-        return true
-    end
-
-    if type(addon.Exists) == "function" then
-        local ok, value = pcall(addon.Exists, addon)
-        if ok and value then
-            return true
-        end
-    end
-
-    if type(addon.IsVisible) == "function" then
-        local ok, value = pcall(addon.IsVisible, addon)
-        if ok and value then
-            return true
-        end
-    end
-
-    return _addon_ready(addon)
-end
-
 local function IsAddonReady(name)
     return _addon_ready(_get_addon(name))
-end
-
-local function IsAddonVisible(name)
-    return _addon_exists(_get_addon(name))
 end
 
 local function IsSpecificPluginLoaded(name)
@@ -539,81 +541,119 @@ local function WaitForTeleportCompletion(targetTerritoryId, timeoutSec, sourceLa
     return false
 end
 
-local function WaitForInstancedZoneSettle(timeoutSec)
-    timeoutSec = tonumber(timeoutSec) or INSTANCE_WATCH_TIMEOUT
-    local startInstanceId = getZoneInstance()
-
-    if startInstanceId <= 0 then
-        return true
-    end
-
+local function WatchForInstancedZoneActivity(startInstanceId, timeoutSec)
     logf("Public instance before watch: %d", startInstanceId)
-    logf("Watching %.2fs for SelectString or instance change.", timeoutSec)
+    logf("Watching %.2fs for transition, SelectString, or instance change.", timeoutSec)
 
     local deadline = os.clock() + timeoutSec
-    local sawSelectString = false
-    local sawInstanceChange = false
-    local latestInstanceId = startInstanceId
-
     while os.clock() < deadline do
-        latestInstanceId = getZoneInstance()
+        local latestInstanceId = getZoneInstance()
+
+        if isZoneTransitionActive() then
+            logf("Instanced-zone activity detected via state: %s", describeZoneTransitionState())
+            return INSTANCE_ACTIVITY_TRANSITION, latestInstanceId
+        end
 
         if IsAddonReady("SelectString") then
-            sawSelectString = true
             log("SelectString detected after zoning; assuming instance switch.")
-            break
+            return INSTANCE_ACTIVITY_SELECT_STRING, latestInstanceId
         end
 
         if latestInstanceId > 0 and latestInstanceId ~= startInstanceId then
-            sawInstanceChange = true
             logf("Public instance changed during watch: %d -> %d", startInstanceId, latestInstanceId)
-            break
+            return INSTANCE_ACTIVITY_CHANGED, latestInstanceId
         end
 
         sleep(INSTANCE_WATCH_POLL)
     end
 
-    if not sawSelectString and not sawInstanceChange then
-        logf("No instance-switch signal detected; continuing in instance %d.", startInstanceId)
+    return INSTANCE_ACTIVITY_NONE, getZoneInstance()
+end
+
+local function HandleInstancedZoneActivity(activity, currentInstanceId)
+    if activity == INSTANCE_ACTIVITY_TRANSITION then
+        log("Instanced-zone transition active; waiting for completion.")
+        if not WaitForTeleportCompletion(getCurrentTerritoryId(), ZONE_TIMEOUT, "instance-zone transition") then
+            return false, "timed out waiting for instanced-zone transition to complete"
+        end
         return true
     end
 
-    if isZoneTransitionActive() then
-        log("Instance-switch transition already active; waiting for completion.")
-        if not WaitForTeleportCompletion(getCurrentTerritoryId(), ZONE_TIMEOUT, "instance switch") then
-            return false, "timed out waiting for active instance switch to complete"
-        end
-    elseif sawSelectString then
+    if activity == INSTANCE_ACTIVITY_SELECT_STRING then
         if WaitForTeleportStart(getCurrentTerritoryId(), nil, TELEPORT_START_TIMEOUT, "instance switch") then
             if not WaitForTeleportCompletion(getCurrentTerritoryId(), ZONE_TIMEOUT, "instance switch") then
                 return false, "timed out waiting for instance switch to complete"
             end
         else
             local endInstanceId = getZoneInstance()
-            if endInstanceId > 0 and endInstanceId ~= startInstanceId then
-                logf("Instance switch completed without caught transition start: %d -> %d", startInstanceId, endInstanceId)
+            if endInstanceId > 0 and endInstanceId ~= currentInstanceId then
+                logf("Instance switch completed without caught transition start: %d -> %d", currentInstanceId, endInstanceId)
             else
                 return false, "instance switch prompt detected but no follow-up transition started"
             end
         end
-    else
+        return true
+    end
+
+    if activity == INSTANCE_ACTIVITY_CHANGED then
         log("Instance changed without SelectString; confirming settled state.")
         if not WaitUntil(function()
-            local currentInstanceId = getZoneInstance()
-            return currentInstanceId > 0
-                and currentInstanceId ~= startInstanceId
+            local latestInstanceId = getZoneInstance()
+            return latestInstanceId > 0
+                and latestInstanceId ~= currentInstanceId
                 and isZoneTransitionComplete()
                 and (not isZoneTransitionActive())
         end, 3.0, INSTANCE_WATCH_POLL, 0.5) then
             return false, "instance changed but zone did not settle in time"
         end
+        return true
     end
 
-    logf("Public instance after settle: %d -> %d", startInstanceId, getZoneInstance())
     return true
 end
 
-local function distanceBetweenFlat(a, b)
+local function WaitForInstancedZoneSettle(timeoutSec)
+    timeoutSec = tonumber(timeoutSec) or INSTANCE_WATCH_TIMEOUT
+    local initialInstanceId = getZoneInstance()
+
+    if initialInstanceId <= 0 then
+        return true
+    end
+
+    -- HTA can chain multiple steps here: teleport to the aetheryte, open SelectString,
+    -- then perform the actual instance switch. Re-watch after each settle cycle.
+    local currentInstanceId = initialInstanceId
+    local sawAnyActivity = false
+
+    for cycle = 1, 3 do
+        local activity, activityInstanceId = WatchForInstancedZoneActivity(currentInstanceId, timeoutSec)
+
+        if activity == INSTANCE_ACTIVITY_NONE then
+            if not sawAnyActivity then
+                logf("No instance-switch signal detected; continuing in instance %d.", currentInstanceId)
+            else
+                logf("Instanced-zone activity settled; continuing in instance %d.", currentInstanceId)
+            end
+            return true
+        end
+
+        sawAnyActivity = true
+
+        local ok, reason = HandleInstancedZoneActivity(activity, currentInstanceId)
+        if not ok then
+            return false, reason
+        end
+
+        local settledInstanceId = getZoneInstance()
+        logf("Public instance after settle cycle %d: %d -> %d", cycle, currentInstanceId, settledInstanceId)
+        currentInstanceId = settledInstanceId > 0 and settledInstanceId or activityInstanceId or currentInstanceId
+    end
+
+    logf("Public instance after settle: %d -> %d", initialInstanceId, getZoneInstance())
+    return true
+end
+
+local function DistanceBetweenFlat(a, b)
     if not (a and b) then
         return math.huge
     end
@@ -688,13 +728,13 @@ local function BuildTerritoryAetheryteList(territoryId)
     return results
 end
 
-local function GetClosestAetheryteToPoint(position, territoryId)
+local function ChooseClosestAetheryte(position, territoryId)
     local aetherytes = BuildTerritoryAetheryteList(territoryId)
     local closestAetheryte = nil
     local closestDistance = math.huge
 
     for _, aetheryte in ipairs(aetherytes) do
-        local comparisonDistance = distanceBetweenFlat(aetheryte.position, position)
+        local comparisonDistance = DistanceBetweenFlat(aetheryte.position, position)
         if comparisonDistance < closestDistance then
             closestDistance = comparisonDistance
             closestAetheryte = aetheryte
@@ -702,6 +742,42 @@ local function GetClosestAetheryteToPoint(position, territoryId)
     end
 
     return closestAetheryte, closestDistance
+end
+
+local function EvaluateAetheryteShortcut(flag)
+    if flag == nil or flag.position == nil or flag.territoryId == nil then
+        return nil
+    end
+
+    local playerPosition = getPlayerPosition()
+    if playerPosition == nil then
+        return nil
+    end
+
+    local playerDistance = DistanceBetweenFlat(playerPosition, flag.position)
+    local closestAetheryte, aetheryteDistance = ChooseClosestAetheryte(flag.position, flag.territoryId)
+    if closestAetheryte == nil or aetheryteDistance == nil then
+        return {
+            shouldTeleport = false,
+            reason = "no_aetheryte",
+        }
+    end
+
+    -- Compare estimated direct flight time against teleport/load/remount time.
+    local playerTravelTime = playerDistance / FLIGHT_SPEED
+    local aetheryteTravelTime = (aetheryteDistance / FLIGHT_SPEED) + TELEPORT_PENALTY
+    local timeSavings = playerTravelTime - aetheryteTravelTime
+
+    return {
+        shouldTeleport = timeSavings >= MINIMUM_TELEPORT_SAVINGS,
+        reason = timeSavings >= MINIMUM_TELEPORT_SAVINGS and "teleport" or "insufficient_savings",
+        aetheryte = closestAetheryte,
+        playerDistance = playerDistance,
+        aetheryteDistance = aetheryteDistance,
+        playerTravelTime = playerTravelTime,
+        aetheryteTravelTime = aetheryteTravelTime,
+        timeSavings = timeSavings,
+    }
 end
 
 local function TeleportToAetheryte(aetheryte)
@@ -743,46 +819,36 @@ local function TeleportToAetheryte(aetheryte)
 end
 
 local function MaybeTeleportCloserToFlag(flag)
-    if flag == nil or flag.position == nil or flag.territoryId == nil then
+    local choice = EvaluateAetheryteShortcut(flag)
+    if choice == nil then
         return true
     end
 
-    local playerPosition = getPlayerPosition()
-    if playerPosition == nil then
-        return true
-    end
-
-    local playerDistance = distanceBetweenFlat(playerPosition, flag.position)
-    local closestAetheryte, aetheryteDistance = GetClosestAetheryteToPoint(flag.position, flag.territoryId)
-    if closestAetheryte == nil or aetheryteDistance == nil then
+    if choice.reason == "no_aetheryte" then
         logf("No eligible aetheryte shortcut found for territory %s.", tostring(flag.territoryId))
         return true
     end
 
-    local playerTravelTime = playerDistance / FLIGHT_SPEED
-    local aetheryteTravelTime = (aetheryteDistance / FLIGHT_SPEED) + TELEPORT_PENALTY
-    local timeSavings = playerTravelTime - aetheryteTravelTime
-
     logf(
         "Direct %.2fs, best aetheryte '%s' %.2fs, savings %.2fs.",
-        playerTravelTime,
-        tostring(closestAetheryte.aetheryteName),
-        aetheryteTravelTime,
-        timeSavings
+        choice.playerTravelTime,
+        tostring(choice.aetheryte.aetheryteName),
+        choice.aetheryteTravelTime,
+        choice.timeSavings
     )
 
-    if timeSavings < MINIMUM_TELEPORT_SAVINGS then
+    if not choice.shouldTeleport then
         logf("Skipping aetheryte teleport because it saves less than %.2fs.", MINIMUM_TELEPORT_SAVINGS)
         return true
     end
 
-    logf("Teleporting to closer aetheryte '%s'.", tostring(closestAetheryte.aetheryteName))
-    if not TeleportToAetheryte(closestAetheryte) then
-        return false, string.format("failed to start teleport to aetheryte '%s'", tostring(closestAetheryte.aetheryteName))
+    logf("Teleporting to closer aetheryte '%s'.", tostring(choice.aetheryte.aetheryteName))
+    if not TeleportToAetheryte(choice.aetheryte) then
+        return false, string.format("failed to start teleport to aetheryte '%s'", tostring(choice.aetheryte.aetheryteName))
     end
 
     if not WaitForTeleportCompletion(flag.territoryId, ZONE_TIMEOUT, "aetheryte teleport") then
-        return false, string.format("timed out waiting for teleport to aetheryte '%s'", tostring(closestAetheryte.aetheryteName))
+        return false, string.format("timed out waiting for teleport to aetheryte '%s'", tostring(choice.aetheryte.aetheryteName))
     end
 
     return true
@@ -843,7 +909,7 @@ local function EnsureMounted(timeoutSec)
                 lastMountAttemptAt = os.clock()
             end
         else
-            log("Mount transition active; waiting for completion.")
+            verboseLog("Mount transition active; waiting for completion.")
         end
 
         sleep(POLL_INTERVAL)
@@ -865,7 +931,7 @@ local function EnsureDismounted(timeoutSec)
             return true
         end
 
-        log("Still mounted or mounting; using general action 23.")
+        verboseLog("Still mounted or mounting; using general action 23.")
         executeGeneralAction(23)
         sleep(POLL_INTERVAL)
     end
@@ -874,7 +940,7 @@ local function EnsureDismounted(timeoutSec)
     return false
 end
 
-local function distanceTo(position)
+local function DistanceTo3D(position)
     if not (position and Entity and Entity.Player and Entity.Player.Position) then
         return math.huge
     end
@@ -882,7 +948,7 @@ local function distanceTo(position)
     return Vector3.Distance(Entity.Player.Position, position)
 end
 
-local function distanceToFlat(position)
+local function DistanceToFlat(position)
     local playerPosition = getPlayerPosition()
     if not (position and playerPosition) then
         return math.huge
@@ -947,7 +1013,7 @@ local function normalizeDestination(position)
     return position
 end
 
-local function beginMoveTo(position)
+local function BeginMoveTo(position)
     if not (IPC and IPC.vnavmesh and IPC.vnavmesh.IsReady and IPC.vnavmesh.PathfindAndMoveTo) then
         return false
     end
@@ -981,7 +1047,41 @@ local function beginMoveTo(position)
     return ok and started == true
 end
 
-local function beginFlyToFlag()
+local function WaitForVnavStart(timeoutSec)
+    return WaitUntil(function()
+        local running = false
+        local pathing = false
+
+        if IPC and IPC.vnavmesh and IPC.vnavmesh.IsRunning then
+            local okRun, value = pcall(IPC.vnavmesh.IsRunning)
+            running = okRun and value == true
+        end
+
+        if IPC and IPC.vnavmesh and IPC.vnavmesh.PathfindInProgress then
+            local okPath, value = pcall(IPC.vnavmesh.PathfindInProgress)
+            pathing = okPath and value == true
+        end
+
+        return running or pathing
+    end, timeoutSec or 5, POLL_INTERVAL, 0)
+end
+
+local function BeginVnavCommand(command, startLogMessage, timeoutFailureMessage)
+    if startLogMessage ~= nil then
+        log(startLogMessage)
+    end
+
+    yield(command)
+
+    local started = WaitForVnavStart(5)
+    if not started and timeoutFailureMessage ~= nil then
+        log(timeoutFailureMessage)
+    end
+
+    return started
+end
+
+local function BeginFlyToFlag()
     if not (Instances and Instances.Map and Instances.Map.IsFlagMarkerSet) then
         log("Map flag is unavailable for /vnav flyflag.")
         return false
@@ -992,64 +1092,24 @@ local function beginFlyToFlag()
         return false
     end
 
-    log("Starting vnav flyflag movement toward the current map flag.")
-    yield("/vnav flyflag")
-
-    local started = WaitUntil(function()
-        local running = false
-        local pathing = false
-
-        if IPC and IPC.vnavmesh and IPC.vnavmesh.IsRunning then
-            local okRun, value = pcall(IPC.vnavmesh.IsRunning)
-            running = okRun and value == true
-        end
-
-        if IPC and IPC.vnavmesh and IPC.vnavmesh.PathfindInProgress then
-            local okPath, value = pcall(IPC.vnavmesh.PathfindInProgress)
-            pathing = okPath and value == true
-        end
-
-        return running or pathing
-    end, 5, POLL_INTERVAL, 0)
-
-    if not started then
-        log("/vnav flyflag did not start in time.")
-    end
-
-    return started
+    return BeginVnavCommand(
+        "/vnav flyflag",
+        "Starting vnav flyflag movement toward the current map flag.",
+        "/vnav flyflag did not start in time."
+    )
 end
 
-local function beginFlyToPosition(position)
+local function BeginFlyToPosition(position)
     if position == nil then
         log("No destination available for /vnav flyto.")
         return false
     end
 
-    logf("Starting vnav flyto movement toward %.2f, %.2f, %.2f.", position.X, position.Y, position.Z)
-    yield(string.format("/vnav flyto %.3f %.3f %.3f", position.X, position.Y, position.Z))
-
-    local started = WaitUntil(function()
-        local running = false
-        local pathing = false
-
-        if IPC and IPC.vnavmesh and IPC.vnavmesh.IsRunning then
-            local okRun, value = pcall(IPC.vnavmesh.IsRunning)
-            running = okRun and value == true
-        end
-
-        if IPC and IPC.vnavmesh and IPC.vnavmesh.PathfindInProgress then
-            local okPath, value = pcall(IPC.vnavmesh.PathfindInProgress)
-            pathing = okPath and value == true
-        end
-
-        return running or pathing
-    end, 5, POLL_INTERVAL, 0)
-
-    if not started then
-        log("/vnav flyto did not start in time.")
-    end
-
-    return started
+    return BeginVnavCommand(
+        string.format("/vnav flyto %.3f %.3f %.3f", position.X, position.Y, position.Z),
+        string.format("Starting vnav flyto movement toward %.2f, %.2f, %.2f.", position.X, position.Y, position.Z),
+        "/vnav flyto did not start in time."
+    )
 end
 
 local function IsLiveHuntEntity(entity)
@@ -1075,7 +1135,7 @@ local function FindNearestLiveHuntEntity(flagPosition)
             return Entity[i]
         end)
         if ok and IsLiveHuntEntity(entity) then
-            local distance = distanceBetweenFlat(entity.Position, flagPosition)
+            local distance = DistanceBetweenFlat(entity.Position, flagPosition)
             if distance < nearestDistance then
                 nearestDistance = distance
                 nearestEntity = entity
@@ -1109,7 +1169,7 @@ local function TargetHuntEntityIfClose(huntName, maxDistance)
         return false
     end
 
-    local distance = distanceTo(entity.Position)
+    local distance = DistanceTo3D(entity.Position)
     if distance > (tonumber(maxDistance) or HUNT_TARGET_DISTANCE) then
         return false
     end
@@ -1219,134 +1279,250 @@ local function WaitForStartupSettle(timeoutSec)
     return ok
 end
 
+local function CreateHuntRuntime(flagDestination)
+    return {
+        flagDestination = flagDestination,
+        bestFlagDistance = math.huge,
+        lastFlagProgressTime = os.clock(),
+        huntScanActivated = false,
+        -- Once true, flag-complete fallback should never win again this run.
+        huntCommitted = false,
+        -- True only after an actual target lock on the chosen hunt.
+        huntTargeted = false,
+        chasedHuntName = nil,
+        detectedHuntName = nil,
+        chaseMode = CHASE_MODE_FLAG,
+    }
+end
+
+local function StartFlagTravel(runtime)
+    if not BeginFlyToFlag() then
+        log("Falling back to direct pathfind for initial flag travel.")
+        if not BeginMoveTo(runtime.flagDestination) then
+            return false, "failed to start movement to the flag"
+        end
+    end
+
+    return true
+end
+
+local function UpdateFlagProgress(runtime)
+    local currentFlagDistance = DistanceToFlat(runtime.flagDestination)
+    if currentFlagDistance + 0.5 < runtime.bestFlagDistance then
+        runtime.bestFlagDistance = currentFlagDistance
+        runtime.lastFlagProgressTime = os.clock()
+    end
+
+    if not runtime.huntScanActivated and currentFlagDistance <= HUNT_SCAN_START_DISTANCE then
+        runtime.huntScanActivated = true
+        logf("Entered hunt scan range within %.2f yalms of the flag.", HUNT_SCAN_START_DISTANCE)
+    end
+
+    return currentFlagDistance
+end
+
+local function ResumeFlagTravel(runtime)
+    StopVnav()
+    sleep(POLL_INTERVAL)
+    if not BeginFlyToFlag() then
+        log("Falling back to direct pathfind for resumed flag travel.")
+        if not BeginMoveTo(runtime.flagDestination) then
+            return false, string.format("failed to resume movement to flag after losing hunt '%s'", tostring(runtime.chasedHuntName))
+        end
+    end
+
+    -- Keep huntCommitted sticky so flag-only completion cannot win later in this run.
+    runtime.chasedHuntName = nil
+    runtime.detectedHuntName = nil
+    runtime.huntTargeted = false
+    runtime.chaseMode = CHASE_MODE_FLAG
+    return true
+end
+
+local function LogDetectedHunt(runtime, huntEntity)
+    local huntName = tostring(huntEntity.Name or "Unknown Hunt")
+    if runtime.detectedHuntName ~= huntName then
+        logf("Found hunt entity '%s' at %.2f, %.2f, %.2f.", tostring(huntName), huntEntity.Position.X, huntEntity.Position.Y, huntEntity.Position.Z)
+        runtime.detectedHuntName = huntName
+    end
+    return huntName
+end
+
+local function TryTargetDetectedHunt(huntName)
+    return TargetHuntEntityIfClose(huntName, HUNT_TARGET_DISTANCE)
+end
+
+local function StartHuntApproach(runtime, huntEntity, targetedNow)
+    local huntName = tostring(huntEntity.Name or "Unknown Hunt")
+
+    StopVnav()
+    sleep(POLL_INTERVAL)
+
+    if not BeginFlyToPosition(huntEntity.Position) then
+        if targetedNow then
+            return false, string.format("failed to start flyto for targeted hunt '%s'", tostring(huntName))
+        end
+        return false, string.format("failed to start flyto for hunt '%s'", tostring(huntName))
+    end
+
+    runtime.huntCommitted = true
+    runtime.chasedHuntName = huntName
+
+    if targetedNow then
+        runtime.huntTargeted = true
+        runtime.chaseMode = CHASE_MODE_HUNT_TARGET
+        logf("Hunt '%s' targeted; starting hunt approach.", tostring(huntName))
+    else
+        runtime.chaseMode = CHASE_MODE_HUNT_POSITION
+        logf("Hunt '%s' detected; starting hunt approach.", tostring(huntName))
+    end
+
+    return true
+end
+
+local function TryReacquireChasedHunt(runtime)
+    local currentEntity = nil
+    local currentOk = pcall(function()
+        currentEntity = Entity.GetEntityByName and Entity.GetEntityByName(runtime.chasedHuntName) or nil
+    end)
+
+    if not currentOk or not IsLiveHuntEntity(currentEntity) then
+        return nil
+    end
+
+    return currentEntity
+end
+
+local function HandleLostChasedHunt(runtime)
+    logf("Hunt '%s' is no longer alive; resuming movement to the flag.", tostring(runtime.chasedHuntName))
+    local ok, reason = ResumeFlagTravel(runtime)
+    if not ok then
+        return RESULT_ERROR, reason
+    end
+    return RESULT_CONTINUE
+end
+
+local function UpdateHuntTargetState(runtime)
+    if runtime.chaseMode == CHASE_MODE_HUNT_POSITION then
+        if TryTargetDetectedHunt(runtime.chasedHuntName) then
+            runtime.huntTargeted = true
+            runtime.chaseMode = CHASE_MODE_HUNT_TARGET
+            logf("Hunt '%s' targeted; continuing hunt approach.", tostring(runtime.chasedHuntName))
+        end
+    end
+end
+
+local function TryCompleteHuntHandoff(runtime, currentEntity)
+    if runtime.huntTargeted and DistanceTo3D(currentEntity.Position) <= HUNT_HANDOFF_DISTANCE then
+        TryTargetDetectedHunt(runtime.chasedHuntName)
+        logf("Reached hunt '%s' within %.2f yalms for handoff.", tostring(runtime.chasedHuntName), HUNT_HANDOFF_DISTANCE)
+        ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
+        StopVnav()
+        if not EnsureDismounted(MOUNT_TIMEOUT) then
+            return RESULT_ERROR, string.format("failed to dismount at hunt '%s'", tostring(runtime.chasedHuntName))
+        end
+        return RESULT_SUCCESS, string.format("reached hunt '%s'", tostring(runtime.chasedHuntName))
+    end
+
+    return RESULT_CONTINUE
+end
+
+local function UpdateActiveHuntChase(runtime)
+    local currentEntity = TryReacquireChasedHunt(runtime)
+    if currentEntity == nil then
+        return HandleLostChasedHunt(runtime)
+    end
+
+    UpdateHuntTargetState(runtime)
+
+    return TryCompleteHuntHandoff(runtime, currentEntity)
+end
+
+local function TryAcquireHuntFromFlagMode(runtime)
+    if not runtime.huntScanActivated then
+        return RESULT_CONTINUE
+    end
+
+    local huntEntity = FindNearestLiveHuntEntity(runtime.flagDestination)
+    if not huntEntity then
+        runtime.detectedHuntName = nil
+        return RESULT_CONTINUE
+    end
+
+    local huntName = LogDetectedHunt(runtime, huntEntity)
+    local targetedNow = TryTargetDetectedHunt(huntName)
+    local ok, reason = StartHuntApproach(runtime, huntEntity, targetedNow)
+    if not ok then
+        return RESULT_ERROR, reason
+    end
+
+    return RESULT_CONTINUE
+end
+
+local function TryCompleteAtFlag(runtime, currentFlagDistance)
+    -- Once hunt pursuit begins, never end the script as a pure flag-only run.
+    if runtime.chaseMode == CHASE_MODE_FLAG
+        and not runtime.huntCommitted
+        and not runtime.huntTargeted
+        and currentFlagDistance <= FLAG_STOP_DISTANCE then
+        logf("Reached flag within %.2f flat yalms before hunt loaded.", FLAG_STOP_DISTANCE)
+        StopVnav()
+        return RESULT_SUCCESS, "reached flag before any hunt loaded"
+    end
+
+    local stalledNearFlag = (os.clock() - runtime.lastFlagProgressTime) >= 2.5
+        and currentFlagDistance <= (FLAG_STOP_DISTANCE + 5)
+    if runtime.chaseMode == CHASE_MODE_FLAG
+        and not runtime.huntCommitted
+        and not runtime.huntTargeted
+        and stalledNearFlag then
+        logf(
+            "Stopping near flag after stalled progress at %.2f yalms (best %.2f).",
+            currentFlagDistance,
+            runtime.bestFlagDistance
+        )
+        StopVnav()
+        return RESULT_SUCCESS, "stopped near unreachable flag position"
+    end
+
+    return RESULT_CONTINUE
+end
+
 local function MoveToFlagWithRedirect(flagPosition)
     local flagDestination = normalizeDestination(flagPosition)
     if flagDestination == nil then
         return false, "flag destination unavailable"
     end
 
-    if not beginFlyToFlag() then
-        log("Falling back to direct pathfind for flag movement.")
-        if not beginMoveTo(flagDestination) then
-            return false, "failed to start movement to the flag"
-        end
+    local runtime = CreateHuntRuntime(flagDestination)
+
+    local started, startReason = StartFlagTravel(runtime)
+    if not started then
+        return false, startReason
     end
 
     log("Moving toward flag and scanning for hunt entities.")
 
-    local bestFlagDistance = math.huge
-    local lastFlagProgressTime = os.clock()
-    local huntScanActivated = false
-    local huntCommitted = false
-
-    local chasedHuntName = nil
-    local detectedHuntName = nil
-    local chaseMode = "flag"
-
     while true do
-        local currentFlagDistance = distanceToFlat(flagDestination)
-        if currentFlagDistance + 0.5 < bestFlagDistance then
-            bestFlagDistance = currentFlagDistance
-            lastFlagProgressTime = os.clock()
-        end
+        local currentFlagDistance = UpdateFlagProgress(runtime)
 
-        if not huntScanActivated and currentFlagDistance <= HUNT_SCAN_START_DISTANCE then
-            huntScanActivated = true
-            logf("Entered hunt scan range within %.2f yalms of the flag.", HUNT_SCAN_START_DISTANCE)
-        end
-
-        if chasedHuntName ~= nil then
-            local currentEntity = nil
-            local currentOk = pcall(function()
-                currentEntity = Entity.GetEntityByName and Entity.GetEntityByName(chasedHuntName) or nil
-            end)
-
-            if not currentOk or not IsLiveHuntEntity(currentEntity) then
-                logf("Hunt '%s' is no longer alive; resuming movement to the flag.", tostring(chasedHuntName))
-                StopVnav()
-                sleep(POLL_INTERVAL)
-                if not beginFlyToFlag() then
-                    log("Falling back to direct pathfind for resumed flag movement.")
-                    if not beginMoveTo(flagDestination) then
-                        return false, string.format("failed to resume movement to flag after losing hunt '%s'", tostring(chasedHuntName))
-                    end
-                end
-                chasedHuntName = nil
-                detectedHuntName = nil
-                chaseMode = "flag"
-            else
-                local currentPosition = currentEntity.Position
-                if chaseMode == "hunt_position" then
-                    if TargetHuntEntityIfClose(chasedHuntName, HUNT_TARGET_DISTANCE) then
-                        chaseMode = "hunt_target"
-                        logf("Hunt '%s' targeted; continuing flyto to hunt position.", tostring(chasedHuntName))
-                    end
-                end
-
-                if distanceTo(currentPosition) <= HUNT_STOP_DISTANCE then
-                    TargetHuntEntityIfClose(chasedHuntName, HUNT_TARGET_DISTANCE)
-                    logf("Reached hunt '%s' within %.2f yalms.", tostring(chasedHuntName), HUNT_STOP_DISTANCE)
-                    ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
-                    StopVnav()
-                    if not EnsureDismounted(MOUNT_TIMEOUT) then
-                        return false, string.format("failed to dismount at hunt '%s'", tostring(chasedHuntName))
-                    end
-                    return true, string.format("reached hunt '%s'", tostring(chasedHuntName))
-                end
+        if runtime.chasedHuntName ~= nil then
+            local status, result = UpdateActiveHuntChase(runtime)
+            if status == RESULT_SUCCESS then
+                return true, result
+            elseif status == RESULT_ERROR then
+                return false, result
             end
         else
-            local huntEntity = nil
-            if huntScanActivated then
-                huntEntity = FindNearestLiveHuntEntity(flagDestination)
-            end
-            if huntEntity then
-                local huntName = tostring(huntEntity.Name or "Unknown Hunt")
-                if detectedHuntName ~= huntName then
-                    logf("Found hunt entity '%s' at %.2f, %.2f, %.2f.", tostring(huntName), huntEntity.Position.X, huntEntity.Position.Y, huntEntity.Position.Z)
-                    detectedHuntName = huntName
-                end
-
-                if TargetHuntEntityIfClose(huntName, HUNT_TARGET_DISTANCE) then
-                    StopVnav()
-                    sleep(POLL_INTERVAL)
-                    if not beginFlyToPosition(huntEntity.Position) then
-                        return false, string.format("failed to start flyto for targeted hunt '%s'", tostring(huntName))
-                    end
-                    huntCommitted = true
-                    chasedHuntName = huntName
-                    chaseMode = "hunt_target"
-                    logf("Hunt '%s' targeted; switching to flyto hunt position.", tostring(huntName))
-                else
-                    StopVnav()
-                    sleep(POLL_INTERVAL)
-                    if not beginFlyToPosition(huntEntity.Position) then
-                        return false, string.format("failed to start flyto for hunt '%s'", tostring(huntName))
-                    end
-                    huntCommitted = true
-                    chasedHuntName = huntName
-                    chaseMode = "hunt_position"
-                    logf("Hunt '%s' detected; switching to flyto until targetable.", tostring(huntName))
-                end
-            else
-                detectedHuntName = nil
+            local status, result = TryAcquireHuntFromFlagMode(runtime)
+            if status == RESULT_ERROR then
+                return false, result
             end
         end
 
-        if chaseMode == "flag" and not huntCommitted and currentFlagDistance <= FLAG_STOP_DISTANCE then
-            logf("Reached flag within %.2f flat yalms before hunt loaded.", FLAG_STOP_DISTANCE)
-            StopVnav()
-            return true, "reached flag before any hunt loaded"
-        end
-
-        local stalledNearFlag = (os.clock() - lastFlagProgressTime) >= 2.5 and currentFlagDistance <= (FLAG_STOP_DISTANCE + 5)
-        if chaseMode == "flag" and not huntCommitted and stalledNearFlag then
-            logf(
-                "Stopping near flag after stalled progress at %.2f yalms (best %.2f).",
-                currentFlagDistance,
-                bestFlagDistance
-            )
-            StopVnav()
-            return true, "stopped near unreachable flag position"
+        local flagStatus, flagResult = TryCompleteAtFlag(runtime, currentFlagDistance)
+        if flagStatus == RESULT_SUCCESS then
+            return true, flagResult
         end
 
         sleep(POLL_INTERVAL)
