@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.2
+version: 1.0.3
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -12,19 +12,14 @@ configs:
     default: 10
     min: 1
     max: 20
-  Hunt Handoff Distance:
-    description: Distance from the hunt required before applying autorotation, dismounting, and stopping.
-    default: 15
+  Hunt Wait Distance:
+    description: Distance from the hunt hitbox to stop, dismount, and wait before handing off.
+    default: 25
     min: 10
-    max: 30
+    max: 40
   BossMod Autorotation Preset:
     description: Autorotation preset to apply after the hunt is targeted. Leave empty to disable.
     default: ""
-  Flight Speed:
-    description: Estimated mounted flight speed in yalms per second for same-zone travel decisions.
-    default: 20
-    min: 1
-    max: 200
   Teleport Penalty:
     description: Estimated seconds spent teleporting, loading, and remounting.
     default: 13
@@ -51,6 +46,8 @@ configs:
 import("System.Numerics")
 
 local PREFIX = "[Hunt Flag]"
+-- Measured mounted flight speed used for same-zone aetheryte travel estimates.
+local FLIGHT_SPEED = 20
 local TELEPORT_START_TIMEOUT = 2.0
 local HUNT_TARGET_DISTANCE = 45
 local INSTANCE_WATCH_TIMEOUT = 2.0
@@ -76,7 +73,7 @@ local RESULT_ERROR = "error"
 -- Hunt distance roles:
 -- scan start: begin looking for hunts only after getting near the flag area
 -- target acquire: attempt to set target when close enough for reliable target lock
--- handoff: only apply autorotation and stop after getting close enough to the hunt
+-- wait: stop, dismount, and hold near the hunt until it is safe to hand off
 
 CharacterCondition = {
     mounted = 4,
@@ -101,19 +98,17 @@ end
 
 local POLL_INTERVAL = 0.25
 local BOSSMOD_AUTOROTATION_PRESET = tostring(getConfigValue("BossMod Autorotation Preset", "") or "")
-local FLIGHT_SPEED = tonumber(getConfigValue("Flight Speed", 20)) or 20
 local TELEPORT_PENALTY = tonumber(getConfigValue("Teleport Penalty", 13)) or 13
 local MINIMUM_TELEPORT_SAVINGS = tonumber(getConfigValue("Minimum Teleport Savings", 0)) or 0
 local FLAG_STOP_DISTANCE = tonumber(getConfigValue("Flag Stop Distance", 10)) or 10
-local HUNT_HANDOFF_DISTANCE = tonumber(getConfigValue("Hunt Handoff Distance", 15)) or 15
+local HUNT_WAIT_DISTANCE = tonumber(getConfigValue("Hunt Wait Distance", 25)) or 25
 local ZONE_TIMEOUT = tonumber(getConfigValue("Zone Timeout", 30)) or 30
 local MOUNT_TIMEOUT = tonumber(getConfigValue("Mount Timeout", 10)) or 10
 
-FLIGHT_SPEED = math.max(1, math.min(200, FLIGHT_SPEED))
 TELEPORT_PENALTY = math.max(0, math.min(60, TELEPORT_PENALTY))
 MINIMUM_TELEPORT_SAVINGS = math.max(0, math.min(30, MINIMUM_TELEPORT_SAVINGS))
 FLAG_STOP_DISTANCE = math.max(1, math.min(20, FLAG_STOP_DISTANCE))
-HUNT_HANDOFF_DISTANCE = math.max(10, math.min(30, HUNT_HANDOFF_DISTANCE))
+HUNT_WAIT_DISTANCE = math.max(10, math.min(40, HUNT_WAIT_DISTANCE))
 ZONE_TIMEOUT = math.max(10, math.min(300, ZONE_TIMEOUT))
 MOUNT_TIMEOUT = math.max(2, math.min(60, MOUNT_TIMEOUT))
 
@@ -959,6 +954,39 @@ local function DistanceToFlat(position)
     return math.sqrt((dx * dx) + (dz * dz))
 end
 
+local function GetPlayerHitboxRadius()
+    local ok, radius = pcall(function()
+        return Svc and Svc.ClientState and Svc.ClientState.LocalPlayer and Svc.ClientState.LocalPlayer.HitboxRadius
+    end)
+
+    radius = ok and tonumber(radius) or nil
+    return radius or 0
+end
+
+local function GetCurrentTargetHitboxRadius()
+    local ok, radius = pcall(function()
+        return Svc and Svc.Targets and Svc.Targets.Target and Svc.Targets.Target.HitboxRadius
+    end)
+
+    radius = ok and tonumber(radius) or nil
+    return radius
+end
+
+local function GetDistanceToHuntWaitThreshold(currentEntity, huntTargeted)
+    local centerDistance = DistanceTo3D(currentEntity.Position)
+    if not huntTargeted then
+        return centerDistance
+    end
+
+    local targetRadius = GetCurrentTargetHitboxRadius()
+    if not targetRadius then
+        return centerDistance
+    end
+
+    local playerRadius = GetPlayerHitboxRadius()
+    return math.max(0, centerDistance - targetRadius - playerRadius)
+end
+
 local function isBattleNpcType(typeText)
     return string.find(tostring(typeText or ""), "BattleNpc", 1, true) == 1
 end
@@ -1291,6 +1319,8 @@ local function CreateHuntRuntime(flagDestination)
         huntTargeted = false,
         chasedHuntName = nil,
         detectedHuntName = nil,
+        waitingForHuntDamage = false,
+        dismountedForHandoff = false,
         chaseMode = CHASE_MODE_FLAG,
     }
 end
@@ -1335,6 +1365,8 @@ local function ResumeFlagTravel(runtime)
     runtime.chasedHuntName = nil
     runtime.detectedHuntName = nil
     runtime.huntTargeted = false
+    runtime.waitingForHuntDamage = false
+    runtime.dismountedForHandoff = false
     runtime.chaseMode = CHASE_MODE_FLAG
     return true
 end
@@ -1413,14 +1445,49 @@ local function UpdateHuntTargetState(runtime)
 end
 
 local function TryCompleteHuntHandoff(runtime, currentEntity)
-    if runtime.huntTargeted and DistanceTo3D(currentEntity.Position) <= HUNT_HANDOFF_DISTANCE then
-        TryTargetDetectedHunt(runtime.chasedHuntName)
-        logf("Reached hunt '%s' within %.2f yalms for handoff.", tostring(runtime.chasedHuntName), HUNT_HANDOFF_DISTANCE)
-        ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
-        StopVnav()
-        if not EnsureDismounted(MOUNT_TIMEOUT) then
-            return RESULT_ERROR, string.format("failed to dismount at hunt '%s'", tostring(runtime.chasedHuntName))
+    local waitDistance = GetDistanceToHuntWaitThreshold(currentEntity, runtime.huntTargeted)
+    if waitDistance <= HUNT_WAIT_DISTANCE then
+        if TryTargetDetectedHunt(runtime.chasedHuntName) then
+            runtime.huntTargeted = true
+            waitDistance = GetDistanceToHuntWaitThreshold(currentEntity, runtime.huntTargeted)
         end
+
+        if not runtime.dismountedForHandoff then
+            StopVnav()
+
+            if not EnsureDismounted(MOUNT_TIMEOUT) then
+                return RESULT_ERROR, string.format("failed to dismount at hunt '%s'", tostring(runtime.chasedHuntName))
+            end
+
+            runtime.dismountedForHandoff = true
+        end
+
+        if not runtime.huntTargeted then
+            if not runtime.waitingForHuntDamage then
+                runtime.waitingForHuntDamage = true
+                logf("Within %.2f yalms of hunt '%s' and dismounted; waiting for target or damage before handoff.", HUNT_WAIT_DISTANCE, tostring(runtime.chasedHuntName))
+            end
+            return RESULT_CONTINUE
+        end
+
+        if tonumber(currentEntity.CurrentHp) ~= nil
+            and tonumber(currentEntity.MaxHp) ~= nil
+            and tonumber(currentEntity.MaxHp) > 0
+            and tonumber(currentEntity.CurrentHp) >= tonumber(currentEntity.MaxHp) then
+            if not runtime.waitingForHuntDamage then
+                runtime.waitingForHuntDamage = true
+                logf("Within %.2f yalms of hunt '%s' hitbox and dismounted; waiting for another player to damage it before handoff.", HUNT_WAIT_DISTANCE, tostring(runtime.chasedHuntName))
+            end
+            return RESULT_CONTINUE
+        end
+
+        if runtime.waitingForHuntDamage then
+            logf("Hunt '%s' has taken damage; handing off to autorotation.", tostring(runtime.chasedHuntName))
+            runtime.waitingForHuntDamage = false
+        end
+
+        logf("Reached hunt '%s' within %.2f yalms of the hitbox for handoff.", tostring(runtime.chasedHuntName), HUNT_WAIT_DISTANCE)
+        ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
         return RESULT_SUCCESS, string.format("reached hunt '%s'", tostring(runtime.chasedHuntName))
     end
 
@@ -1566,6 +1633,12 @@ end
 local settledInstance, instanceErr = WaitForInstancedZoneSettle(INSTANCE_WATCH_TIMEOUT)
 if not settledInstance then
     logf("Cannot continue: %s", tostring(instanceErr))
+    return
+end
+
+local currentFlagDistance = DistanceToFlat(flag.position)
+if currentFlagDistance <= FLAG_STOP_DISTANCE then
+    logf("Already within %.2f yalms of the flag; skipping rerun.", FLAG_STOP_DISTANCE)
     return
 end
 
