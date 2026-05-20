@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.6
+version: 1.4.7
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -1439,6 +1439,7 @@ local STUCK_MONITOR_THRESHOLD_SECONDS = 10
 local STUCK_MONITOR_MOVE_TOLERANCE = 4.0
 local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_RESTART = 0
 local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_TELEPORT = 15
+local STUCK_MONITOR_LOCAL_AETHERYTE_SKIP_DISTANCE = 25.0
 
 local function CloneVector3(vec)
     if vec == nil then
@@ -1628,6 +1629,15 @@ local function TeleportToClosestLocalAetheryte(position)
     if aetheryte == nil or aetheryte.aetheryteId == nil then
         StuckMonitorLog("Local aetheryte recovery unavailable: no aetheryte found")
         return false
+    end
+    if distance ~= nil and distance <= STUCK_MONITOR_LOCAL_AETHERYTE_SKIP_DISTANCE then
+        StuckMonitorLog(string.format(
+            "Local aetheryte recovery skipped: already within %.1f yalms of %s (%.1f yalms)",
+            STUCK_MONITOR_LOCAL_AETHERYTE_SKIP_DISTANCE,
+            tostring(aetheryte.aetheryteName),
+            tonumber(distance) or -1
+        ))
+        return true
     end
     StuckMonitorLog(string.format("Local aetheryte recovery: teleporting to %s (%.1f yalms)", tostring(aetheryte.aetheryteName), tonumber(distance) or -1))
     local destination = {
