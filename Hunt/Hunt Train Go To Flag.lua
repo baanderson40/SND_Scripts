@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.3
+version: 1.0.4
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -55,6 +55,17 @@ local INSTANCE_WATCH_POLL = 0.05
 local FLAG_ACQUIRE_TIMEOUT = 5.0
 local MOUNT_RETRY_COOLDOWN = 1.0
 local HUNT_SCAN_START_DISTANCE = 60
+local SAFE_HUNT_MIN_BUFFER = 3
+local SAFE_HUNT_VERTICAL_TOLERANCE = 12
+local SAFE_HUNT_MAX_PROJECTION_DRIFT = 8
+local SAFE_HUNT_STALL_TIMEOUT = 3.0
+local SAFE_HUNT_PROJECTION_RESCUE_NUDGE = 3
+local SAFE_HUNT_STALL_GRACE_AFTER_START = 2.0
+local SAFE_HUNT_STALL_GRACE_AFTER_TARGET = 1.5
+local SAFE_HUNT_STALL_GRACE_AFTER_REPATH = 2.0
+local STARTUP_HUNT_SEARCH_DISTANCE = 60
+local STARTUP_HUNT_MISS_THRESHOLD = 3
+local STARTUP_HUNT_HEARTBEAT_INTERVAL = 5.0
 local autorotationPrefix = nil
 
 local CHASE_MODE_FLAG = "flag"
@@ -77,6 +88,7 @@ local RESULT_ERROR = "error"
 
 CharacterCondition = {
     mounted = 4,
+    inCombat = 26,
     casting = 27,
     betweenAreas = 45,
     betweenAreasForDuty = 51,
@@ -537,8 +549,8 @@ local function WaitForTeleportCompletion(targetTerritoryId, timeoutSec, sourceLa
 end
 
 local function WatchForInstancedZoneActivity(startInstanceId, timeoutSec)
-    logf("Public instance before watch: %d", startInstanceId)
-    logf("Watching %.2fs for transition, SelectString, or instance change.", timeoutSec)
+    verboseLogf("Public instance before watch: %d", startInstanceId)
+    verboseLogf("Watching %.2fs for transition, SelectString, or instance change.", timeoutSec)
 
     local deadline = os.clock() + timeoutSec
     while os.clock() < deadline do
@@ -625,7 +637,7 @@ local function WaitForInstancedZoneSettle(timeoutSec)
 
         if activity == INSTANCE_ACTIVITY_NONE then
             if not sawAnyActivity then
-                logf("No instance-switch signal detected; continuing in instance %d.", currentInstanceId)
+                verboseLogf("No instance-switch signal detected; continuing in instance %d.", currentInstanceId)
             else
                 logf("Instanced-zone activity settled; continuing in instance %d.", currentInstanceId)
             end
@@ -1029,6 +1041,24 @@ local function normalizeDestination(position)
         return nil
     end
 
+    local floorPoint = nil
+    local ok = pcall(function()
+        if IPC and IPC.vnavmesh and IPC.vnavmesh.PointOnFloor then
+            floorPoint = IPC.vnavmesh.PointOnFloor(position, true, 10)
+        end
+    end)
+    if ok and floorPoint ~= nil then
+        return floorPoint
+    end
+
+    return position
+end
+
+local function TryProjectPointToFloor(position)
+    if position == nil then
+        return nil
+    end
+
     if IPC and IPC.vnavmesh and IPC.vnavmesh.PointOnFloor then
         local ok, floorPoint = pcall(function()
             return IPC.vnavmesh.PointOnFloor(position, true, 10)
@@ -1038,7 +1068,384 @@ local function normalizeDestination(position)
         end
     end
 
-    return position
+    return nil
+end
+
+local function GetEntityHitboxRadius(entity)
+    local radius = entity and tonumber(entity.HitboxRadius) or nil
+    return radius or 0
+end
+
+local function GetSafeHuntApproachBounds(huntEntity)
+    local targetRadius = GetEntityHitboxRadius(huntEntity)
+    local playerRadius = GetPlayerHitboxRadius()
+    local minimumRadius = math.max(8, targetRadius + playerRadius + SAFE_HUNT_MIN_BUFFER)
+    local maximumRadius = math.max(minimumRadius, HUNT_WAIT_DISTANCE - 2)
+    local preferredRadius = maximumRadius
+    return minimumRadius, maximumRadius, preferredRadius
+end
+
+local function GetFlatAngle(fromPosition, toPosition)
+    local dx = (toPosition.X or 0) - (fromPosition.X or 0)
+    local dz = (toPosition.Z or 0) - (fromPosition.Z or 0)
+
+    if dx == 0 then
+        if dz >= 0 then
+            return math.pi / 2
+        end
+        return -math.pi / 2
+    end
+
+    local angle = math.atan(dz / dx)
+    if dx < 0 then
+        angle = angle + math.pi
+    end
+
+    return angle
+end
+
+local function EvaluateSafeHuntApproachPoint(candidate, huntPosition, minimumRadius, maximumRadius)
+    if candidate == nil or huntPosition == nil then
+        return false, "projection_failed", nil, nil
+    end
+
+    local flatDistance = DistanceBetweenFlat(candidate, huntPosition)
+    if flatDistance < minimumRadius or flatDistance > maximumRadius then
+        return false, "out_of_radius", flatDistance, nil
+    end
+
+    local verticalDelta = math.abs((candidate.Y or 0) - (huntPosition.Y or 0))
+    if verticalDelta > SAFE_HUNT_VERTICAL_TOLERANCE then
+        return false, "vertical_delta", flatDistance, verticalDelta
+    end
+
+    return true, nil, flatDistance, verticalDelta
+end
+
+local function EvaluateProjectedHuntApproachPoint(requestedPoint, projectedPoint, huntPosition, minimumRadius, maximumRadius)
+    local valid, rejectReason, flatDistance, verticalDelta = EvaluateSafeHuntApproachPoint(projectedPoint, huntPosition, minimumRadius, maximumRadius)
+    if not valid then
+        return valid, rejectReason, flatDistance, verticalDelta, nil
+    end
+
+    local projectionDrift = DistanceBetweenFlat(projectedPoint, requestedPoint)
+    if projectionDrift > SAFE_HUNT_MAX_PROJECTION_DRIFT then
+        return false, "projection_drift", flatDistance, verticalDelta, projectionDrift
+    end
+
+    return true, nil, flatDistance, verticalDelta, projectionDrift
+end
+
+local function BuildHuntApproachCandidateLabel(baseLabel, angleOffsetDegrees)
+    if angleOffsetDegrees == 0 then
+        return baseLabel
+    end
+
+    local direction = angleOffsetDegrees > 0 and "left" or "right"
+    return string.format("%s-%s-%d", baseLabel, direction, math.abs(angleOffsetDegrees))
+end
+
+local function BuildHuntApproachCandidatePoint(huntPosition, baseAngle, radius, angleOffsetDegrees)
+    local angle = baseAngle + math.rad(angleOffsetDegrees)
+    return Vector3(
+        huntPosition.X + (math.cos(angle) * radius),
+        huntPosition.Y,
+        huntPosition.Z + (math.sin(angle) * radius)
+    )
+end
+
+local function BuildOrderedHuntApproachCandidates(minimumRadius, maximumRadius, preferredRadius)
+    local rawCandidates = {
+        { label = "player-facing", radius = preferredRadius, angleOffsetDegrees = 0 },
+        { label = "player-facing-far", radius = maximumRadius, angleOffsetDegrees = 0 },
+        { label = "player-facing-tight", radius = minimumRadius, angleOffsetDegrees = 0 },
+        { label = "player-facing", radius = preferredRadius, angleOffsetDegrees = 30 },
+        { label = "player-facing", radius = preferredRadius, angleOffsetDegrees = -30 },
+        { label = "player-facing", radius = preferredRadius, angleOffsetDegrees = 60 },
+        { label = "player-facing", radius = preferredRadius, angleOffsetDegrees = -60 },
+        { label = "player-facing-far", radius = maximumRadius, angleOffsetDegrees = 30 },
+        { label = "player-facing-far", radius = maximumRadius, angleOffsetDegrees = -30 },
+        { label = "player-facing-far", radius = maximumRadius, angleOffsetDegrees = 60 },
+        { label = "player-facing-far", radius = maximumRadius, angleOffsetDegrees = -60 },
+    }
+
+    local uniqueCandidates = {}
+    local seen = {}
+
+    for _, candidate in ipairs(rawCandidates) do
+        local key = string.format("%.3f:%d", candidate.radius, candidate.angleOffsetDegrees)
+        if not seen[key] then
+            seen[key] = true
+            table.insert(uniqueCandidates, candidate)
+        end
+    end
+
+    return uniqueCandidates
+end
+
+local function GetProjectionRescueOffsets()
+    local nudge = SAFE_HUNT_PROJECTION_RESCUE_NUDGE
+    return {
+        { label = "center", x = 0, z = 0 },
+        { label = "east", x = nudge, z = 0 },
+        { label = "west", x = -nudge, z = 0 },
+        { label = "south", x = 0, z = nudge },
+        { label = "north", x = 0, z = -nudge },
+        { label = "south-east", x = nudge, z = nudge },
+        { label = "south-west", x = -nudge, z = nudge },
+        { label = "north-east", x = nudge, z = -nudge },
+        { label = "north-west", x = -nudge, z = -nudge },
+    }
+end
+
+local function LogRejectedHuntApproachCandidate(candidateIndex, huntName, rejectReason, flatDistance, minimumRadius, maximumRadius, verticalDelta, projectionDrift)
+    if rejectReason == "projection_failed" then
+        verboseLogf("Candidate %d for '%s' rejected: projection_failed.", candidateIndex, tostring(huntName))
+        return
+    end
+
+    if rejectReason == "projection_drift" then
+        verboseLogf(
+            "Candidate %d for '%s' rejected: projection_drift=%.2f > %.2f.",
+            candidateIndex,
+            tostring(huntName),
+            tonumber(projectionDrift) or -1,
+            SAFE_HUNT_MAX_PROJECTION_DRIFT
+        )
+        return
+    end
+
+    if rejectReason == "out_of_radius" then
+        verboseLogf(
+            "Candidate %d for '%s' rejected: out_of_radius (flat=%.2f, allowed %.2f-%.2f).",
+            candidateIndex,
+            tostring(huntName),
+            tonumber(flatDistance) or -1,
+            minimumRadius,
+            maximumRadius
+        )
+        return
+    end
+
+    if rejectReason == "vertical_delta" then
+        verboseLogf(
+            "Candidate %d for '%s' rejected: vertical_delta=%.2f > %.2f.",
+            candidateIndex,
+            tostring(huntName),
+            tonumber(verticalDelta) or -1,
+            SAFE_HUNT_VERTICAL_TOLERANCE
+        )
+    end
+end
+
+local function SummarizeHuntApproachRejections(rejectedCounts)
+    return string.format(
+        "projection_failed=%d, projection_drift=%d, out_of_radius=%d, vertical_delta=%d",
+        rejectedCounts.projection_failed or 0,
+        rejectedCounts.projection_drift or 0,
+        rejectedCounts.out_of_radius or 0,
+        rejectedCounts.vertical_delta or 0
+    )
+end
+
+local function TryProjectPointToFloorWithRescue(candidateIndex, huntName, requestedPoint)
+    local offsets = GetProjectionRescueOffsets()
+
+    for rescueIndex, offset in ipairs(offsets) do
+        local probePoint = requestedPoint
+        if offset.x ~= 0 or offset.z ~= 0 then
+            probePoint = Vector3(
+                requestedPoint.X + offset.x,
+                requestedPoint.Y,
+                requestedPoint.Z + offset.z
+            )
+        end
+
+        local projectedPoint = TryProjectPointToFloor(probePoint)
+        if projectedPoint ~= nil then
+            verboseLogf(
+                "Candidate %d for '%s' projected via %s rescue probe %d at (%.2f, %.2f, %.2f).",
+                candidateIndex,
+                tostring(huntName),
+                tostring(offset.label),
+                rescueIndex,
+                probePoint.X,
+                probePoint.Y,
+                probePoint.Z
+            )
+            return projectedPoint, offset.label
+        end
+    end
+
+    return nil, nil
+end
+
+local function BuildSafeHuntApproachPoint(huntEntity, selectionReason)
+    local huntPosition = huntEntity and huntEntity.Position or nil
+    local playerPosition = getPlayerPosition()
+    local huntName = tostring(huntEntity and huntEntity.Name or "Unknown Hunt")
+    local selectionLabel = tostring(selectionReason or "initial")
+    if huntPosition == nil or playerPosition == nil then
+        return nil, "hunt or player position unavailable"
+    end
+
+    local minimumRadius, maximumRadius, preferredRadius = GetSafeHuntApproachBounds(huntEntity)
+    local baseAngle = GetFlatAngle(huntPosition, playerPosition)
+    local candidates = BuildOrderedHuntApproachCandidates(minimumRadius, maximumRadius, preferredRadius)
+    local rejectedCounts = {
+        projection_failed = 0,
+        projection_drift = 0,
+        out_of_radius = 0,
+        vertical_delta = 0,
+    }
+
+    logf("Selecting hunt approach point for '%s' (%s).", tostring(huntName), selectionLabel)
+    verboseLogf(
+        "Approach bounds for '%s': min=%.2f max=%.2f preferred=%.2f.",
+        tostring(huntName),
+        minimumRadius,
+        maximumRadius,
+        preferredRadius
+    )
+    verboseLogf(
+        "Approach inputs for '%s': player=(%.2f, %.2f, %.2f) hunt=(%.2f, %.2f, %.2f) baseAngle=%.2f.",
+        tostring(huntName),
+        playerPosition.X,
+        playerPosition.Y,
+        playerPosition.Z,
+        huntPosition.X,
+        huntPosition.Y,
+        huntPosition.Z,
+        math.deg(baseAngle)
+    )
+
+    for candidateIndex, candidate in ipairs(candidates) do
+        local requestedPoint = BuildHuntApproachCandidatePoint(huntPosition, baseAngle, candidate.radius, candidate.angleOffsetDegrees)
+        verboseLogf(
+            "Candidate %d for '%s': label=%s radius=%.2f angleOffset=%d requested=(%.2f, %.2f, %.2f).",
+            candidateIndex,
+            tostring(huntName),
+            BuildHuntApproachCandidateLabel(candidate.label, candidate.angleOffsetDegrees),
+            candidate.radius,
+            candidate.angleOffsetDegrees,
+            requestedPoint.X,
+            requestedPoint.Y,
+            requestedPoint.Z
+        )
+
+        local projectedPoint, rescueLabel = TryProjectPointToFloorWithRescue(candidateIndex, huntName, requestedPoint)
+        local valid, rejectReason, flatDistance, verticalDelta, projectionDrift = EvaluateProjectedHuntApproachPoint(requestedPoint, projectedPoint, huntPosition, minimumRadius, maximumRadius)
+        if valid then
+            logf(
+                "Selected %s hunt approach for '%s': radius=%.2f angleOffset=%d at %.2f, %.2f, %.2f%s (drift=%.2f).",
+                BuildHuntApproachCandidateLabel(candidate.label, candidate.angleOffsetDegrees),
+                tostring(huntName),
+                candidate.radius,
+                candidate.angleOffsetDegrees,
+                projectedPoint.X,
+                projectedPoint.Y,
+                projectedPoint.Z,
+                rescueLabel ~= nil and string.format(" via %s projection rescue", tostring(rescueLabel)) or "",
+                tonumber(projectionDrift) or 0
+            )
+            return projectedPoint, nil, {
+                label = BuildHuntApproachCandidateLabel(candidate.label, candidate.angleOffsetDegrees),
+                radius = candidate.radius,
+                angleOffsetDegrees = candidate.angleOffsetDegrees,
+                projectionDrift = projectionDrift,
+                projectionMode = rescueLabel ~= nil and string.format("projected-%s", tostring(rescueLabel)) or "projected",
+                selectionReason = selectionLabel,
+            }
+        end
+
+        if rejectReason ~= nil then
+            rejectedCounts[rejectReason] = (rejectedCounts[rejectReason] or 0) + 1
+        end
+        LogRejectedHuntApproachCandidate(candidateIndex, huntName, rejectReason, flatDistance, minimumRadius, maximumRadius, verticalDelta, projectionDrift)
+    end
+
+    logf(
+        "Player-facing offset selection failed for '%s' within %.2f-%.2f yalms; projected fallback next (%s).",
+        tostring(huntName),
+        minimumRadius,
+        maximumRadius,
+        SummarizeHuntApproachRejections(rejectedCounts)
+    )
+    logf("No validated player-facing offset found for '%s'; testing projected hunt fallback.", tostring(huntName))
+
+    local fallbackPoint, fallbackRescueLabel = TryProjectPointToFloorWithRescue(#candidates + 1, huntName, huntPosition)
+    local fallbackValid, fallbackRejectReason, fallbackFlatDistance, fallbackVerticalDelta, fallbackProjectionDrift = EvaluateProjectedHuntApproachPoint(huntPosition, fallbackPoint, huntPosition, minimumRadius, maximumRadius)
+    if fallbackValid then
+        logf(
+            "Using validated projected fallback for '%s' at %.2f, %.2f, %.2f%s (drift=%.2f).",
+            tostring(huntName),
+            fallbackPoint.X,
+            fallbackPoint.Y,
+            fallbackPoint.Z,
+            fallbackRescueLabel ~= nil and string.format(" via %s projection rescue", tostring(fallbackRescueLabel)) or "",
+            tonumber(fallbackProjectionDrift) or 0
+        )
+        return fallbackPoint, nil, {
+            label = "projected-hunt-fallback",
+            radius = fallbackFlatDistance,
+            angleOffsetDegrees = 0,
+            projectionDrift = fallbackProjectionDrift,
+            projectionMode = fallbackRescueLabel ~= nil and string.format("projected-%s", tostring(fallbackRescueLabel)) or "projected",
+            selectionReason = selectionLabel,
+        }
+    end
+
+    if fallbackRejectReason ~= nil then
+        rejectedCounts[fallbackRejectReason] = (rejectedCounts[fallbackRejectReason] or 0) + 1
+        LogRejectedHuntApproachCandidate(#candidates + 1, huntName, fallbackRejectReason, fallbackFlatDistance, minimumRadius, maximumRadius, fallbackVerticalDelta, fallbackProjectionDrift)
+    end
+
+    logf(
+        "Strict hunt approach validation failed for '%s' within %.2f-%.2f yalms (%s).",
+        tostring(huntName),
+        minimumRadius,
+        maximumRadius,
+        SummarizeHuntApproachRejections(rejectedCounts)
+    )
+
+    for candidateIndex, candidate in ipairs(candidates) do
+        local requestedPoint = BuildHuntApproachCandidatePoint(huntPosition, baseAngle, candidate.radius, candidate.angleOffsetDegrees)
+        local valid, rejectReason, flatDistance, verticalDelta = EvaluateSafeHuntApproachPoint(requestedPoint, huntPosition, minimumRadius, maximumRadius)
+        if valid then
+            logf(
+                "Using unprojected %s hunt approach for '%s' at %.2f, %.2f, %.2f after projection failures.",
+                BuildHuntApproachCandidateLabel(candidate.label, candidate.angleOffsetDegrees),
+                tostring(huntName),
+                requestedPoint.X,
+                requestedPoint.Y,
+                requestedPoint.Z
+            )
+            return requestedPoint, "projection rescue failed; using strict unprojected offset fallback", {
+                label = BuildHuntApproachCandidateLabel(candidate.label, candidate.angleOffsetDegrees),
+                radius = candidate.radius,
+                angleOffsetDegrees = candidate.angleOffsetDegrees,
+                projectionMode = "unprojected",
+                selectionReason = selectionLabel,
+            }
+        end
+
+        verboseLogf(
+            "Unprojected candidate %d for '%s' rejected: %s%s%s.",
+            candidateIndex,
+            tostring(huntName),
+            tostring(rejectReason or "unknown"),
+            flatDistance ~= nil and string.format(" flat=%.2f", flatDistance) or "",
+            verticalDelta ~= nil and string.format(" vertical=%.2f", verticalDelta) or ""
+        )
+    end
+
+    return fallbackPoint, string.format(
+        "strict validation blocked movement point selection (projection_failed=%d, projection_drift=%d, out_of_radius=%d, vertical_delta=%d)",
+        rejectedCounts.projection_failed or 0,
+        rejectedCounts.projection_drift or 0,
+        rejectedCounts.out_of_radius or 0,
+        rejectedCounts.vertical_delta or 0
+    ), nil
 end
 
 local function BeginMoveTo(position)
@@ -1140,6 +1547,19 @@ local function BeginFlyToPosition(position)
     )
 end
 
+local function StartApproachMovement(position)
+    if position == nil then
+        return false
+    end
+
+    if BeginFlyToPosition(position) then
+        return true
+    end
+
+    log("/vnav flyto did not start; falling back to grounded pathfind for hunt approach.")
+    return BeginMoveTo(position)
+end
+
 local function IsLiveHuntEntity(entity)
     return entity ~= nil
         and entity.Position ~= nil
@@ -1148,6 +1568,125 @@ local function IsLiveHuntEntity(entity)
         and tonumber(entity.CurrentHp) > 0
         and tonumber(entity.HuntRank) ~= nil
         and tonumber(entity.HuntRank) > 0
+end
+
+local function isInCombat()
+    return getCondition(CharacterCondition.inCombat)
+end
+
+local function GetCurrentTargetEntity()
+    if Entity and Entity.Target then
+        return Entity.Target
+    end
+
+    return nil
+end
+
+local function FindNearestLiveHuntNearPosition(originPosition, maxDistance)
+    if originPosition == nil or not (Svc and Svc.Objects and Entity) then
+        return nil, math.huge
+    end
+
+    maxDistance = tonumber(maxDistance) or STARTUP_HUNT_SEARCH_DISTANCE
+
+    local nearestEntity = nil
+    local nearestDistance = math.huge
+
+    for i = 0, Svc.Objects.Length - 1 do
+        local ok, entity = pcall(function()
+            return Entity[i]
+        end)
+        if ok and IsLiveHuntEntity(entity) then
+            local distance = DistanceBetweenFlat(entity.Position, originPosition)
+            if distance <= maxDistance and distance < nearestDistance then
+                nearestDistance = distance
+                nearestEntity = entity
+            end
+        end
+    end
+
+    return nearestEntity, nearestDistance
+end
+
+local function GetStartupBlockingHunt()
+    local currentTarget = GetCurrentTargetEntity()
+    if IsLiveHuntEntity(currentTarget) then
+        return currentTarget, "target", DistanceToFlat(currentTarget.Position)
+    end
+
+    if not isInCombat() then
+        return nil, nil, nil
+    end
+
+    local playerPosition = getPlayerPosition()
+    if playerPosition == nil then
+        return nil, nil, nil
+    end
+
+    local nearbyHunt, nearbyDistance = FindNearestLiveHuntNearPosition(playerPosition, STARTUP_HUNT_SEARCH_DISTANCE)
+    if nearbyHunt ~= nil then
+        return nearbyHunt, "nearby", nearbyDistance
+    end
+
+    return nil, nil, nil
+end
+
+local function WaitForStartupHuntToDie()
+    local blockingHunt, sourceLabel, sourceDistance = GetStartupBlockingHunt()
+    if blockingHunt == nil then
+        if isInCombat() then
+            log("Player is in combat but no nearby live hunt was found; continuing startup.")
+        end
+        return
+    end
+
+    local huntName = tostring(blockingHunt.Name or "Unknown Hunt")
+    if sourceLabel == "target" then
+        logf("Current target is a live hunt '%s' at %.2f yalms; holding startup movement.", tostring(huntName), tonumber(sourceDistance) or -1)
+    else
+        logf("Detected nearby live hunt '%s' at %.2f yalms while in combat; holding startup movement.", tostring(huntName), tonumber(sourceDistance) or -1)
+    end
+
+    logf("Player already in combat with hunt '%s'; waiting for it to die before moving to next flag.", tostring(huntName))
+
+    local misses = 0
+    local waitStart = os.clock()
+    local nextHeartbeatAt = waitStart
+
+    while true do
+        local currentEntity = nil
+        local currentOk = pcall(function()
+            currentEntity = Entity.GetEntityByName and Entity.GetEntityByName(huntName) or nil
+        end)
+
+        if currentOk and IsLiveHuntEntity(currentEntity) then
+            misses = 0
+
+            local now = os.clock()
+            if now >= nextHeartbeatAt then
+                logf(
+                    "Startup hunt '%s' still alive after %.1fs; waiting.",
+                    tostring(huntName),
+                    now - waitStart
+                )
+                nextHeartbeatAt = now + STARTUP_HUNT_HEARTBEAT_INTERVAL
+            end
+
+            sleep(POLL_INTERVAL)
+        else
+            misses = misses + 1
+            if misses >= STARTUP_HUNT_MISS_THRESHOLD then
+                logf(
+                    "Startup hunt '%s' is gone or dead after %.1fs; resuming next-flag travel.",
+                    tostring(huntName),
+                    os.clock() - waitStart
+                )
+                return
+            end
+
+            sleep(POLL_INTERVAL)
+        end
+    end
 end
 
 local function FindNearestLiveHuntEntity(flagPosition)
@@ -1312,12 +1851,18 @@ local function CreateHuntRuntime(flagDestination)
         flagDestination = flagDestination,
         bestFlagDistance = math.huge,
         lastFlagProgressTime = os.clock(),
+        bestHuntDistance = math.huge,
+        lastHuntProgressTime = os.clock(),
         huntScanActivated = false,
         -- Once true, flag-complete fallback should never win again this run.
         huntCommitted = false,
         -- True only after an actual target lock on the chosen hunt.
         huntTargeted = false,
         chasedHuntName = nil,
+        huntApproachPoint = nil,
+        huntApproachRepathCount = 0,
+        huntApproachGraceUntil = os.clock(),
+        huntRetryExhaustedLogged = false,
         detectedHuntName = nil,
         waitingForHuntDamage = false,
         dismountedForHandoff = false,
@@ -1365,6 +1910,12 @@ local function ResumeFlagTravel(runtime)
     runtime.chasedHuntName = nil
     runtime.detectedHuntName = nil
     runtime.huntTargeted = false
+    runtime.huntApproachPoint = nil
+    runtime.huntApproachRepathCount = 0
+    runtime.huntApproachGraceUntil = os.clock()
+    runtime.huntRetryExhaustedLogged = false
+    runtime.bestHuntDistance = math.huge
+    runtime.lastHuntProgressTime = os.clock()
     runtime.waitingForHuntDamage = false
     runtime.dismountedForHandoff = false
     runtime.chaseMode = CHASE_MODE_FLAG
@@ -1386,19 +1937,44 @@ end
 
 local function StartHuntApproach(runtime, huntEntity, targetedNow)
     local huntName = tostring(huntEntity.Name or "Unknown Hunt")
+    local approachPoint, approachReason, approachMeta = BuildSafeHuntApproachPoint(huntEntity, "initial")
+    local movePoint = approachPoint or huntEntity.Position
 
     StopVnav()
     sleep(POLL_INTERVAL)
 
-    if not BeginFlyToPosition(huntEntity.Position) then
+    if approachPoint ~= nil then
+        logf(
+            "Using %s hunt approach point for '%s' at %.2f, %.2f, %.2f.",
+            tostring(approachMeta and approachMeta.label or "validated"),
+            tostring(huntName),
+            movePoint.X,
+            movePoint.Y,
+            movePoint.Z
+        )
+    else
+        logf("No validated hunt approach point found for '%s'; using raw hunt position.", tostring(huntName))
+    end
+
+    if approachReason ~= nil then
+        logf("Hunt approach note for '%s': %s", tostring(huntName), tostring(approachReason))
+    end
+
+    if not StartApproachMovement(movePoint) then
         if targetedNow then
-            return false, string.format("failed to start flyto for targeted hunt '%s'", tostring(huntName))
+            return false, string.format("failed to start approach movement for targeted hunt '%s'", tostring(huntName))
         end
-        return false, string.format("failed to start flyto for hunt '%s'", tostring(huntName))
+        return false, string.format("failed to start approach movement for hunt '%s'", tostring(huntName))
     end
 
     runtime.huntCommitted = true
     runtime.chasedHuntName = huntName
+    runtime.huntApproachPoint = approachPoint
+    runtime.huntApproachRepathCount = 0
+    runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_START
+    runtime.huntRetryExhaustedLogged = false
+    runtime.bestHuntDistance = math.huge
+    runtime.lastHuntProgressTime = os.clock()
 
     if targetedNow then
         runtime.huntTargeted = true
@@ -1439,13 +2015,97 @@ local function UpdateHuntTargetState(runtime)
         if TryTargetDetectedHunt(runtime.chasedHuntName) then
             runtime.huntTargeted = true
             runtime.chaseMode = CHASE_MODE_HUNT_TARGET
+            runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_TARGET
+            runtime.huntRetryExhaustedLogged = false
             logf("Hunt '%s' targeted; continuing hunt approach.", tostring(runtime.chasedHuntName))
         end
     end
 end
 
-local function TryCompleteHuntHandoff(runtime, currentEntity)
+local function UpdateHuntProgress(runtime, currentEntity)
     local waitDistance = GetDistanceToHuntWaitThreshold(currentEntity, runtime.huntTargeted)
+    if waitDistance + 0.5 < runtime.bestHuntDistance then
+        runtime.bestHuntDistance = waitDistance
+        runtime.lastHuntProgressTime = os.clock()
+        runtime.huntRetryExhaustedLogged = false
+    end
+    return waitDistance
+end
+
+local function TryRestartHuntApproach(runtime, currentEntity)
+    if os.clock() < (runtime.huntApproachGraceUntil or 0) then
+        return RESULT_CONTINUE
+    end
+
+    local stalledFor = os.clock() - runtime.lastHuntProgressTime
+    if stalledFor < SAFE_HUNT_STALL_TIMEOUT then
+        return RESULT_CONTINUE
+    end
+
+    if runtime.huntApproachRepathCount >= 1 then
+        if not runtime.huntRetryExhaustedLogged then
+            local waitDistance = GetDistanceToHuntWaitThreshold(currentEntity, runtime.huntTargeted)
+            logf(
+                "Hunt '%s' approach is still stalled; retry budget exhausted, continuing current path (waitDistance=%.2f, best=%.2f).",
+                tostring(runtime.chasedHuntName),
+                waitDistance,
+                runtime.bestHuntDistance
+            )
+            runtime.huntRetryExhaustedLogged = true
+        end
+        return RESULT_CONTINUE
+    end
+
+    logf("Hunt '%s' approach stalled for %.2fs; recomputing offset-first approach.", tostring(runtime.chasedHuntName), stalledFor)
+
+    local approachPoint, approachReason, approachMeta = BuildSafeHuntApproachPoint(currentEntity, "retry")
+    local movePoint = approachPoint or currentEntity.Position
+
+    if runtime.huntApproachPoint ~= nil and approachPoint ~= nil then
+        local shiftDistance = DistanceBetweenFlat(runtime.huntApproachPoint, approachPoint)
+        if shiftDistance < 2 then
+            logf("Retry found no meaningfully different validated approach for '%s'; keeping current path.", tostring(runtime.chasedHuntName))
+            return RESULT_CONTINUE
+        end
+        verboseLogf("Retry produced new approach for '%s' shifted by %.2f yalms.", tostring(runtime.chasedHuntName), shiftDistance)
+    end
+
+    StopVnav()
+    sleep(POLL_INTERVAL)
+
+    if not StartApproachMovement(movePoint) then
+        return RESULT_ERROR, string.format("failed to restart approach movement for hunt '%s'", tostring(runtime.chasedHuntName))
+    end
+
+    runtime.huntApproachPoint = approachPoint
+    runtime.huntApproachRepathCount = runtime.huntApproachRepathCount + 1
+    runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_REPATH
+    runtime.huntRetryExhaustedLogged = false
+    runtime.bestHuntDistance = math.huge
+    runtime.lastHuntProgressTime = os.clock()
+
+    if approachPoint ~= nil then
+        logf(
+            "Hunt '%s' approach stalled; retrying with %s point at %.2f, %.2f, %.2f.",
+            tostring(runtime.chasedHuntName),
+            tostring(approachMeta and approachMeta.label or "validated"),
+            movePoint.X,
+            movePoint.Y,
+            movePoint.Z
+        )
+    else
+        logf("Hunt '%s' approach stalled; retrying with raw hunt position.", tostring(runtime.chasedHuntName))
+    end
+
+    if approachReason ~= nil then
+        logf("Hunt approach retry note for '%s': %s", tostring(runtime.chasedHuntName), tostring(approachReason))
+    end
+
+    return RESULT_CONTINUE
+end
+
+local function TryCompleteHuntHandoff(runtime, currentEntity, waitDistance)
+    waitDistance = tonumber(waitDistance) or GetDistanceToHuntWaitThreshold(currentEntity, runtime.huntTargeted)
     if waitDistance <= HUNT_WAIT_DISTANCE then
         if TryTargetDetectedHunt(runtime.chasedHuntName) then
             runtime.huntTargeted = true
@@ -1502,7 +2162,15 @@ local function UpdateActiveHuntChase(runtime)
 
     UpdateHuntTargetState(runtime)
 
-    return TryCompleteHuntHandoff(runtime, currentEntity)
+    local waitDistance = UpdateHuntProgress(runtime, currentEntity)
+    if waitDistance > HUNT_WAIT_DISTANCE then
+        local restartStatus, restartResult = TryRestartHuntApproach(runtime, currentEntity)
+        if restartStatus ~= RESULT_CONTINUE then
+            return restartStatus, restartResult
+        end
+    end
+
+    return TryCompleteHuntHandoff(runtime, currentEntity, waitDistance)
 end
 
 local function TryAcquireHuntFromFlagMode(runtime)
@@ -1600,11 +2268,6 @@ log("Starting hunt go-to-flag script.")
 logf("BossMod autorotation preset config: '%s'", BOSSMOD_AUTOROTATION_PRESET)
 
 autorotationPrefix = GetAutorotationCommandPrefix()
-if autorotationPrefix ~= nil then
-    ClearAutorotationPreset(autorotationPrefix)
-elseif BOSSMOD_AUTOROTATION_PRESET ~= "" then
-    log("BossMod autorotation unavailable; no supported plugin enabled.")
-end
 
 local flag, flagErr = WaitForCurrentFlag(FLAG_ACQUIRE_TIMEOUT)
 if not flag then
@@ -1636,10 +2299,18 @@ if not settledInstance then
     return
 end
 
+WaitForStartupHuntToDie()
+
 local currentFlagDistance = DistanceToFlat(flag.position)
 if currentFlagDistance <= FLAG_STOP_DISTANCE then
-    logf("Already within %.2f yalms of the flag; skipping rerun.", FLAG_STOP_DISTANCE)
+    logf("Already within %.2f yalms of the flag after startup hunt handling; skipping rerun.", FLAG_STOP_DISTANCE)
     return
+end
+
+if autorotationPrefix ~= nil then
+    ClearAutorotationPreset(autorotationPrefix)
+elseif BOSSMOD_AUTOROTATION_PRESET ~= "" then
+    log("BossMod autorotation unavailable; no supported plugin enabled.")
 end
 
 local teleportedCloser, teleportErr = MaybeTeleportCloserToFlag(flag)
