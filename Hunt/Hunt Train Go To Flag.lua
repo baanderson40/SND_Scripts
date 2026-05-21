@@ -63,6 +63,7 @@ local SAFE_HUNT_PROJECTION_RESCUE_NUDGE = 3
 local SAFE_HUNT_STALL_GRACE_AFTER_START = 2.0
 local SAFE_HUNT_STALL_GRACE_AFTER_TARGET = 1.5
 local SAFE_HUNT_STALL_GRACE_AFTER_REPATH = 2.0
+local SAFE_HUNT_TARGET_ACQUIRE_TIMEOUT = 8.0
 local STARTUP_HUNT_SEARCH_DISTANCE = 60
 local STARTUP_HUNT_MISS_THRESHOLD = 3
 local STARTUP_HUNT_HEARTBEAT_INTERVAL = 5.0
@@ -984,19 +985,46 @@ local function GetCurrentTargetHitboxRadius()
     return radius
 end
 
+local GetEntityHitboxRadius
+
 local function GetDistanceToHuntWaitThreshold(currentEntity, huntTargeted)
     local centerDistance = DistanceTo3D(currentEntity.Position)
+    local playerRadius = GetPlayerHitboxRadius()
+    local entityRadius = GetEntityHitboxRadius(currentEntity)
+    local flatEdgeDistance = math.max(0, DistanceToFlat(currentEntity.Position) - entityRadius - playerRadius)
+
     if not huntTargeted then
-        return centerDistance
+        return flatEdgeDistance
     end
 
     local targetRadius = GetCurrentTargetHitboxRadius()
     if not targetRadius then
-        return centerDistance
+        targetRadius = entityRadius
     end
 
-    local playerRadius = GetPlayerHitboxRadius()
     return math.max(0, centerDistance - targetRadius - playerRadius)
+end
+
+local function IsVnavMovementActive()
+    if not (IPC and IPC.vnavmesh) then
+        return false
+    end
+
+    if IPC.vnavmesh.PathfindInProgress then
+        local okPath, pathing = pcall(IPC.vnavmesh.PathfindInProgress)
+        if okPath and pathing == true then
+            return true
+        end
+    end
+
+    if IPC.vnavmesh.IsRunning then
+        local okRun, running = pcall(IPC.vnavmesh.IsRunning)
+        if okRun and running == true then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function isBattleNpcType(typeText)
@@ -1071,7 +1099,7 @@ local function TryProjectPointToFloor(position)
     return nil
 end
 
-local function GetEntityHitboxRadius(entity)
+function GetEntityHitboxRadius(entity)
     local radius = entity and tonumber(entity.HitboxRadius) or nil
     return radius or 0
 end
@@ -1736,7 +1764,7 @@ local function TargetHuntEntityIfClose(huntName, maxDistance)
         return false
     end
 
-    local distance = DistanceTo3D(entity.Position)
+    local distance = DistanceToFlat(entity.Position)
     if distance > (tonumber(maxDistance) or HUNT_TARGET_DISTANCE) then
         return false
     end
@@ -1861,6 +1889,7 @@ local function CreateHuntRuntime(flagDestination)
         chasedHuntName = nil,
         huntApproachPoint = nil,
         huntApproachRepathCount = 0,
+        huntApproachStartTime = os.clock(),
         huntApproachGraceUntil = os.clock(),
         huntRetryExhaustedLogged = false,
         detectedHuntName = nil,
@@ -1912,6 +1941,7 @@ local function ResumeFlagTravel(runtime)
     runtime.huntTargeted = false
     runtime.huntApproachPoint = nil
     runtime.huntApproachRepathCount = 0
+    runtime.huntApproachStartTime = os.clock()
     runtime.huntApproachGraceUntil = os.clock()
     runtime.huntRetryExhaustedLogged = false
     runtime.bestHuntDistance = math.huge
@@ -1971,6 +2001,7 @@ local function StartHuntApproach(runtime, huntEntity, targetedNow)
     runtime.chasedHuntName = huntName
     runtime.huntApproachPoint = approachPoint
     runtime.huntApproachRepathCount = 0
+    runtime.huntApproachStartTime = os.clock()
     runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_START
     runtime.huntRetryExhaustedLogged = false
     runtime.bestHuntDistance = math.huge
@@ -2037,6 +2068,17 @@ local function TryRestartHuntApproach(runtime, currentEntity)
         return RESULT_CONTINUE
     end
 
+    if not runtime.huntTargeted then
+        local acquireElapsed = os.clock() - (runtime.huntApproachStartTime or 0)
+        if acquireElapsed < SAFE_HUNT_TARGET_ACQUIRE_TIMEOUT then
+            return RESULT_CONTINUE
+        end
+
+        if IsVnavMovementActive() then
+            return RESULT_CONTINUE
+        end
+    end
+
     local stalledFor = os.clock() - runtime.lastHuntProgressTime
     if stalledFor < SAFE_HUNT_STALL_TIMEOUT then
         return RESULT_CONTINUE
@@ -2065,6 +2107,9 @@ local function TryRestartHuntApproach(runtime, currentEntity)
         local shiftDistance = DistanceBetweenFlat(runtime.huntApproachPoint, approachPoint)
         if shiftDistance < 2 then
             logf("Retry found no meaningfully different validated approach for '%s'; keeping current path.", tostring(runtime.chasedHuntName))
+            runtime.huntApproachRepathCount = runtime.huntApproachRepathCount + 1
+            runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_REPATH
+            runtime.huntRetryExhaustedLogged = false
             return RESULT_CONTINUE
         end
         verboseLogf("Retry produced new approach for '%s' shifted by %.2f yalms.", tostring(runtime.chasedHuntName), shiftDistance)
@@ -2079,6 +2124,7 @@ local function TryRestartHuntApproach(runtime, currentEntity)
 
     runtime.huntApproachPoint = approachPoint
     runtime.huntApproachRepathCount = runtime.huntApproachRepathCount + 1
+    runtime.huntApproachStartTime = os.clock()
     runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_REPATH
     runtime.huntRetryExhaustedLogged = false
     runtime.bestHuntDistance = math.huge
