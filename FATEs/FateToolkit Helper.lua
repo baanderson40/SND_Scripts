@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.4.7
+version: 1.5.0
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -18,6 +18,9 @@ configs:
     default: 0
     min: 0
     max: 100
+  FATE starting area:
+    description: Optional Lifestream destination text to run once after startup gearset handling.
+    default: ""
   Pause for retainers?:
     description: Pause FATE Toolkit to process retainers with AutoRetainer.
     default: true
@@ -705,6 +708,7 @@ Settings = {
     purchaseCycleLimit = 0,
     purchaseLimitFollowUp = "",
     enableMultiModeOnLimit = false,
+    startAreaCommand = "",
     useReturnToSolutionNine = false,
     enableStuckMonitor = false,
     chocoboStance = "Free Stance",
@@ -788,6 +792,19 @@ function RefreshSettings()
     end
     Settings.purchaseLimitFollowUp = followUpScript or ""
 
+    local startAreaCommand = Config.Get("FATE starting area")
+    if type(startAreaCommand) == "string" then
+        startAreaCommand = TrimString(startAreaCommand)
+        if startAreaCommand ~= nil and startAreaCommand ~= "" then
+            if string.lower(startAreaCommand) == "none" then
+                startAreaCommand = ""
+            end
+        end
+    else
+        startAreaCommand = ""
+    end
+    Settings.startAreaCommand = startAreaCommand or ""
+
     local enableMultiMode = Config.Get("Enable AutoRetainer multi-mode after limit?")
     if enableMultiMode ~= nil then
         Settings.enableMultiModeOnLimit = enableMultiMode == true
@@ -847,6 +864,8 @@ function RefreshSettings()
         EquipConfiguredGearset()
     end
 
+    AttemptStartupAreaTravel()
+
     local stuckMonitor = Config.Get("Enable stuck monitoring?")
     Settings.enableStuckMonitor = stuckMonitor == true
     if Runtime ~= nil and Runtime.stuckMonitor ~= nil then
@@ -892,11 +911,14 @@ Runtime = {
     repairConditionSeen = false,
     repairRetryCount = 0,
     repairUseNpcFallback = false,
+    startAreaHandled = false,
     nextChocoboStanceCheck = 0,
     purchaseCycleCount = 0,
     purchaseLimitReached = false,
     purchaseLimitHandled = false,
     purchaseLimitFollowUpIssued = false,
+    deferredFollowUpScript = nil,
+    deferredEnableMultiMode = false,
     textAdvanceEnabledByScript = false,
     bossmodRecordedState = nil,
     bossmodStateChanged = false,
@@ -982,6 +1004,60 @@ function EquipConfiguredGearset()
     yield("/wait 1")
     gearsetEquipped = true
     return true
+end
+
+function AttemptStartupAreaTravel()
+    if Runtime == nil or Runtime.startAreaHandled then
+        return true
+    end
+
+    local command = Settings.startAreaCommand
+    if type(command) ~= "string" then
+        command = ""
+    end
+    command = TrimString(command) or ""
+    if command == "" then
+        return true
+    end
+
+    Runtime.startAreaHandled = true
+
+    if not IPC or not IPC.Lifestream or not IPC.Lifestream.ExecuteCommand then
+        Dalamud.Log("[Toolkit Helper] Startup area command skipped; Lifestream ExecuteCommand unavailable")
+        return false
+    end
+
+    if not WaitForTeleportIdle(15) then
+        Dalamud.Log("[Toolkit Helper] Startup area command skipped; teleport channel busy")
+        return false
+    end
+
+    local startTerritoryId = GetCurrentTerritoryType()
+    Dalamud.Log(string.format("[Toolkit Helper] Running startup area command via Lifestream: %s", command))
+
+    local ok, err = pcall(function()
+        IPC.Lifestream.ExecuteCommand(command)
+    end)
+    if not ok then
+        Dalamud.Log("[Toolkit Helper] Failed to run startup area command: "..tostring(err))
+        return false
+    end
+
+    Runtime.lastLifestreamCommand = os.clock()
+    yield("/wait 1")
+
+    if not WaitForTeleportStart(startTerritoryId, nil, 8) then
+        Dalamud.Log("[Toolkit Helper] Startup area command did not begin a zone transition; continuing")
+        return false
+    end
+
+    local completed = WaitForTeleportCompletion(nil, 30, "startup area command")
+    if completed then
+        Dalamud.Log("[Toolkit Helper] Startup area command completed")
+    else
+        Dalamud.Log("[Toolkit Helper] Startup area command timed out waiting for completion")
+    end
+    return completed
 end
 
 --## Position & Movement
@@ -2891,6 +2967,8 @@ function ResetPurchaseCycleTracking()
     Runtime.purchaseLimitReached = false
     Runtime.purchaseLimitHandled = false
     Runtime.purchaseLimitFollowUpIssued = false
+    Runtime.deferredFollowUpScript = nil
+    Runtime.deferredEnableMultiMode = false
 end
 
 function GetPurchaseCycleLimit()
@@ -2953,15 +3031,9 @@ function HandlePurchaseLimitReached()
     EchoAll("Gemstone purchase limit reached; stopping Toolkit Helper")
     local followUp = Settings.purchaseLimitFollowUp or ""
     if followUp ~= nil and followUp ~= "" then
-        RunFollowUpScript(followUp)
+        Runtime.deferredFollowUpScript = followUp
     elseif Settings.enableMultiModeOnLimit then
-        local enabled = SetAutoRetainerMultiMode(true)
-        if enabled then
-            Dalamud.Log("[Toolkit Helper] AutoRetainer multi-mode enabled due to purchase limit")
-            EchoAll("AutoRetainer multi-mode enabled for follow-up automation")
-        else
-            Dalamud.Log("[Toolkit Helper] Failed to enable AutoRetainer multi-mode after purchase limit")
-        end
+        Runtime.deferredEnableMultiMode = true
     end
     StopToolkitRun("purchase limit reached")
     Runtime.stopScript = true
@@ -3542,7 +3614,9 @@ function LogFeatureFlagsOnce()
 end
 
 function OnStop()
-    StopToolkitRun("script stop")
+    if not Runtime.purchaseLimitHandled then
+        StopToolkitRun("script stop")
+    end
     Runtime.pendingRepair = false
     Runtime.repairToolkitStopped = false
     if IPC and IPC.Lifestream and IPC.Lifestream.Abort then
@@ -3553,6 +3627,26 @@ function OnStop()
     StopVnav()
     RestoreTextAdvanceState()
     RestoreBossModPreferredState()
+
+    local deferredFollowUp = Runtime.deferredFollowUpScript
+    local deferredEnableMultiMode = Runtime.deferredEnableMultiMode == true
+    Runtime.deferredFollowUpScript = nil
+    Runtime.deferredEnableMultiMode = false
+
+    if deferredFollowUp ~= nil and deferredFollowUp ~= "" then
+        local started = RunFollowUpScript(deferredFollowUp)
+        if not started then
+            Dalamud.Log("[Toolkit Helper] Failed to run deferred follow-up script after stop")
+        end
+    elseif deferredEnableMultiMode then
+        local enabled = SetAutoRetainerMultiMode(true)
+        if enabled then
+            Dalamud.Log("[Toolkit Helper] AutoRetainer multi-mode enabled due to purchase limit")
+            EchoAll("AutoRetainer multi-mode enabled for follow-up automation")
+        else
+            Dalamud.Log("[Toolkit Helper] Failed to enable AutoRetainer multi-mode after purchase limit")
+        end
+    end
 end
 --#endregion Helpers
 
