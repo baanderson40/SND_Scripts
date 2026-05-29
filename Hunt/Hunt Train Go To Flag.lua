@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.6
+version: 1.0.7
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -2154,6 +2154,21 @@ local function StartEngagedHuntHandoff(runtime, currentEntity, reasonLabel)
     return RESULT_CONTINUE
 end
 
+local function EnsureDismountedForEngagedHandoff(runtime)
+    if runtime.dismountedForHandoff then
+        return true, nil
+    end
+
+    StopVnav()
+
+    if not EnsureDismounted(MOUNT_TIMEOUT) then
+        return false, string.format("failed to dismount at engaged hunt '%s'", tostring(runtime.chasedHuntName))
+    end
+
+    runtime.dismountedForHandoff = true
+    return true, nil
+end
+
 local function TryCompleteEngagedHuntHandoff(runtime, currentEntity)
     if runtime.huntAutorotationApplied then
         return RESULT_SUCCESS, string.format("engaged hunt '%s' handed off", tostring(runtime.chasedHuntName))
@@ -2166,10 +2181,16 @@ local function TryCompleteEngagedHuntHandoff(runtime, currentEntity)
     local reachedPoint, pointDistance = HasReachedEngagedHandoffPoint(runtime)
     if reachedPoint then
         logf(
-            "Reached engaged chase point for '%s' within %.2f flat yalms; applying autorotation.",
+            "Reached engaged chase point for '%s' within %.2f flat yalms; dismounting for handoff.",
             tostring(runtime.chasedHuntName),
             pointDistance
         )
+
+        local dismounted, dismountReason = EnsureDismountedForEngagedHandoff(runtime)
+        if not dismounted then
+            return RESULT_ERROR, dismountReason
+        end
+
         ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
         runtime.huntAutorotationApplied = true
         return RESULT_SUCCESS, string.format("engaged hunt '%s' handed off", tostring(runtime.chasedHuntName))
@@ -2181,10 +2202,16 @@ local function TryCompleteEngagedHuntHandoff(runtime, currentEntity)
     end
 
     logf(
-        "Reached engaged hunt '%s' within %.2f yalms of its hitbox; applying autorotation.",
+        "Reached engaged hunt '%s' within %.2f yalms of its hitbox; dismounting for handoff.",
         tostring(runtime.chasedHuntName),
         hitboxDistance
     )
+
+    local dismounted, dismountReason = EnsureDismountedForEngagedHandoff(runtime)
+    if not dismounted then
+        return RESULT_ERROR, dismountReason
+    end
+
     ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
     runtime.huntAutorotationApplied = true
     return RESULT_SUCCESS, string.format("engaged hunt '%s' handed off", tostring(runtime.chasedHuntName))
@@ -2208,7 +2235,13 @@ local function TryImmediateDamagedHandoff(runtime, currentEntity)
         return RESULT_CONTINUE
     end
 
-    logf("Hunt '%s' has taken damage while already in handoff range; applying autorotation immediately.", tostring(runtime.chasedHuntName))
+    logf("Hunt '%s' has taken damage while already in handoff range; dismounting for immediate handoff.", tostring(runtime.chasedHuntName))
+
+    local dismounted, dismountReason = EnsureDismountedForEngagedHandoff(runtime)
+    if not dismounted then
+        return RESULT_ERROR, dismountReason
+    end
+
     ApplyAutorotationPreset(autorotationPrefix, BOSSMOD_AUTOROTATION_PRESET)
     runtime.huntAutorotationApplied = true
     runtime.waitingForHuntDamage = false
