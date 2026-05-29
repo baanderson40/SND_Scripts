@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.7
+version: 1.0.8
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -1972,33 +1972,6 @@ local function UpdateFlagProgress(runtime)
     return currentFlagDistance
 end
 
-local function ResumeFlagTravel(runtime)
-    local started, reason = StartConfirmedFlagTravel(runtime.flagDestination)
-    if not started then
-        return false, string.format("failed to resume movement to flag after losing hunt '%s': %s", tostring(runtime.chasedHuntName), tostring(reason))
-    end
-
-    local lostHuntName = runtime.chasedHuntName
-
-    -- Keep huntCommitted sticky so flag-only completion cannot win later in this run.
-    runtime.chasedHuntName = nil
-    runtime.detectedHuntName = nil
-    runtime.huntTargeted = false
-    runtime.huntAutorotationApplied = false
-    runtime.huntEngagedStartTime = os.clock()
-    runtime.huntApproachPoint = nil
-    runtime.huntApproachRepathCount = 0
-    runtime.huntApproachStartTime = os.clock()
-    runtime.huntApproachGraceUntil = os.clock()
-    runtime.huntRetryExhaustedLogged = false
-    runtime.bestDistance = math.huge
-    runtime.lastProgressAt = os.clock()
-    runtime.waitingForHuntDamage = false
-    runtime.dismountedForHandoff = false
-    SetRuntimeState(runtime, STATE_TRAVEL_TO_FLAG, "resuming flag travel after losing hunt '%s'.", tostring(lostHuntName))
-    return true
-end
-
 local function LogDetectedHunt(runtime, huntEntity)
     local huntName = tostring(huntEntity.Name or "Unknown Hunt")
     if runtime.detectedHuntName ~= huntName then
@@ -2076,12 +2049,9 @@ local function TryReacquireChasedHunt(runtime)
 end
 
 local function HandleLostChasedHunt(runtime)
-    logf("Hunt '%s' is no longer alive; resuming movement to the flag.", tostring(runtime.chasedHuntName))
-    local ok, reason = ResumeFlagTravel(runtime)
-    if not ok then
-        return RESULT_ERROR, reason
-    end
-    return RESULT_CONTINUE
+    local huntName = tostring(runtime.chasedHuntName)
+    logf("Hunt '%s' is no longer alive; stopping hunt flag script.", huntName)
+    return RESULT_SUCCESS, string.format("chased hunt '%s' died before handoff", huntName)
 end
 
 local function UpdateHuntTargetState(runtime)
