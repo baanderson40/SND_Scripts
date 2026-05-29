@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.5.0
+version: 1.5.1
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -890,6 +890,7 @@ Runtime = {
     returnAetheryteName = nil,
     returnTerritoryId = nil,
     returnAetheryteId = nil,
+    returnDestinationTerritoryId = nil,
     pendingGemstoneGoal = nil,
     lastGemstoneCheck = 0,
     gemstoneRunIssuedAt = nil,
@@ -2274,6 +2275,7 @@ function ClearReturnTarget()
     Runtime.returnAetheryteName = nil
     Runtime.returnTerritoryId = nil
     Runtime.returnAetheryteId = nil
+    Runtime.returnDestinationTerritoryId = nil
 end
 
 function SaveReturnLocationForCurrentTerritory()
@@ -2292,6 +2294,7 @@ function SaveReturnLocationForCurrentTerritory()
         Runtime.returnTerritoryId = territory
         Runtime.returnAetheryteName = preferred.name
         Runtime.returnAetheryteId = preferred.aetheryteId
+        Runtime.returnDestinationTerritoryId = territory
         Dalamud.Log(string.format("[Toolkit Helper] Saved return target %s (id=%s) for territory %s", preferred.name, tostring(preferred.aetheryteId), tostring(territory)))
     end
 end
@@ -2306,7 +2309,8 @@ function AttemptReturnToSavedLocation(context)
     end
     local destination = {
         name = Runtime.returnAetheryteName,
-        aetheryteId = Runtime.returnAetheryteId
+        aetheryteId = Runtime.returnAetheryteId,
+        territoryId = Runtime.returnDestinationTerritoryId
     }
     Dalamud.Log("[Toolkit Helper] Attempting to return to "..destination.name..(context and (" ("..context..")") or "").." id="..tostring(destination.aetheryteId))
     local returned = false
@@ -3810,7 +3814,8 @@ function ProcessRetainers()
         local limsaDestination = {
             name = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks",
             aetheryteId = SUMMONING_BELL.aetheryteRowId,
-            rowId = SUMMONING_BELL.aetheryteRowId
+            rowId = SUMMONING_BELL.aetheryteRowId,
+            territoryId = SUMMONING_BELL.territoryId
         }
         if TeleportTo(limsaDestination) then
             EchoAll("Teleporting to "..limsaDestination.name)
