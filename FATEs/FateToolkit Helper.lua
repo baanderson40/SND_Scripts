@@ -1574,6 +1574,9 @@ local function UpdateStuckMonitorMovement(position)
     if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
+    if position == nil then
+        return
+    end
     local monitor = Runtime.stuckMonitor
     monitor.lastPosition = CloneVector3(position)
     monitor.lastMovementTime = os.clock()
@@ -1584,6 +1587,9 @@ end
 
 local function PrimeStuckMonitorPosition(position)
     if Runtime == nil or Runtime.stuckMonitor == nil then
+        return
+    end
+    if position == nil then
         return
     end
     local monitor = Runtime.stuckMonitor
@@ -1846,7 +1852,7 @@ function UpdateStuckMonitor()
 
     local playerPos = Entity and Entity.Player and Entity.Player.Position
     if playerPos == nil then
-        ResetStuckMonitor("player unavailable")
+        StuckMonitorLog("player unavailable", true)
         return
     end
 
@@ -2369,28 +2375,11 @@ end
 
 function AcceptTeleportOfferLocation(destinationAetheryte)
     local notification = Addons.GetAddon("_NotificationTelepo")
-    if notification ~= nil and notification.Ready then
-        local location = GetNodeText("_NotificationTelepo", 3, 4)
-        yield("/callback _Notification true 0 16 "..location)
-        yield("/wait 1")
-    end
-
     local yesno = Addons.GetAddon("SelectYesno")
-    if yesno ~= nil and yesno.Ready then
-        local teleportOfferMessage = GetNodeText("SelectYesno", 1, 2)
-        if type(teleportOfferMessage) == "string" then
-            local teleportOfferLocation = teleportOfferMessage:match("Accept Teleport to (.+)%?")
-            if teleportOfferLocation ~= nil then
-                if string.lower(teleportOfferLocation) == string.lower(destinationAetheryte) then
-                    yield("/callback SelectYesno true 0")
-                    return
-                else
-                    Dalamud.Log("[Toolkit Helper] Offer for "..teleportOfferLocation.." and destination "..destinationAetheryte.." differ. Declining teleport.")
-                end
-            end
-            yield("/callback SelectYesno true 2")
-            return
-        end
+    if notification ~= nil and notification.Ready and yesno ~= nil and yesno.Ready then
+        Dalamud.Log("[Toolkit Helper] Accepting party teleport offer"..(destinationAetheryte and (" for "..tostring(destinationAetheryte)) or ""))
+        yield("/callback SelectYesno true 0")
+        return
     end
 end
 
