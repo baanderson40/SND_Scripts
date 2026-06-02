@@ -9,11 +9,8 @@ Cosmic Exploration centered SND lua scripts.
 - Cosmic Drone Artifacts
   - Automatically purchase cosmic drone modules, retrieve artifacts, and appraise ancient records.
 
-- Moved to Old directory
-  - Cosmic Botanist
-  - Cosmic Fisher
-  - Cosmic Helper
-  - Cosmic Miner
+- ICEd AR
+  - Somewhat intergrate AutoRetainer into ICE.
 
 ## Installation
 - Copy script's Github URL and paste into SND GitHub URL option to import and update.
@@ -23,12 +20,7 @@ Cosmic Exploration centered SND lua scripts.
 
 - Copy script's contents and paste into a new lua macro and update manually.
 
-## Ice Settings for helper
-- Set stop at Lunar Credits if you want to gamba and match in the scripts config
-  - Enable gamba in I.C.E. Settings
-    
-- Set stop at Cosmic Score if you want to cycle jobs for class score
- <img width="215" height="198" alt="image" src="https://github.com/user-attachments/assets/f2454629-b158-4bd0-8500-86f69c9ef98b" />
- <img width="348" height="198" alt="image" src="https://github.com/user-attachments/assets/05fe9d03-8ef5-462f-b4f6-f93a85382d51" />
+## Ice Settings for ICEd AR
+- Add /snd run 'script name' to post mission command.
+<img width="907" height="153" alt="image" src="https://github.com/user-attachments/assets/0e7ff53e-b12b-424d-90c0-2c26cf5e5342" />
 
- 
