@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.8
+version: 1.0.9
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -64,6 +64,7 @@ local SAFE_HUNT_STALL_GRACE_AFTER_START = 2.0
 local SAFE_HUNT_STALL_GRACE_AFTER_TARGET = 1.5
 local SAFE_HUNT_STALL_GRACE_AFTER_REPATH = 2.0
 local SAFE_HUNT_TARGET_ACQUIRE_TIMEOUT = 8.0
+local ENGAGED_VERBOSE_LOG_INTERVAL = 2.0
 local STARTUP_REPEAT_CALL_DISTANCE = 45
 local FLAG_MOVEMENT_START_TIMEOUT = 2.0
 local FLAG_NO_PROGRESS_TIMEOUT = 10.0
@@ -179,6 +180,16 @@ local function verboseLogf(fmt, ...)
     if ok then
         verboseLog(formatted)
     end
+end
+
+local function ShouldLogEngagedVerbose(runtime)
+    local now = os.clock()
+    if now < (runtime.lastEngagedVerboseAt or 0) + ENGAGED_VERBOSE_LOG_INTERVAL then
+        return false
+    end
+
+    runtime.lastEngagedVerboseAt = now
+    return true
 end
 
 local function trimString(value)
@@ -372,6 +383,10 @@ end
 
 local function isMounted()
     return getCondition(CharacterCondition.mounted)
+end
+
+local function IsInCombat()
+    return getCondition(CharacterCondition.inCombat)
 end
 
 local function IsLifestreamBusy()
@@ -1766,6 +1781,29 @@ local function HandleStartupTargetHunt(flag)
     return true, RefreshCurrentFlagAfterStartupWait(flag)
 end
 
+local function WaitForStartupCombatToClear()
+    if not IsInCombat() then
+        return
+    end
+
+    log("Player is in combat with a non-hunt target; pausing startup before clearing autorotation.")
+
+    local waitStart = os.clock()
+    local nextHeartbeatAt = waitStart + STARTUP_HUNT_HEARTBEAT_INTERVAL
+
+    while IsInCombat() do
+        local now = os.clock()
+        if now >= nextHeartbeatAt then
+            logf("Startup combat still active after %.1fs; waiting.", now - waitStart)
+            nextHeartbeatAt = now + STARTUP_HUNT_HEARTBEAT_INTERVAL
+        end
+
+        sleep(POLL_INTERVAL)
+    end
+
+    log("Startup combat cleared; resuming hunt flag startup.")
+end
+
 local function FindNearestLiveHuntEntity(flagPosition)
     if not (Svc and Svc.Objects and Entity) then
         return nil
@@ -1941,6 +1979,7 @@ local function CreateHuntRuntime(flagDestination)
         huntApproachStartTime = os.clock(),
         huntApproachGraceUntil = os.clock(),
         huntRetryExhaustedLogged = false,
+        lastEngagedVerboseAt = 0,
         detectedHuntName = nil,
         waitingForHuntDamage = false,
         dismountedForHandoff = false,
@@ -2168,6 +2207,17 @@ local function TryCompleteEngagedHuntHandoff(runtime, currentEntity)
 
     local hitboxDistance = GetEngagedHuntHitboxDistance(currentEntity)
     if hitboxDistance > 1.0 then
+        if ShouldLogEngagedVerbose(runtime) then
+            local pointDistance = runtime.huntApproachPoint ~= nil and DistanceToFlat(runtime.huntApproachPoint) or math.huge
+            verboseLogf(
+                "Engaged handoff not ready for '%s': targeted=%s dismounted=%s pointDistance=%.2f hitboxDistance=%.2f.",
+                tostring(runtime.chasedHuntName),
+                tostring(runtime.huntTargeted),
+                tostring(runtime.dismountedForHandoff),
+                pointDistance,
+                hitboxDistance
+            )
+        end
         return RESULT_CONTINUE
     end
 
@@ -2240,15 +2290,54 @@ end
 
 local function TryRestartEngagedHuntHandoff(runtime, currentEntity)
     if os.clock() < (runtime.huntApproachGraceUntil or 0) then
+        if ShouldLogEngagedVerbose(runtime) then
+            local pointDistance = runtime.huntApproachPoint ~= nil and DistanceToFlat(runtime.huntApproachPoint) or math.huge
+            local hitboxDistance = GetEngagedHuntHitboxDistance(currentEntity)
+            verboseLogf(
+                "Engaged handoff grace active for '%s': pointDistance=%.2f hitboxDistance=%.2f repathCount=%d.",
+                tostring(runtime.chasedHuntName),
+                pointDistance,
+                hitboxDistance,
+                runtime.huntApproachRepathCount or 0
+            )
+        end
         return RESULT_CONTINUE
     end
 
     if IsVnavMovementActive() and IsPlayerMoving() then
+        if ShouldLogEngagedVerbose(runtime) then
+            local pointDistance = runtime.huntApproachPoint ~= nil and DistanceToFlat(runtime.huntApproachPoint) or math.huge
+            local hitboxDistance = GetEngagedHuntHitboxDistance(currentEntity)
+            local stalledFor = os.clock() - runtime.lastProgressAt
+            verboseLogf(
+                "Engaged handoff holding for '%s': vnavActive=%s playerMoving=%s pointDistance=%.2f hitboxDistance=%.2f stalledFor=%.2f repathCount=%d.",
+                tostring(runtime.chasedHuntName),
+                tostring(IsVnavMovementActive()),
+                tostring(IsPlayerMoving()),
+                pointDistance,
+                hitboxDistance,
+                stalledFor,
+                runtime.huntApproachRepathCount or 0
+            )
+        end
         return RESULT_CONTINUE
     end
 
     local stalledFor = os.clock() - runtime.lastProgressAt
     if stalledFor < SAFE_HUNT_STALL_TIMEOUT then
+        if ShouldLogEngagedVerbose(runtime) then
+            local pointDistance = runtime.huntApproachPoint ~= nil and DistanceToFlat(runtime.huntApproachPoint) or math.huge
+            local hitboxDistance = GetEngagedHuntHitboxDistance(currentEntity)
+            verboseLogf(
+                "Engaged handoff waiting for stall timeout on '%s': pointDistance=%.2f hitboxDistance=%.2f stalledFor=%.2f/%.2f repathCount=%d.",
+                tostring(runtime.chasedHuntName),
+                pointDistance,
+                hitboxDistance,
+                stalledFor,
+                SAFE_HUNT_STALL_TIMEOUT,
+                runtime.huntApproachRepathCount or 0
+            )
+        end
         return RESULT_CONTINUE
     end
 
@@ -2645,6 +2734,8 @@ if not shouldContinue then
 end
 
 flag = startupFlagResult or flag
+
+WaitForStartupCombatToClear()
 
 local currentFlagDistance = DistanceToFlat(flag.position)
 if currentFlagDistance <= FLAG_STOP_DISTANCE then
