@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.1
+version: 1.0.0
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -10,6 +10,9 @@ configs:
   Mount:
     description: Input the name of the mount to use. Leave empty to use mount roulette
     default: ""
+  Close Retainer List:
+    description: Close the retainer list after AutoRetainer finishes.
+    default: true
 [[End Metadata]]
 --]=====]
 
@@ -17,16 +20,30 @@ configs:
 -- Config
 -- =========================================================
 import("System.Numerics")
-echoLog = false
-PREFIX  = "[ICEd AR]"
-closeRetainerList = true
 
-local BELL_EOBJ_DEFAULT   = 2000441
-local BELL_EOBJ_TERR1237  = 2014985
-local TERR_SPECIAL        = 1237
+local SETTINGS = {
+    echoLog = false,
+    closeRetainerList = (Config.Get("Close Retainer List") ~= false),
+}
 
-local MAX_BELL_DISTANCE_BEFORE_STELLAR = 100.0
-local MOVE_STOP_DISTANCE = 3.0
+local PREFIX = "[ICEd AR]"
+
+local BELL_EOBJ_DEFAULT = 2000441
+local BELL_EOBJ_BY_TERRITORY = {
+    [1237] = 2014985,
+}
+
+local LIMITS = {
+    maxBellDistanceBeforeStellar = 100.0,
+    moveStopDistance = 3.0,
+    interactTimeout = 5.0,
+    retainerListTimeout = 5.0,
+    waitForever = 999999,
+    retainerCloseAttempts = 80,
+    stellarReturnDelay = 4.0,
+    mountDistance = 50.0,
+    dismountDistance = 20.0,
+}
 
 -- =========================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
@@ -38,21 +55,23 @@ end
 local function _log(s)
     local msg = tostring(s)
     Dalamud.Log(msg)
-    if echoLog then _echo(msg) end
+    if SETTINGS.echoLog then _echo(msg) end
 end
 
 local function _fmt(msg, ...)
     return string.format("%s %s", PREFIX, string.format(msg, ...))
 end
 
-function Logf(msg, ...)   _log(_fmt(msg, ...))  end
-function Echof(msg, ...)  _echo(_fmt(msg, ...)) end
+local function Log(msg, ...)
+    _log(_fmt(msg, ...))
+end
 
-Log,  log  = Logf,  Logf
-Echo, echo = Echof, Echof
+local function Echo(msg, ...)
+    _echo(_fmt(msg, ...))
+end
 
-function EchoOnce(msg, ...)
-    if echoLog then
+local function EchoOnce(msg, ...)
+    if SETTINGS.echoLog then
         Log(msg, ...)
     else
         Echo(msg, ...)
@@ -63,7 +82,7 @@ end
 -- =========================================================
 -- Timing constants + Sleep
 -- =========================================================
-TIME = {
+local TIME = {
     POLL    = 0.10,
     TIMEOUT = 10.0,
     STABLE  = 0.30
@@ -78,12 +97,12 @@ local function _sleep(seconds)
     yield("/wait " .. s)
 end
 
-Sleep, sleep = _sleep, _sleep
+local sleep = _sleep
 
 -- =========================================================
 -- Number helper (parsing + optional clamping)
 -- =========================================================
-function toNumberSafe(s, default, min, max)
+local function toNumberSafe(s, default, min, max)
     if s == nil then return default end
     local str = tostring(s):gsub("[^%d%-%.]", "")
     local n = tonumber(str)
@@ -102,12 +121,12 @@ local function _get_addon(name)
     return nil
 end
 
-function IsAddonReady(name)
+local function IsAddonReady(name)
     local addon = _get_addon(name)
     return addon and addon.Ready or false
 end
 
-function IsAddonVisible(name)
+local function IsAddonVisible(name)
     local addon = _get_addon(name)
     return addon and addon.Exists or false
 end
@@ -143,7 +162,7 @@ end
 --         return Entity.Target and Entity.Target.Name == "NPC Bob"
 --     end, 5.0, 0.10)
 --
-function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
+local function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     timeoutSec = toNumberSafe(timeoutSec, TIME.TIMEOUT, 0.1)
     pollSec    = toNumberSafe(pollSec,    TIME.POLL,   0.01)
     stableSec  = toNumberSafe(stableSec,  TIME.STABLE, 0.0)
@@ -164,7 +183,7 @@ function WaitUntil(predicateFn, timeoutSec, pollSec, stableSec)
     return false
 end
 
-function AwaitAddonReady(name, timeoutSec)
+local function AwaitAddonReady(name, timeoutSec)
     Log("awaiting ready: %s", tostring(name))
     local ok = WaitUntil(function()
         local addon = _get_addon(name)
@@ -174,7 +193,7 @@ function AwaitAddonReady(name, timeoutSec)
     return ok
 end
 
-function AwaitAddonVisible(name, timeoutSec)
+local function AwaitAddonVisible(name, timeoutSec)
     Log("awaiting visible: %s", tostring(name))
     local ok = WaitUntil(function()
         local addon = _get_addon(name)
@@ -184,14 +203,14 @@ function AwaitAddonVisible(name, timeoutSec)
     return ok
 end
 
-function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
+local function WaitAddonStable(addonName, stableSec, timeoutSec, pollSec)
     return WaitUntil(function()
         local addon = _get_addon(addonName)
         return addon and addon.Exists
     end, timeoutSec or TIME.TIMEOUT, pollSec or TIME.POLL, stableSec or 2.0)
 end
 
-function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
+local function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
     want       = (want ~= false)
     stableSec  = toNumberSafe(stableSec,  2.0,   0.0)
     timeoutSec = toNumberSafe(timeoutSec, 15.0,  0.1)
@@ -216,7 +235,7 @@ end
 -- =========================================================
 -- Character Conditions + Helpers
 -- =========================================================
-CharacterCondition = {
+local CharacterCondition = {
     normalConditions                   = 1,
     dead                               = 2,
     emoting                            = 3,
@@ -313,39 +332,17 @@ CharacterCondition = {
     pilotingMech                       = 102,
 }
 
-function GetCharacterCondition(i, bool)
+local function GetCharacterCondition(i, bool)
     if bool == nil then bool = true end
     return Svc and Svc.Condition and (Svc.Condition[i] == bool) or false
 end
 
-function WaitConditionStable(idx, want, stableSec, timeoutSec, pollSec)
-    want       = (want ~= false)
-    stableSec  = toNumberSafe(stableSec,  2.0,   0.0)
-    timeoutSec = toNumberSafe(timeoutSec, 15.0,  0.1)
-    pollSec    = toNumberSafe(pollSec,    TIME.POLL, 0.01)
-
-    if not (Svc and Svc.Condition) then
-        Log("WaitConditionStable: Svc.Condition unavailable")
-        return false
-    end
-
-    local ok = WaitUntil(function()
-        return GetCharacterCondition(idx, want)
-    end, timeoutSec, pollSec, stableSec)
-
-    if not ok then
-        Log("WaitConditionStable: timeout (idx=%s want=%s stable=%.2fs)",
-            tostring(idx), tostring(want), stableSec)
-    end
-    return ok
-end
-
-function GetCharacterPosition()
+local function GetCharacterPosition()
     local player = Svc and Svc.Objects and Svc.Objects.LocalPlayer
     return player and player.Position or nil
 end
 
-function GetZoneId()
+local function GetZoneId()
     local cs = Svc and Svc.ClientState
     return cs and cs.TerritoryType or nil
 end
@@ -363,7 +360,7 @@ local function _quoteArg(s)
     return '"' .. s .. '"'
 end
 
-function SafeCallback(...)
+local function SafeCallback(...)
     local args = {...}
     local idx  = 1
     local addon = args[idx]; idx = idx + 1
@@ -411,7 +408,7 @@ end
 -- =========================================================
 -- Mount helpers
 -- =========================================================
-function Mount()
+local function Mount()
     local useMount = Config.Get("Mount")
     if not Svc.Condition[CharacterCondition.mounted] then
         if useMount ~= nil and useMount ~= "" then
@@ -422,7 +419,7 @@ function Mount()
     end
 end
 
-function Dismount()
+local function Dismount()
     if Svc.Condition[CharacterCondition.mounted] then
         Actions.ExecuteGeneralAction(23) -- Dismount
     end
@@ -431,7 +428,7 @@ end
 -- =========================================================
 -- Distance helpers
 -- =========================================================
-function DistanceBetweenPositions(pos1, pos2)
+local function DistanceBetweenPositions(pos1, pos2)
     if not (pos1 and pos2) then return math.huge end
     return Vector3.Distance(pos1, pos2)
 end
@@ -439,7 +436,7 @@ end
 -- =========================================================
 -- Interaction Helper
 -- =========================================================
-function InteractByName(name, timeout)
+local function InteractByName(name, timeout)
     if type(name) ~= "string" or name == "" then
         Log("InteractByName: invalid name '%s'", tostring(name))
         return false
@@ -471,7 +468,7 @@ end
 -- =========================================================
 -- VNAV Helpers
 -- =========================================================
-function PathandMoveVnav(dest, fly)
+local function PathandMoveVnav(dest, fly)
     fly = (fly == true)
 
     local t, timeout = 0, TIME.TIMEOUT
@@ -490,13 +487,13 @@ function PathandMoveVnav(dest, fly)
     end
 
     local me = Entity and Entity.Player
-    if me and me.Position and Vector3.Distance(me.Position, dest) > 50 then
+    if me and me.Position and Vector3.Distance(me.Position, dest) > LIMITS.mountDistance then
         Mount()
     end
     return true
 end
 
-function StopCloseVnav(dest, stopDistance)
+local function StopCloseVnav(dest, stopDistance)
     stopDistance = tonumber(stopDistance) or 3.0
     if not dest then return false end
 
@@ -512,7 +509,7 @@ function StopCloseVnav(dest, stopDistance)
     while IPC.vnavmesh.IsRunning() do
         local me = Entity and Entity.Player
         if me and me.Position then
-            if Vector3.Distance(me.Position, dest) < 20
+            if Vector3.Distance(me.Position, dest) < LIMITS.dismountDistance
                 and GetCharacterCondition(CharacterCondition.mounted) then
                 Dismount()
             end
@@ -528,7 +525,7 @@ function StopCloseVnav(dest, stopDistance)
     return false
 end
 
-function MoveNearVnav(dest, stopDistance, fly)
+local function MoveNearVnav(dest, stopDistance, fly)
     stopDistance = tonumber(stopDistance) or 3.0
     if PathandMoveVnav(dest, fly) then
         return StopCloseVnav(dest, stopDistance)
@@ -536,7 +533,7 @@ function MoveNearVnav(dest, stopDistance, fly)
     return false
 end
 
-function StopVNAV()
+local function StopVNAV()
     if IPC.vnavmesh.BuildProgress() or IPC.vnavmesh.IsRunning() then
         IPC.vnavmesh.Stop()
     end
@@ -548,7 +545,7 @@ end
 local function ok(v)  return true, v end
 local function err(m) return false, tostring(m or "unknown error") end
 
-function GetEObjName(dataId)
+local function GetEObjName(dataId)
     local id = toNumberSafe(dataId, nil)
     if not id then
         return err("EObjName: invalid id '" .. tostring(dataId) .. "'")
@@ -582,7 +579,7 @@ end
 -- =========================================================
 local function StellarReturn()
     Actions.ExecuteAction(42149) -- Stellar Return
-    sleep(4)
+    sleep(LIMITS.stellarReturnDelay)
     return WaitConditionStable(CharacterCondition.betweenAreas, false, 2, 10)
 end
 
@@ -595,10 +592,11 @@ local function WaitWksMissionInfoClosed()
     return true
 end
 
-local function ResolveSummoningBellEntity()
-    local terr = GetZoneId()
-    local eobjId = (terr == TERR_SPECIAL) and BELL_EOBJ_TERR1237 or BELL_EOBJ_DEFAULT
+local function GetBellEobjIdForTerritory(territoryId)
+    return BELL_EOBJ_BY_TERRITORY[territoryId] or BELL_EOBJ_DEFAULT
+end
 
+local function ResolveBellNameByEobjId(eobjId)
     local okRes, dataOrErr = GetEObjName(eobjId)
     if not okRes then
         Log("GetEObjName failed (%s): %s", tostring(eobjId), tostring(dataOrErr))
@@ -611,17 +609,35 @@ local function ResolveSummoningBellEntity()
         return nil
     end
 
-    local ent = Entity.GetEntityByName(sheetName)
+    return sheetName
+end
+
+local function ResolveBellEntityByName(name)
+    local ent = Entity and Entity.GetEntityByName and Entity.GetEntityByName(name) or nil
     if not (ent and ent.Position and ent.Name) then
-        Log("bell not found locally by name '%s'", sheetName)
+        Log("bell not found locally by name '%s'", tostring(name))
         return nil
     end
 
+    Log("resolved bell '%s' at x=%.2f y=%.2f z=%.2f",
+        tostring(ent.Name), ent.Position.X, ent.Position.Y, ent.Position.Z)
     return ent
 end
 
+local function ResolveSummoningBellEntity()
+    local terr = GetZoneId()
+    local eobjId = GetBellEobjIdForTerritory(terr)
+
+    Log("resolving summoning bell for territory=%s eobjId=%s", tostring(terr), tostring(eobjId))
+
+    local sheetName = ResolveBellNameByEobjId(eobjId)
+    if not sheetName then return nil end
+
+    return ResolveBellEntityByName(sheetName)
+end
+
 local function ResolveBellOrReturnOnce(maxDist)
-    maxDist = tonumber(maxDist) or MAX_BELL_DISTANCE_BEFORE_STELLAR
+    maxDist = tonumber(maxDist) or LIMITS.maxBellDistanceBeforeStellar
 
     local function distTo(ent)
         local me = GetCharacterPosition()
@@ -658,6 +674,28 @@ local function ResolveBellOrReturnOnce(maxDist)
     return bell, false
 end
 
+local function StopIce()
+    Log("stopping ICE")
+    yield("/ice stop")
+    sleep(TIME.STABLE)
+    return true
+end
+
+local function StartIce()
+    Log("starting ICE")
+    yield("/ice start")
+    return true
+end
+
+local function CaptureOriginPosition()
+    local origin = GetCharacterPosition()
+    if not origin then
+        Log("failed to get player position")
+        return nil
+    end
+    return origin
+end
+
 local function EnableAutoRetainer()
     Log("enabling AutoRetainer")
     yield("/ays e")
@@ -679,7 +717,7 @@ local function CloseRetainerList()
     end
 
     local tries = 0
-    while IsAddonVisible("RetainerList") and tries < 80 do
+    while IsAddonVisible("RetainerList") and tries < LIMITS.retainerCloseAttempts do
         SafeCallback("RetainerList", true, -1)
         sleep(TIME.STABLE)
         tries = tries + 1
@@ -694,10 +732,72 @@ local function CloseRetainerList()
     return true
 end
 
+local function MoveToBellAndOpenRetainerList()
+    local bell = ResolveBellOrReturnOnce(LIMITS.maxBellDistanceBeforeStellar)
+    if not bell then
+        Log("failed to resolve summoning bell")
+        return nil
+    end
+
+    if not MoveNearVnav(bell.Position, LIMITS.moveStopDistance, false) then
+        Log("failed to move near bell")
+        return nil
+    end
+
+    if not InteractByName(bell.Name, LIMITS.interactTimeout) then
+        Log("failed to interact with bell '%s'", tostring(bell.Name))
+        return nil
+    end
+
+    if not AwaitAddonVisible("RetainerList", LIMITS.retainerListTimeout) then
+        Log("failed to open bell '%s'", tostring(bell.Name))
+        return nil
+    end
+
+    return bell
+end
+
+local function WaitForAutoRetainerCompletion()
+    Log("waiting for AutoRetainer to finish")
+    local finished = WaitUntil(function()
+        return not IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
+    end, LIMITS.waitForever, TIME.POLL, 1)
+
+    if finished then
+        Log("AutoRetainer finished")
+    else
+        Log("AutoRetainer completion wait timed out")
+    end
+
+    return finished
+end
+
+local function FinishRetainerSession()
+    Log("Checking RetainerList stable")
+    if SETTINGS.closeRetainerList and WaitAddonStable("RetainerList", TIME.STABLE, 3, TIME.POLL) then
+        return CloseRetainerList()
+    end
+
+    return WaitUntil(function()
+        return not GetCharacterCondition(CharacterCondition.occupiedSummoningBell)
+    end, LIMITS.waitForever, TIME.POLL, 1)
+end
+
+local function ReturnToOriginIfCrafter(origin)
+    if not IsCrafterJob() then
+        Log("non-crafter job; skipping return move")
+        return true
+    end
+
+    Log("crafter job detected; returning to origin")
+    return MoveNearVnav(origin, LIMITS.moveStopDistance, false)
+end
+
 -- =========================================================
 -- Trigger Events
 -- =========================================================
 function OnStop()
+    StopVNAV()
 end
 
 -- =========================================================
@@ -716,63 +816,20 @@ local function Main()
 
     WaitWksMissionInfoClosed()
 
-    Log("stopping ICE")
-    yield("/ice stop")
-    sleep(TIME.STABLE)
+    StopIce()
 
-    local origin = GetCharacterPosition()
-    if not origin then
-        Log("failed to get player position")
-        return
-    end
+    local origin = CaptureOriginPosition()
+    if not origin then return end
 
-    local bell = ResolveBellOrReturnOnce(MAX_BELL_DISTANCE_BEFORE_STELLAR)
-    if not bell then
-        Log("failed to resolve summoning bell")
-        return
-    end
-
-    if not MoveNearVnav(bell.Position, MOVE_STOP_DISTANCE, false) then
-        Log("failed to move near bell")
-        return
-    end
-
-    if not InteractByName(bell.Name, 5.0) then
-        Log("failed to interact with bell '%s'", tostring(bell.Name))
-        return
-    end
-
-    if not AwaitAddonVisible("RetainerList", 5) then
-        Log("failed to open bell '%s'", tostring(bell.Name))
-        return
-    end
+    local bell = MoveToBellAndOpenRetainerList()
+    if not bell then return end
 
     EnableAutoRetainer()
 
-    Log("waiting for AutoRetainer to finish")
-    WaitUntil(function()
-        return not IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
-    end, 999999, TIME.POLL, 1)
-    Log("AutoRetainer finished")
-
-    Log("Checking RetainerList stable")
-    if closeRetainerList and WaitAddonStable("RetainerList", TIME.STABLE, 3, TIME.POLL) then
-        CloseRetainerList()
-    else
-        WaitUntil(function()
-            return not GetCharacterCondition(CharacterCondition.occupiedSummoningBell)
-        end, 999999, TIME.POLL, 1)
-    end
-
-    if IsCrafterJob() then
-        Log("crafter job detected; returning to origin")
-        MoveNearVnav(origin, MOVE_STOP_DISTANCE, false)
-    else
-        Log("non-crafter job; skipping return move")
-    end
-
-    Log("starting ICE")
-    yield("/ice start")
+    if not WaitForAutoRetainerCompletion() then return end
+    FinishRetainerSession()
+    ReturnToOriginIfCrafter(origin)
+    StartIce()
 end
 
 Main()
