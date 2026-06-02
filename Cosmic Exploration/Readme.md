@@ -6,8 +6,8 @@
 Cosmic Exploration centered SND lua scripts. 
 
 ## Scripts
-- Oizys Artifact
-  - Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
+- Cosmic Drone Artifacts
+  - Automatically purchase cosmic drone modules, retrieve artifacts, and appraise ancient records.
 
 - Moved to Old directory
   - Cosmic Botanist

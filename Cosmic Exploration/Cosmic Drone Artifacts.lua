@@ -1,8 +1,8 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.2
-description: Automatic purchase Oizys Drone Modules, retrive artifacts, and appraise ancient records.
+version: 1.0.0
+description: Automatically purchase cosmic drone modules, retrieve artifacts, and appraise ancient records.
 plugin_dependencies:
 - vnavmesh
 - TextAdvance
@@ -36,7 +36,7 @@ configs:
 -- =========================================================
 import("System.Numerics")
 echoLog = false
-PREFIX  = "[Oizys Artifact]"
+PREFIX  = "[Cosmic Drone Artifacts]"
 
 -- ==============================================================
 -- Echo / Log Helpers (ALL code should call Log(...) / Echo(...))
@@ -989,7 +989,47 @@ CharacterCondition = {
 -- Variable States
 -- =========================================================
 local cosmoWasOn = false
-local oizysDroneModule = { itemId = 50414, price = 200 }
+local SHARED_ARTIFACT_EOBJ_ID = 2015138
+
+local PLANET_DATA = {
+    [1310] = {
+        name = "Oizys",
+        basePos = Vector3(-181.960, 0.740, 135.718),
+        droneModule = {
+            itemId = 50414,
+            price = 200,
+        },
+        artifactNpcId = 1052654,
+        ancientRecords = { 50411, 50412, 50413 }, -- gold, silver, bronze
+        recordToListCol = {
+            [50413] = 0, -- bronze
+            [50412] = 1, -- silver
+            [50411] = 2, -- gold
+        },
+        recordTurninOrder = { 50411, 50412, 50413 }, -- gold -> silver -> bronze
+    },
+    [1319] = {
+        name = "Auxesia",
+        basePos = Vector3(294.197, 205.601, 379.701),
+        droneModule = {
+            itemId = 50415,
+            price = 200,
+        },
+        artifactNpcId = 1056828,
+        ancientRecords = { 52093, 52094, 52095 }, -- gold, silver, bronze
+        recordToListCol = {
+            [52095] = 3, -- bronze
+            [52094] = 4, -- silver
+            [52093] = 5, -- gold
+        },
+        recordTurninOrder = { 52093, 52094, 52095 }, -- gold -> silver -> bronze
+    },
+}
+
+local activeTerritoryId = GetZoneId()
+local activeProfile = PLANET_DATA[activeTerritoryId]
+local artifactName = nil
+local artifactNPC = nil
 
 local spendDroneBits    = Config.Get("Spend Dronebits")
 local droneBitLimit     = Config.Get("Dronebit Limit")
@@ -997,7 +1037,7 @@ local useDroneModule    = Config.Get("Use Drone Module")
 local retriveArtifact   = Config.Get("Retrive Artifact")
 local appraiseArtifact  = Config.Get("Appraise Artifact")
 
-local okRes, objresult = GetEObjName(2015138)
+local okRes, objresult = GetEObjName(SHARED_ARTIFACT_EOBJ_ID)
 if not okRes then
     Log("Object lookup failed: %s", objresult)
 else
@@ -1005,12 +1045,17 @@ else
     artifactName = objresult.name
 end
 
-local okRes2, npcresult = GetENpcResidentName(1052654)
-if not okRes2 then
-    Log("NPC lookup failed: %s", npcresult)
+if not activeProfile then
+    Log("Unsupported territory: %s", tostring(activeTerritoryId))
 else
-    Log("NPC name: %s (id=%d)", npcresult.name, npcresult.id)
-    artifactNPC = npcresult.name
+    local okRes2, npcresult = GetENpcResidentName(activeProfile.artifactNpcId)
+    if not okRes2 then
+        Log("NPC lookup failed: %s", npcresult)
+    else
+        Log("Active profile: %s (territory=%d)", tostring(activeProfile.name), tonumber(activeTerritoryId) or 0)
+        Log("NPC name: %s (id=%d)", npcresult.name, npcresult.id)
+        artifactNPC = npcresult.name
+    end
 end
 
 -- =========================================================
@@ -1042,7 +1087,35 @@ end
 -- =========================================================
 -- Helpers specific to this flow
 -- =========================================================
-local BASE_POS = Vector3(-181.960, 0.740, 135.718)
+local function HasActiveProfile()
+    return activeProfile ~= nil
+end
+
+local function GetBasePos()
+    return activeProfile and activeProfile.basePos or nil
+end
+
+local function GetDroneModuleItemId()
+    return activeProfile and activeProfile.droneModule and activeProfile.droneModule.itemId or nil
+end
+
+local function GetDroneModulePrice()
+    return activeProfile and activeProfile.droneModule and activeProfile.droneModule.price or 0
+end
+
+local function GetAncientRecords()
+    return activeProfile and activeProfile.ancientRecords or {}
+end
+
+local function GetRecordToListCol()
+    return activeProfile and activeProfile.recordToListCol or {}
+end
+
+local function GetRecordTurninOrder()
+    return activeProfile and activeProfile.recordTurninOrder or {}
+end
+
+local StellarReturn
 
 local function getBits()
     return toNumberSafe(GetNodeText("WKSHud", {1,15,18,3}), 0, 0)
@@ -1058,6 +1131,39 @@ end
 
 local function artifactNPCEntity()
     return Entity.GetEntityByName(artifactNPC)
+end
+
+local function WaitArtifactNPCEntity(timeoutSec)
+    timeoutSec = toNumberSafe(timeoutSec, 5.0, 0.1)
+    if WaitUntil(function()
+        local entnpc = artifactNPCEntity()
+        return entnpc and entnpc.Position and entnpc.Name
+    end, timeoutSec, TIME.POLL, 0.2) then
+        return artifactNPCEntity()
+    end
+    return nil
+end
+
+local function EnsureArtifactNPCEntity(timeoutSec)
+    local entnpc = artifactNPCEntity()
+    if entnpc and entnpc.Position and entnpc.Name then
+        return entnpc
+    end
+
+    Log("Artifact NPC unavailable, using StellarReturn")
+    if not StellarReturn() then
+        return nil
+    end
+
+    Sleep(1.5)
+    entnpc = WaitArtifactNPCEntity(timeoutSec)
+    if entnpc and entnpc.Position and entnpc.Name then
+        Log("Artifact NPC found after return")
+        return entnpc
+    end
+
+    Log("Artifact NPC still unavailable after return")
+    return nil
 end
 
 local function WaitEntityByName(name, timeoutSec)
@@ -1079,17 +1185,21 @@ local function shouldReturnBaseBeforeArtifact()
     if not (art and art.Position) then return false end
     local me = Entity and Entity.Player
     if not (me and me.Position) then return false end
+    local basePos = GetBasePos()
+    if not basePos then return false end
     return Vector3.Distance(me.Position, art.Position)
-         > Vector3.Distance(BASE_POS, art.Position)
+         > Vector3.Distance(basePos, art.Position)
 end
 
 local function DistanceToBase()
     local me = Entity and Entity.Player
     if not (me and me.Position) then return math.huge end
-    return Vector3.Distance(me.Position, BASE_POS)
+    local basePos = GetBasePos()
+    if not basePos then return math.huge end
+    return Vector3.Distance(me.Position, basePos)
 end
 
-local function StellarReturn()
+StellarReturn = function()
     Actions.ExecuteAction(42149) -- Stellar Return
     sleep(4)
     return WaitConditionStable(45, false, 2, 10)
@@ -1103,27 +1213,20 @@ end
 -- =========================================================
 -- Ancient Record helpers
 -- =========================================================
-ancientRecords = { 50411, 50412, 50413 } -- gold, silver, bronze
-
-local RECORD_TO_LISTCOL = {
-    [50413] = 0, -- bronze
-    [50412] = 1, -- silver
-    [50411] = 2, -- gold
-}
-
 local function AncientRecordCount()
     local total = 0
-    for _, id in ipairs(ancientRecords) do
+    for _, id in ipairs(GetAncientRecords()) do
         total = total + ItemCount(id)
     end
     return total
 end
 
 local function NextAncientRecord()
-    local order = { 50411, 50412, 50413 } -- gold -> silver -> bronze
+    local order = GetRecordTurninOrder()
+    local recordToListCol = GetRecordToListCol()
     for _, id in ipairs(order) do
         if ItemCount(id) > 0 then
-            return id, RECORD_TO_LISTCOL[id]
+            return id, recordToListCol[id]
         end
     end
     return nil, nil
@@ -1132,9 +1235,20 @@ end
 -- =========================================================
 -- Main Loop
 -- =========================================================
-EchoOnce("Starting Oizys Artifact script.")
+EchoOnce("Starting Cosmic Drone Artifacts script.")
 ToggleTextAdvance("enable") -- Enable TextAdvance if not
 if HasPlugin("YesAlready") then ToggleYesAlready("disable") end -- Disable YesAlready if installed
+
+if not HasActiveProfile() then
+    EchoOnce("Unsupported territory: %s", tostring(activeTerritoryId))
+    sm.s = STATE.FAIL
+elseif not artifactName then
+    EchoOnce("Artifact object lookup failed for id %s", tostring(SHARED_ARTIFACT_EOBJ_ID))
+    sm.s = STATE.FAIL
+elseif not artifactNPC then
+    EchoOnce("Artifact NPC lookup failed for territory %s", tostring(activeTerritoryId))
+    sm.s = STATE.FAIL
+end
 
 while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     if OnCosmoLiner() then
@@ -1151,8 +1265,8 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- ======================
     if sm.s == STATE.READY then
         local bits    = getBits()
-        local price   = toNumberSafe(oizysDroneModule.price, 0, 0)
-        local modules = ItemCount(oizysDroneModule.itemId)
+        local price   = toNumberSafe(GetDroneModulePrice(), 0, 0)
+        local modules = ItemCount(GetDroneModuleItemId())
 
         if price > 0
            and bits >= price
@@ -1178,10 +1292,11 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- RETURN_BASE
     -- ======================
     elseif sm.s == STATE.RETURN_BASE then
+        local basePos = GetBasePos()
         if StellarReturn() then
             Sleep(TIME.POLL)
         else
-            MoveNearVnav(BASE_POS, 3.0, false)
+            MoveNearVnav(basePos, 3.0, false)
         end
         gotoState(STATE.ARTIFACT_INTERACT)
         Sleep(0.3)
@@ -1190,12 +1305,17 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- MODULE_PURCHASE
     -- ======================
     elseif sm.s == STATE.MODULE_PURCHASE then
-        local entnpc = artifactNPCEntity()
+        local entnpc = EnsureArtifactNPCEntity(5.0)
+        if not entnpc then
+            Log("MODULE_PURCHASE: artifact NPC unavailable after return")
+            gotoState(STATE.FAIL)
+            goto continue
+        end
         MoveNearVnav(entnpc.Position, 3.0, false)
         InteractByName(entnpc.Name)
 
         local bits  = getBits()
-        local price = toNumberSafe(oizysDroneModule.price, 0, 0)
+        local price = toNumberSafe(GetDroneModulePrice(), 0, 0)
         local purchase = (price > 0) and math.floor(bits / price) or 0
 
         if AwaitAddonReady("SelectString", 5) then
@@ -1232,12 +1352,13 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
         else
             local usedOk = false
 
-            local count = ItemCount(oizysDroneModule.itemId)
+            local moduleItemId = GetDroneModuleItemId()
+            local count = ItemCount(moduleItemId)
             if count <= 0 then
                 gotoState(STATE.READY)
             else
                 for i = 1, 10 do
-                    ItemUse(oizysDroneModule.itemId)
+                    ItemUse(moduleItemId)
 
                     if WaitUntil(function()
                         return IsAddonReady("SelectYesno") and IsAddonVisible("SelectYesno")
@@ -1293,62 +1414,56 @@ while sm.s ~= STATE.DONE and sm.s ~= STATE.FAIL do
     -- TURNIN_FLOW
     -- ======================
     elseif sm.s == STATE.TURNIN_FLOW then
-        local entnpc = artifactNPCEntity()
+        local entnpc = EnsureArtifactNPCEntity(5.0)
+        if not entnpc then
+            Log("TURNIN: artifact NPC unavailable after return")
+            gotoState(STATE.FAIL)
+            goto continue
+        end
+        MoveNearVnav(entnpc.Position, 3.0, false)
+        InteractByName(entnpc.Name)
 
-        if DistanceToBase() >= 75 then
-            Log("TURNIN: far from base, using StellarReturn")
-            if not StellarReturn() then
-                gotoState(STATE.FAIL)
-            else
-                Sleep(1.5)
-                gotoState(STATE.TURNIN_FLOW)
+        if AwaitAddonReady("SelectString", 5) then
+            SafeCallback("SelectString", 1)
+
+            local lastTotal = AncientRecordCount()
+            local stuck = 0
+
+            while AncientRecordCount() > 0 do
+                local id, col = NextAncientRecord()
+                if not id then break end
+
+                if not AwaitAddonReady("ItemInspectionList", 5) then gotoState(STATE.FAIL); break end
+                SafeCallback("ItemInspectionList", 0, col)
+
+                if not AwaitAddonReady("SelectYesno", 5) then gotoState(STATE.FAIL); break end
+                SafeCallback("SelectYesno", 0)
+
+                if not AwaitAddonReady("ItemInspectionResult", 5) then gotoState(STATE.FAIL); break end
+                SafeCallback("ItemInspectionResult", -1)
+
+                Sleep(0.3)
+
+                local now = AncientRecordCount()
+                if now >= lastTotal then
+                    stuck = stuck + 1
+                    if stuck >= 5 then gotoState(STATE.FAIL); break end
+                else
+                    stuck = 0
+                    lastTotal = now
+                end
             end
-        else
-            MoveNearVnav(entnpc.Position, 3.0, false)
-            InteractByName(entnpc.Name)
 
-            if AwaitAddonReady("SelectString", 5) then
-                SafeCallback("SelectString", 1)
-
-                local lastTotal = AncientRecordCount()
-                local stuck = 0
-
-                while AncientRecordCount() > 0 do
-                    local id, col = NextAncientRecord()
-                    if not id then break end
-
-                    if not AwaitAddonReady("ItemInspectionList", 5) then gotoState(STATE.FAIL); break end
-                    SafeCallback("ItemInspectionList", 0, col)
-
-                    if not AwaitAddonReady("SelectYesno", 5) then gotoState(STATE.FAIL); break end
-                    SafeCallback("SelectYesno", 0)
-
-                    if not AwaitAddonReady("ItemInspectionResult", 5) then gotoState(STATE.FAIL); break end
-                    SafeCallback("ItemInspectionResult", -1)
-
-                    Sleep(0.3)
-
-                    local now = AncientRecordCount()
-                    if now >= lastTotal then
-                        stuck = stuck + 1
-                        if stuck >= 5 then gotoState(STATE.FAIL); break end
-                    else
-                        stuck = 0
-                        lastTotal = now
-                    end
-                end
-
-                if IsAddonReady("ItemInspectionList") then
-                    SafeCallback("ItemInspectionList", -1)
-                end
-
-                if sm.s ~= STATE.FAIL then
-                    gotoState(STATE.READY)
-                    Sleep(0.5)
-                end
-            elseif timedOut(10) then
-                gotoState(STATE.FAIL)
+            if IsAddonReady("ItemInspectionList") then
+                SafeCallback("ItemInspectionList", -1)
             end
+
+            if sm.s ~= STATE.FAIL then
+                gotoState(STATE.READY)
+                Sleep(0.5)
+            end
+        elseif timedOut(10) then
+            gotoState(STATE.FAIL)
         end
     end
 

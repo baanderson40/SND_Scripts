@@ -22,7 +22,7 @@ Collection of various SND scripts
   - Process AutoRetainer
     
 - Cosmic Exploration
-  - Oizys Artifact
+  - Cosmic Drone Artifacts
     
 - Dungeons
   - Mathematics Farm
