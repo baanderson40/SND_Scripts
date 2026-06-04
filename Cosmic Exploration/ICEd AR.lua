@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.0.1
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -43,6 +43,8 @@ local LIMITS = {
     stellarReturnDelay = 4.0,
     mountDistance = 50.0,
     dismountDistance = 20.0,
+    autoRetainerIdleSettle = 1.0,
+    autoRetainerIdleTimeout = 120.0,
 }
 
 -- =========================================================
@@ -592,6 +594,42 @@ local function WaitWksMissionInfoClosed()
     return true
 end
 
+local function SafeAutoRetainerCall(fieldName)
+    if not (IPC and IPC.AutoRetainer) then
+        return false, nil
+    end
+
+    local okField, fn = pcall(function()
+        return IPC.AutoRetainer[fieldName]
+    end)
+    if not okField or not fn then
+        return false, nil
+    end
+
+    local okCall, value = pcall(function()
+        return fn()
+    end)
+    if not okCall then
+        return false, nil
+    end
+
+    return true, value
+end
+
+local function AutoRetainerAnyAvailable()
+    local ok, value = SafeAutoRetainerCall("AreAnyRetainersAvailableForCurrentChara")
+    return ok and value == true or false
+end
+
+local function AutoRetainerBusySignal()
+    local ok, value = SafeAutoRetainerCall("IsBusy")
+    return ok and value == true or false
+end
+
+local function IsAutoRetainerIdle()
+    return (not AutoRetainerBusySignal()) and (not AutoRetainerAnyAvailable())
+end
+
 local function GetBellEobjIdForTerritory(territoryId)
     return BELL_EOBJ_BY_TERRITORY[territoryId] or BELL_EOBJ_DEFAULT
 end
@@ -760,13 +798,13 @@ end
 local function WaitForAutoRetainerCompletion()
     Log("waiting for AutoRetainer to finish")
     local finished = WaitUntil(function()
-        return not IPC.AutoRetainer.AreAnyRetainersAvailableForCurrentChara()
-    end, LIMITS.waitForever, TIME.POLL, 1)
+        return IsAutoRetainerIdle()
+    end, LIMITS.autoRetainerIdleTimeout, TIME.POLL, LIMITS.autoRetainerIdleSettle)
 
     if finished then
-        Log("AutoRetainer finished")
+        Log("AutoRetainer idle confirmed")
     else
-        Log("AutoRetainer completion wait timed out")
+        Log("AutoRetainer idle confirmation timed out")
     end
 
     return finished
