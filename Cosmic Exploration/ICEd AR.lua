@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.1
+version: 1.0.2
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -38,6 +38,10 @@ local LIMITS = {
     moveStopDistance = 3.0,
     interactTimeout = 5.0,
     retainerListTimeout = 5.0,
+    bellOpenAttempts = 4,
+    bellOpenSettleDelay = 0.5,
+    bellOpenRetryDelay = 0.5,
+    interactReadyTimeout = 3.0,
     waitForever = 999999,
     retainerCloseAttempts = 80,
     stellarReturnDelay = 4.0,
@@ -45,6 +49,9 @@ local LIMITS = {
     dismountDistance = 20.0,
     autoRetainerIdleSettle = 1.0,
     autoRetainerIdleTimeout = 120.0,
+    zoneCompletionTimeout = 30.0,
+    zoneCompletionStable = 1.0,
+    postReturnBellResolveTimeout = 5.0,
 }
 
 -- =========================================================
@@ -353,6 +360,21 @@ local function IsCrafterJob()
     return Player and Player.Job and Player.Job.IsCrafter or false
 end
 
+local function IsPlayerAvailable()
+    return Player ~= nil and Player.Available == true
+end
+
+local function IsPlayerMovingOrBusy()
+    if Svc and Svc.Condition and Svc.Condition[70] == true then
+        return true
+    end
+
+    local lifestreamBusy = IPC and IPC.Lifestream and IPC.Lifestream.IsBusy and IPC.Lifestream.IsBusy() or false
+    local playerMoving = Player and Player.IsMoving or false
+    local playerBusy = Player and Player.IsBusy or false
+    return lifestreamBusy or playerMoving or playerBusy
+end
+
 -- =========================================================
 -- Safe Callback
 -- =========================================================
@@ -464,6 +486,93 @@ local function InteractByName(name, timeout)
     end
 
     Log("InteractByName: timeout '%s'", name)
+    return false
+end
+
+local function InteractWithEntity(ent, timeout)
+    if not ent then
+        Log("InteractWithEntity: invalid entity")
+        return false
+    end
+
+    timeout = toNumberSafe(timeout, 5, 0.1)
+    local targetName = tostring(ent.Name or "")
+    local start = os.clock()
+    while (os.clock() - start) < timeout do
+        ent:SetAsTarget()
+        sleep(TIME.POLL)
+        local tgt = Entity and Entity.Target
+        if tgt and tostring(tgt.Name or "") == targetName then
+            ent:Interact()
+            return true
+        end
+        sleep(TIME.POLL)
+    end
+
+    Log("InteractWithEntity: timeout '%s'", targetName)
+    return false
+end
+
+local function IsBellSessionActive()
+    return GetCharacterCondition(CharacterCondition.occupiedSummoningBell, true) and IsAddonVisible("RetainerList")
+end
+
+local function WaitForBellSession(timeout)
+    return WaitUntil(function()
+        return IsBellSessionActive()
+            or GetCharacterCondition(CharacterCondition.occupiedSummoningBell, true)
+            or IsAddonVisible("RetainerList")
+    end, timeout or LIMITS.retainerListTimeout, TIME.POLL, 0.0)
+end
+
+local function OpenSummoningBell(bell)
+    if not bell then
+        Log("OpenSummoningBell: invalid bell")
+        return false
+    end
+
+    if not WaitUntil(function()
+        return not IsPlayerMovingOrBusy()
+    end, LIMITS.interactReadyTimeout, TIME.POLL, TIME.STABLE) then
+        Log("player did not fully settle before bell interaction; continuing anyway")
+    end
+
+    sleep(LIMITS.bellOpenSettleDelay)
+
+    local bellName = tostring(bell.Name or "Summoning Bell")
+    for attempt = 1, LIMITS.bellOpenAttempts do
+        local currentBell = Entity and Entity.GetEntityByName and Entity.GetEntityByName(bellName) or bell
+        Log("opening bell attempt %d/%d", attempt, LIMITS.bellOpenAttempts)
+
+        local interacted = InteractWithEntity(currentBell, LIMITS.interactTimeout)
+        if not interacted then
+            Log("entity interact failed for '%s'; trying command fallback", bellName)
+            yield('/target "' .. bellName .. '"')
+            sleep(TIME.POLL)
+            local tgt = Entity and Entity.Target
+            if tgt and tostring(tgt.Name or "") == bellName then
+                yield("/interact")
+            end
+        end
+
+        if WaitForBellSession(LIMITS.retainerListTimeout) then
+            if IsBellSessionActive() then
+                return true
+            end
+
+            if GetCharacterCondition(CharacterCondition.occupiedSummoningBell, true) then
+                return AwaitAddonVisible("RetainerList", LIMITS.retainerListTimeout)
+            end
+
+            if IsAddonVisible("RetainerList") then
+                return true
+            end
+        end
+
+        sleep(LIMITS.bellOpenRetryDelay)
+    end
+
+    Log("failed to open bell '%s' after %d attempts", bellName, LIMITS.bellOpenAttempts)
     return false
 end
 
@@ -579,10 +688,23 @@ end
 -- =========================================================
 -- Script-specific helpers
 -- =========================================================
+local WaitForZoneCompletion
+
 local function StellarReturn()
+    local startTerritoryId = GetZoneId()
+
     Actions.ExecuteAction(42149) -- Stellar Return
     sleep(LIMITS.stellarReturnDelay)
-    return WaitConditionStable(CharacterCondition.betweenAreas, false, 2, 10)
+
+    if not WaitForZoneCompletion(nil, LIMITS.zoneCompletionTimeout, "Stellar Return", false) then
+        return false
+    end
+
+    if startTerritoryId ~= nil and GetZoneId() == startTerritoryId then
+        Log("Stellar Return completed without territory change; continuing in territory %s", tostring(startTerritoryId))
+    end
+
+    return true
 end
 
 local function WaitWksMissionInfoClosed()
@@ -592,6 +714,109 @@ local function WaitWksMissionInfoClosed()
     end
     Log("WKSMissionInfomation closed")
     return true
+end
+
+local function IsLifestreamBusy()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        return ok and busy == true
+    end
+
+    return false
+end
+
+local function DescribeZoneTransitionState()
+    local states = {}
+
+    if Svc and Svc.Condition then
+        if Svc.Condition[CharacterCondition.casting] then
+            table.insert(states, "casting")
+        end
+        if Svc.Condition[CharacterCondition.betweenAreas] then
+            table.insert(states, "betweenAreas")
+        end
+        if CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty] then
+            table.insert(states, "betweenAreasForDuty")
+        end
+    end
+
+    if IsLifestreamBusy() then
+        table.insert(states, "lifestreamBusy")
+    end
+
+    if #states == 0 then
+        return "idle"
+    end
+
+    return table.concat(states, ",")
+end
+
+local function IsZoneTransitionActive()
+    if not Svc or not Svc.Condition then
+        return IsLifestreamBusy()
+    end
+
+    return Svc.Condition[CharacterCondition.casting]
+        or Svc.Condition[CharacterCondition.betweenAreas]
+        or (CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty])
+        or IsLifestreamBusy()
+end
+
+local function IsZoneTransitionComplete(targetTerritoryId)
+    local currentTerritoryId = GetZoneId()
+
+    return (not IsAddonReady("FadeMiddle"))
+        and (not IsLifestreamBusy())
+        and (not (Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting]))
+        and (not (Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas]))
+        and (not (Svc and Svc.Condition and CharacterCondition.betweenAreasForDuty ~= nil and Svc.Condition[CharacterCondition.betweenAreasForDuty]))
+        and IsPlayerAvailable()
+        and (targetTerritoryId == nil or currentTerritoryId == targetTerritoryId)
+end
+
+WaitForZoneCompletion = function(targetTerritoryId, timeoutSec, sourceLabel, requireActivity)
+    timeoutSec = tonumber(timeoutSec) or LIMITS.zoneCompletionTimeout
+    sourceLabel = tostring(sourceLabel or "zone transition")
+    requireActivity = requireActivity == true
+
+    local deadline = os.clock() + timeoutSec
+    local sawActivity = false
+    local stableStart = nil
+
+    Log("waiting up to %.2fs for %s to complete", timeoutSec, sourceLabel)
+
+    while os.clock() < deadline do
+        local currentTerritoryId = GetZoneId()
+        local transitionState = DescribeZoneTransitionState()
+
+        if transitionState ~= "idle" or IsZoneTransitionActive() then
+            if not sawActivity then
+                Log("%s activity detected: %s", sourceLabel, transitionState)
+            end
+            sawActivity = true
+            stableStart = nil
+        end
+
+        if ((not requireActivity) or sawActivity) and IsZoneTransitionComplete(targetTerritoryId) then
+            if stableStart == nil then
+                stableStart = os.clock()
+                Log("%s appears settled; starting stability confirmation", sourceLabel)
+            elseif (os.clock() - stableStart) >= LIMITS.zoneCompletionStable then
+                Log("%s completion confirmed in territory %s", sourceLabel, tostring(currentTerritoryId))
+                return true
+            end
+        else
+            stableStart = nil
+        end
+
+        sleep(0.25)
+    end
+
+    Log("%s completion timed out; finalState=%s territory=%s",
+        sourceLabel,
+        DescribeZoneTransitionState(),
+        tostring(GetZoneId()))
+    return false
 end
 
 local function SafeAutoRetainerCall(fieldName)
@@ -699,7 +924,12 @@ local function ResolveBellOrReturnOnce(maxDist)
         Log("Stellar Return failed")
         return nil, true
     end
-    sleep(TIME.STABLE)
+
+    if not WaitUntil(function()
+        return ResolveSummoningBellEntity() ~= nil
+    end, LIMITS.postReturnBellResolveTimeout, TIME.POLL, 0.0) then
+        Log("bell did not resolve during post-return settle window")
+    end
 
     bell = ResolveSummoningBellEntity()
     if not bell then
@@ -782,12 +1012,7 @@ local function MoveToBellAndOpenRetainerList()
         return nil
     end
 
-    if not InteractByName(bell.Name, LIMITS.interactTimeout) then
-        Log("failed to interact with bell '%s'", tostring(bell.Name))
-        return nil
-    end
-
-    if not AwaitAddonVisible("RetainerList", LIMITS.retainerListTimeout) then
+    if not OpenSummoningBell(bell) then
         Log("failed to open bell '%s'", tostring(bell.Name))
         return nil
     end
