@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 2.0.0
+version: 1.5.1
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -113,6 +113,16 @@ configs:
   Enable AutoRetainer multi-mode after limit?:
     description: Turn on AutoRetainer multi-mode when the purchase limit stops this script.
     default: false
+  Echo logs:
+    description:
+    default: "None"
+    is_choice: true
+    choices: ["All", "None"]
+  Check interval (seconds):
+    description: How often to poll for completed retainers.
+    default: 60
+    min: 5
+    max: 300
 [[End Metadata]]
 --]=====]
 
@@ -120,11 +130,11 @@ import("System.Numerics")
 
 --#region Utilities
 
-local function Vec3(x, y, z)
+function Vec3(x, y, z)
     return Vector3(x, y, z)
 end
 
-local function TrimString(value)
+function TrimString(value)
     if type(value) ~= "string" then
         return value
     end
@@ -139,7 +149,7 @@ end
 
 --#region Data
 
-local CharacterCondition = {
+CharacterCondition = {
     dead=2,
     mounted=4,
     inCombat=26,
@@ -579,7 +589,7 @@ local ItemNameCache = {}
 local NpcNameCache = {}
 local EObjNameCache = {}
 
-local function GetItemNameByRowId(rowId)
+function GetItemNameByRowId(rowId)
     if not rowId then return nil end
     if ItemNameCache[rowId] ~= nil then
         return ItemNameCache[rowId]
@@ -604,7 +614,7 @@ local function GetItemNameByRowId(rowId)
     return nil
 end
 
-local function GetNpcNameByRowId(rowId)
+function GetNpcNameByRowId(rowId)
     if not rowId then return nil end
     if NpcNameCache[rowId] ~= nil then
         return NpcNameCache[rowId]
@@ -630,7 +640,7 @@ local function GetNpcNameByRowId(rowId)
     return nil
 end
 
-local function GetLocalizedNpcName(rowId, fallback)
+function GetLocalizedNpcName(rowId, fallback)
     local resolved = GetNpcNameByRowId(rowId)
     if resolved ~= nil and resolved ~= "" then
         return resolved
@@ -638,7 +648,7 @@ local function GetLocalizedNpcName(rowId, fallback)
     return fallback
 end
 
-local function GetEObjNameByRowId(rowId)
+function GetEObjNameByRowId(rowId)
     if not rowId then return nil end
     if EObjNameCache[rowId] ~= nil then
         return EObjNameCache[rowId]
@@ -666,7 +676,7 @@ local function GetEObjNameByRowId(rowId)
     return nil
 end
 
-local FateState = {
+FateState = {
     None       = 0,
     Preparing  = 1,
     Waiting    = 2,
@@ -681,7 +691,9 @@ local FateState = {
 
 --#region Config & Runtime
 
-local Settings = {
+Settings = {
+    echoLevel = "none",
+    checkInterval = 60,
     closeRetainerList = true,
     waitIfBonusBuff = true,
     pauseRetainers = true,
@@ -703,110 +715,118 @@ local Settings = {
     chocoboStanceActionId = 4
 }
 
-local RETAINER_CHECK_INTERVAL_SECONDS = 60
-local ECHO_ALL_LOGS = false
-
 local equipGearsetSlot = -1
 local gearsetEquipped = false
 
-local function NormalizeConfigCommand(value)
-    if type(value) ~= "string" then
-        return ""
+function RefreshSettings()
+    local previousExchange = Settings.exchangeGemstones
+    local previousLimit = Settings.purchaseCycleLimit or 0
+    local echo = Config.Get("Echo logs")
+    if type(echo) == "string" then
+        Settings.echoLevel = string.lower(echo)
     end
-    value = TrimString(value)
-    if value ~= nil and value ~= "" and string.lower(value) == "none" then
-        return ""
-    end
-    return value or ""
-end
 
-local function ParseSettingsSnapshot()
-    local parsed = {
-        closeRetainerList = Settings.closeRetainerList,
-        pauseRetainers = Settings.pauseRetainers,
-        maintainGemstones = Settings.maintainGemstones,
-        selfRepair = Settings.selfRepair,
-        autoBuyDarkMatter = Settings.autoBuyDarkMatter,
-        repairThreshold = Settings.repairThreshold,
-        gemstoneTarget = Settings.gemstoneTarget,
-        bicolorItem = Settings.bicolorItem,
-        purchaseCycleLimit = 0,
-        purchaseLimitFollowUp = "",
-        startAreaCommand = "",
-        enableMultiModeOnLimit = false,
-        useReturnToSolutionNine = false,
-        enableStuckMonitor = false,
-        chocoboStance = Settings.chocoboStance,
-        chocoboStanceActionId = Settings.chocoboStanceActionId,
-        exchangeGemstones = false,
-        gearsetSlot = equipGearsetSlot
-    }
+    local interval = Config.Get("Check interval (seconds)")
+    if type(interval) == "number" then
+        Settings.checkInterval = math.max(5, math.min(300, interval))
+    end
 
     local closeList = Config.Get("Close Retainer List when done?")
     if closeList ~= nil then
-        parsed.closeRetainerList = closeList
+        Settings.closeRetainerList = closeList
     end
 
     local pauseRetainers = Config.Get("Pause for retainers?")
     if pauseRetainers ~= nil then
-        parsed.pauseRetainers = pauseRetainers
+        Settings.pauseRetainers = pauseRetainers
     end
 
     local maintainGemstones = Config.Get("Maintain gemstone stockpile?")
     if maintainGemstones ~= nil then
-        parsed.maintainGemstones = maintainGemstones
+        Settings.maintainGemstones = maintainGemstones
     end
 
     local selfRepair = Config.Get("Self repair?")
     if selfRepair ~= nil then
-        parsed.selfRepair = selfRepair
+        Settings.selfRepair = selfRepair
     end
 
     local autoBuyDarkMatter = Config.Get("Auto-buy dark matter?")
     if autoBuyDarkMatter ~= nil then
-        parsed.autoBuyDarkMatter = autoBuyDarkMatter
+        Settings.autoBuyDarkMatter = autoBuyDarkMatter
     end
 
     local repairThreshold = Config.Get("Repair durability threshold (%)")
     if type(repairThreshold) == "number" then
-        parsed.repairThreshold = math.max(1, math.min(100, math.floor(repairThreshold)))
+        Settings.repairThreshold = math.max(1, math.min(100, math.floor(repairThreshold)))
     end
 
     local gemstoneTarget = Config.Get("Gemstone stockpile target")
     if type(gemstoneTarget) == "number" then
-        parsed.gemstoneTarget = math.max(0, gemstoneTarget)
+        Settings.gemstoneTarget = math.max(0, gemstoneTarget)
     end
 
     local bicolorItem = Config.Get("Exchange bicolor gemstones for")
     if type(bicolorItem) == "string" then
-        parsed.bicolorItem = bicolorItem
+        Settings.bicolorItem = bicolorItem
     end
 
     local purchaseLimit = Config.Get("Gemstone purchase cycle limit")
     if type(purchaseLimit) == "number" then
-        parsed.purchaseCycleLimit = math.max(0, math.floor(purchaseLimit))
+        purchaseLimit = math.max(0, math.floor(purchaseLimit))
+    else
+        purchaseLimit = 0
     end
+    Settings.purchaseCycleLimit = purchaseLimit
 
-    parsed.purchaseLimitFollowUp = NormalizeConfigCommand(Config.Get("Follow-up script"))
-    parsed.startAreaCommand = NormalizeConfigCommand(Config.Get("FATE starting area"))
+    local followUpScript = Config.Get("Follow-up script")
+    if type(followUpScript) == "string" then
+        followUpScript = TrimString(followUpScript)
+        if followUpScript ~= nil and followUpScript ~= "" then
+            if string.lower(followUpScript) == "none" then
+                followUpScript = ""
+            end
+        end
+    else
+        followUpScript = ""
+    end
+    Settings.purchaseLimitFollowUp = followUpScript or ""
+
+    local startAreaCommand = Config.Get("FATE starting area")
+    if type(startAreaCommand) == "string" then
+        startAreaCommand = TrimString(startAreaCommand)
+        if startAreaCommand ~= nil and startAreaCommand ~= "" then
+            if string.lower(startAreaCommand) == "none" then
+                startAreaCommand = ""
+            end
+        end
+    else
+        startAreaCommand = ""
+    end
+    Settings.startAreaCommand = startAreaCommand or ""
 
     local enableMultiMode = Config.Get("Enable AutoRetainer multi-mode after limit?")
-    parsed.enableMultiModeOnLimit = enableMultiMode == true
+    if enableMultiMode ~= nil then
+        Settings.enableMultiModeOnLimit = enableMultiMode == true
+    else
+        Settings.enableMultiModeOnLimit = false
+    end
 
     local useReturn = Config.Get("Use Return for Solution Nine?")
-    parsed.useReturnToSolutionNine = useReturn == true
-
-    local stuckMonitor = Config.Get("Enable stuck monitoring?")
-    parsed.enableStuckMonitor = stuckMonitor == true
+    if useReturn ~= nil then
+        Settings.useReturnToSolutionNine = useReturn == true
+    else
+        Settings.useReturnToSolutionNine = false
+    end
 
     local chocoboStance = Config.Get("Chocobo stance")
     if type(chocoboStance) == "string" and chocoboStance ~= "" then
-        parsed.chocoboStance = chocoboStance
+        Settings.chocoboStance = chocoboStance
     end
-    if type(parsed.chocoboStance) ~= "string" or parsed.chocoboStance == "" then
-        parsed.chocoboStance = "Free Stance"
+    if type(Settings.chocoboStance) ~= "string" or Settings.chocoboStance == "" then
+        Settings.chocoboStance = "Free Stance"
     end
-    parsed.chocoboStanceActionId = ChocoboStanceActionMap[parsed.chocoboStance]
+    Settings.chocoboStanceActionId = ChocoboStanceActionMap[Settings.chocoboStance]
 
     local gearsetConfig = Config.Get("Gearset Slot")
     local numericGearset = nil
@@ -821,158 +841,88 @@ local function ParseSettingsSnapshot()
             newGearsetSlot = numericGearset - 1
         end
     end
-    parsed.gearsetSlot = newGearsetSlot
-
-    parsed.exchangeGemstones = parsed.maintainGemstones
-        and type(parsed.bicolorItem) == "string"
-        and parsed.bicolorItem ~= "None"
-
-    return parsed
-end
-
-local function ApplyParsedSettings(parsed)
-    local previousExchange = Settings.exchangeGemstones
-    local previousLimit = Settings.purchaseCycleLimit or 0
-    local changes = {}
-
-    Settings.closeRetainerList = parsed.closeRetainerList
-    Settings.pauseRetainers = parsed.pauseRetainers
-    Settings.maintainGemstones = parsed.maintainGemstones
-    Settings.selfRepair = parsed.selfRepair
-    Settings.autoBuyDarkMatter = parsed.autoBuyDarkMatter
-    Settings.repairThreshold = parsed.repairThreshold
-    Settings.gemstoneTarget = parsed.gemstoneTarget
-    Settings.bicolorItem = parsed.bicolorItem
-    Settings.purchaseCycleLimit = parsed.purchaseCycleLimit
-    Settings.purchaseLimitFollowUp = parsed.purchaseLimitFollowUp
-    Settings.startAreaCommand = parsed.startAreaCommand
-    Settings.enableMultiModeOnLimit = parsed.enableMultiModeOnLimit
-    Settings.useReturnToSolutionNine = parsed.useReturnToSolutionNine
-    Settings.enableStuckMonitor = parsed.enableStuckMonitor
-    Settings.chocoboStance = parsed.chocoboStance
-    Settings.chocoboStanceActionId = parsed.chocoboStanceActionId
-    Settings.exchangeGemstones = parsed.exchangeGemstones
-
-    changes.limitChanged = previousLimit ~= Settings.purchaseCycleLimit
-    changes.exchangeChanged = previousExchange ~= Settings.exchangeGemstones
-
-    if equipGearsetSlot ~= parsed.gearsetSlot then
-        equipGearsetSlot = parsed.gearsetSlot
+    if equipGearsetSlot ~= newGearsetSlot then
+        equipGearsetSlot = newGearsetSlot
         gearsetEquipped = false
-        changes.gearsetSlotChanged = true
     end
 
-    changes.needsGearsetEquip = not gearsetEquipped
-    return changes
-end
+    Settings.exchangeGemstones = Settings.maintainGemstones
+        and type(Settings.bicolorItem) == "string"
+        and Settings.bicolorItem ~= "None"
 
-local function ApplyRefreshSettingsEffects(changes)
+    local limitChanged = previousLimit ~= Settings.purchaseCycleLimit
+    local exchangeChanged = previousExchange ~= Settings.exchangeGemstones
     if Runtime ~= nil and ResetPurchaseCycleTracking ~= nil then
-        if changes.limitChanged then
+        if limitChanged then
             ResetPurchaseCycleTracking()
-        elseif changes.exchangeChanged or not Settings.exchangeGemstones then
+        elseif exchangeChanged or not Settings.exchangeGemstones then
             ResetPurchaseCycleTracking()
         end
     end
 
-    if changes.needsGearsetEquip then
+    if not gearsetEquipped then
         EquipConfiguredGearset()
     end
 
     AttemptStartupAreaTravel()
 
-    if Runtime ~= nil then
-        local stuckMonitor = GetStuckMonitorRuntime()
+    local stuckMonitor = Config.Get("Enable stuck monitoring?")
+    Settings.enableStuckMonitor = stuckMonitor == true
+    if Runtime ~= nil and Runtime.stuckMonitor ~= nil then
         if Settings.enableStuckMonitor then
-            stuckMonitor.enabled = true
+            Runtime.stuckMonitor.enabled = true
         else
             ResetStuckMonitor("feature disabled")
-            stuckMonitor.enabled = false
+            Runtime.stuckMonitor.enabled = false
         end
     end
 end
 
-function RefreshSettings()
-    local parsed = ParseSettingsSnapshot()
-    local changes = ApplyParsedSettings(parsed)
-    ApplyRefreshSettingsEffects(changes)
-end
-
-local Runtime = {
+Runtime = {
     stopScript = false,
-    travel = {
-        lastTeleport = -math.huge,
-        lastLifestreamCommand = 0,
-        lock = {
-            active = false,
-            destination = nil,
-            started = 0,
-            expires = 0,
-            nextLog = 0
-        },
-        returnTarget = {
-            aetheryteName = nil,
-            territoryId = nil,
-            aetheryteId = nil,
-            destinationTerritoryId = nil
-        }
-    },
-    lifecycle = {
-        initialToolkitStarted = false,
-        startAreaHandled = false,
-        featureLogPrinted = false
-    },
-    repairs = {
-        toolkitStopped = false,
-        nextCheck = 0,
-        useNpcFallback = false,
-        action = {
-            pending = false,
-            startedAt = 0,
-            conditionSeen = false,
-            retryCount = 0
-        }
-    },
-    retainers = {
-        nextCheck = 0,
-        toolkitStopped = false
-    },
-    buddy = {
-        nextChocoboStanceCheck = 0
-    },
-    gemstones = {
-        maintenance = {
-            pendingGoal = nil,
-            lastCheck = 0
-        },
-        exchange = {
-            inProgress = false,
-            started = false,
-            usedMiniTeleport = false,
-            nextCheck = 0,
-            delay = {
-                active = false,
-                lastLog = 0
-            }
-        },
-        purchaseLimit = {
-            cycleCount = 0,
-            reached = false,
-            handled = false,
-            followUpIssued = false,
-            deferredFollowUpScript = nil,
-            deferredEnableMultiMode = false
-        }
-    },
-    plugins = {
-        textAdvance = {
-            enabledByScript = false
-        },
-        bossmod = {
-            recordedState = nil,
-            stateChanged = false
-        }
-    },
+    nextCheck = 0,
+    lastTeleport = -math.huge,
+    teleportLockActive = false,
+    teleportLockDestination = nil,
+    teleportLockStarted = 0,
+    teleportLockExpires = 0,
+    nextTeleportLockLog = 0,
+    returnAetheryteName = nil,
+    returnTerritoryId = nil,
+    returnAetheryteId = nil,
+    returnDestinationTerritoryId = nil,
+    pendingGemstoneGoal = nil,
+    lastGemstoneCheck = 0,
+    gemstoneRunIssuedAt = nil,
+    featureLogPrinted = false,
+    exchangeInProgress = false,
+    exchangeStarted = false,
+    usedMiniTeleport = false,
+    nextExchangeCheck = 0,
+    retainerToolkitStopped = false,
+    exchangeDelayActive = false,
+    lastExchangeDelayLog = 0,
+    lastLifestreamCommand = 0,
+    initialToolkitStarted = false,
+    pendingRepair = false,
+    repairToolkitStopped = false,
+    nextRepairCheck = 0,
+    repairActionPending = false,
+    repairActionStartedAt = 0,
+    repairConditionSeen = false,
+    repairRetryCount = 0,
+    repairUseNpcFallback = false,
+    startAreaHandled = false,
+    nextChocoboStanceCheck = 0,
+    purchaseCycleCount = 0,
+    purchaseLimitReached = false,
+    purchaseLimitHandled = false,
+    purchaseLimitFollowUpIssued = false,
+    deferredFollowUpScript = nil,
+    deferredEnableMultiMode = false,
+    textAdvanceEnabledByScript = false,
+    bossmodRecordedState = nil,
+    bossmodStateChanged = false,
     stuckMonitor = {
         enabled = false,
         lastPosition = nil,
@@ -986,214 +936,6 @@ local Runtime = {
     }
 }
 
-function GetRetainerRuntime()
-    if Runtime.retainers == nil then
-        Runtime.retainers = {
-            nextCheck = 0,
-            toolkitStopped = false
-        }
-    end
-    return Runtime.retainers
-end
-
-function GetBuddyRuntime()
-    if Runtime.buddy == nil then
-        Runtime.buddy = {
-            nextChocoboStanceCheck = 0
-        }
-    end
-    return Runtime.buddy
-end
-
-function GetRepairRuntime()
-    if Runtime.repairs == nil then
-        Runtime.repairs = {
-            toolkitStopped = false,
-            nextCheck = 0,
-            useNpcFallback = false,
-            action = {
-                pending = false,
-                startedAt = 0,
-                conditionSeen = false,
-                retryCount = 0
-            }
-        }
-    elseif Runtime.repairs.action == nil then
-        Runtime.repairs.action = {
-            pending = false,
-            startedAt = 0,
-            conditionSeen = false,
-            retryCount = 0
-        }
-    end
-    return Runtime.repairs
-end
-
-function GetTravelRuntime()
-    if Runtime.travel == nil then
-        Runtime.travel = {
-            lastTeleport = -math.huge,
-            lastLifestreamCommand = 0,
-            lock = {
-                active = false,
-                destination = nil,
-                started = 0,
-                expires = 0,
-                nextLog = 0
-            },
-            returnTarget = {
-                aetheryteName = nil,
-                territoryId = nil,
-                aetheryteId = nil,
-                destinationTerritoryId = nil
-            }
-        }
-    end
-    if Runtime.travel.lock == nil then
-        Runtime.travel.lock = {
-            active = false,
-            destination = nil,
-            started = 0,
-            expires = 0,
-            nextLog = 0
-        }
-    end
-    if Runtime.travel.returnTarget == nil then
-        Runtime.travel.returnTarget = {
-            aetheryteName = nil,
-            territoryId = nil,
-            aetheryteId = nil,
-            destinationTerritoryId = nil
-        }
-    end
-    return Runtime.travel
-end
-
-function GetTravelLockRuntime()
-    return GetTravelRuntime().lock
-end
-
-function GetReturnTargetRuntime()
-    return GetTravelRuntime().returnTarget
-end
-
-function GetLifecycleRuntime()
-    if Runtime.lifecycle == nil then
-        Runtime.lifecycle = {
-            initialToolkitStarted = false,
-            startAreaHandled = false,
-            featureLogPrinted = false
-        }
-    end
-    return Runtime.lifecycle
-end
-
-function GetPluginRuntime()
-    if Runtime.plugins == nil then
-        Runtime.plugins = {
-            textAdvance = {
-                enabledByScript = false
-            },
-            bossmod = {
-                recordedState = nil,
-                stateChanged = false
-            }
-        }
-    end
-    if Runtime.plugins.textAdvance == nil then
-        Runtime.plugins.textAdvance = {
-            enabledByScript = false
-        }
-    end
-    if Runtime.plugins.bossmod == nil then
-        Runtime.plugins.bossmod = {
-            recordedState = nil,
-            stateChanged = false
-        }
-    end
-    return Runtime.plugins
-end
-
-function GetTextAdvanceRuntime()
-    return GetPluginRuntime().textAdvance
-end
-
-function GetBossModRuntime()
-    return GetPluginRuntime().bossmod
-end
-
-function GetGemstoneRuntime()
-    if Runtime.gemstones == nil then
-        Runtime.gemstones = {}
-    end
-    return Runtime.gemstones
-end
-
-function GetGemstoneMaintenanceRuntime()
-    local gemstones = GetGemstoneRuntime()
-    if gemstones.maintenance == nil then
-        gemstones.maintenance = {
-            pendingGoal = nil,
-            lastCheck = 0
-        }
-    end
-    return gemstones.maintenance
-end
-
-function GetGemstoneExchangeRuntime()
-    local gemstones = GetGemstoneRuntime()
-    if gemstones.exchange == nil then
-        gemstones.exchange = {
-            inProgress = false,
-            started = false,
-            usedMiniTeleport = false,
-            nextCheck = 0,
-            delay = {
-                active = false,
-                lastLog = 0
-            }
-        }
-    elseif gemstones.exchange.delay == nil then
-        gemstones.exchange.delay = {
-            active = false,
-            lastLog = 0
-        }
-    end
-    return gemstones.exchange
-end
-
-function GetGemstonePurchaseLimitRuntime()
-    local gemstones = GetGemstoneRuntime()
-    if gemstones.purchaseLimit == nil then
-        gemstones.purchaseLimit = {
-            cycleCount = 0,
-            reached = false,
-            handled = false,
-            followUpIssued = false,
-            deferredFollowUpScript = nil,
-            deferredEnableMultiMode = false
-        }
-    end
-    return gemstones.purchaseLimit
-end
-
-function GetStuckMonitorRuntime()
-    if Runtime.stuckMonitor == nil then
-        Runtime.stuckMonitor = {
-            enabled = false,
-            lastPosition = nil,
-            lastMovementTime = 0,
-            lastRestartTime = 0,
-            lastRecoveryType = nil,
-            consecutiveTriggers = 0,
-            triggered = false,
-            lastLogMessage = nil,
-            lastLogTime = 0
-        }
-    end
-    return Runtime.stuckMonitor
-end
-
 --#endregion Config & Runtime
 
 --#region Helpers
@@ -1201,7 +943,7 @@ end
 --## Logging & Toolkit Control
 
 function EchoAll(message)
-    if ECHO_ALL_LOGS then
+    if Settings.echoLevel == "all" then
         yield("/echo [Toolkit Helper] "..message)
     end
 end
@@ -1221,7 +963,7 @@ function SetAutoRetainerMultiMode(enabled)
     return true
 end
 
---## Startup & Gearset Helpers
+--## Gearset Helpers
 
 function EquipConfiguredGearset()
     if gearsetEquipped then
@@ -1266,8 +1008,7 @@ function EquipConfiguredGearset()
 end
 
 function AttemptStartupAreaTravel()
-    local lifecycle = GetLifecycleRuntime()
-    if Runtime == nil or lifecycle.startAreaHandled then
+    if Runtime == nil or Runtime.startAreaHandled then
         return true
     end
 
@@ -1280,30 +1021,38 @@ function AttemptStartupAreaTravel()
         return true
     end
 
-    lifecycle.startAreaHandled = true
+    Runtime.startAreaHandled = true
 
     if not IPC or not IPC.Lifestream or not IPC.Lifestream.ExecuteCommand then
         Dalamud.Log("[Toolkit Helper] Startup area command skipped; Lifestream ExecuteCommand unavailable")
         return false
     end
 
+    if not WaitForTeleportIdle(15) then
+        Dalamud.Log("[Toolkit Helper] Startup area command skipped; teleport channel busy")
+        return false
+    end
+
+    local startTerritoryId = GetCurrentTerritoryType()
     Dalamud.Log(string.format("[Toolkit Helper] Running startup area command via Lifestream: %s", command))
-    local completed = ExecuteTravel({
-        label = "startup area command",
-        method = "lifestream_command",
-        command = command,
-        retries = 1,
-        useTeleportLock = false,
-        applyLastTeleportThrottle = false,
-        requireStationary = false,
-        requireMountStable = false,
-        checkCasting = false,
-        checkBetweenAreas = false,
-        acceptTeleportOffer = false,
-        acceptArrivalWithoutStart = false,
-        noStartLog = "[Toolkit Helper] Startup area command did not begin a zone transition; continuing",
-        dispatchFailureLog = "[Toolkit Helper] Failed to run startup area command"
-    })
+
+    local ok, err = pcall(function()
+        IPC.Lifestream.ExecuteCommand(command)
+    end)
+    if not ok then
+        Dalamud.Log("[Toolkit Helper] Failed to run startup area command: "..tostring(err))
+        return false
+    end
+
+    Runtime.lastLifestreamCommand = os.clock()
+    yield("/wait 1")
+
+    if not WaitForTeleportStart(startTerritoryId, nil, 8) then
+        Dalamud.Log("[Toolkit Helper] Startup area command did not begin a zone transition; continuing")
+        return false
+    end
+
+    local completed = WaitForTeleportCompletion(nil, 30, "startup area command")
     if completed then
         Dalamud.Log("[Toolkit Helper] Startup area command completed")
     else
@@ -1312,7 +1061,7 @@ function AttemptStartupAreaTravel()
     return completed
 end
 
---## Movement Primitives
+--## Position & Movement
 
 function DistanceBetween(pos1, pos2)
     local dx = pos1.X - pos2.X
@@ -1397,7 +1146,7 @@ end
 
 --## Addon Helpers
 
-local function _get_addon(name)
+function _get_addon(name)
     local ok, addon = pcall(Addons.GetAddon, name)
     if ok and addon ~= nil then
         return addon
@@ -1405,7 +1154,7 @@ local function _get_addon(name)
     return nil
 end
 
-local function _addon_ready(addon)
+function _addon_ready(addon)
     if not addon then return false end
     if addon.Ready == true or addon.IsReady == true or addon.Loaded == true then
         return true
@@ -1421,7 +1170,7 @@ local function _addon_ready(addon)
     return false
 end
 
-local function _addon_exists(addon)
+function _addon_exists(addon)
     if not addon then return false end
     if addon.Exists == true or addon.Visible == true or addon.IsVisible == true or addon.IsOpen == true or addon.IsShown == true then
         return true
@@ -1438,7 +1187,7 @@ local function _addon_exists(addon)
     return false
 end
 
-local function WaitForAddonReady(name, timeout)
+function WaitForAddonReady(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
         local addon = _get_addon(name)
@@ -1450,7 +1199,7 @@ local function WaitForAddonReady(name, timeout)
     return nil
 end
 
-local function WaitForAddonVisible(name, timeout)
+function WaitForAddonVisible(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
         local addon = _get_addon(name)
@@ -1471,7 +1220,13 @@ function EnsureInLimsa(reason)
     end
     SaveReturnLocationForCurrentTerritory()
     StopVnav()
-    local limsaDestination = BuildLimsaAetheryteDestination()
+    EnsureSummoningBellAetheryte()
+    local limsaDestination = {
+        name = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks",
+        aetheryteId = SUMMONING_BELL.aetheryteRowId,
+        rowId = SUMMONING_BELL.aetheryteRowId,
+        territoryId = SUMMONING_BELL.territoryId
+    }
     if TeleportTo(limsaDestination) then
         EchoAll("Teleporting to "..limsaDestination.name)
         Dalamud.Log(string.format("[Toolkit Helper] Teleporting to %s for %s", limsaDestination.name, reason or "repair workflow"))
@@ -1483,7 +1238,7 @@ function EorzeaTimeToUnixTime(eorzeaTime)
     return eorzeaTime/(144/7)
 end
 
-local function WaitForAddonClosed(name, timeout)
+function WaitForAddonClosed(name, timeout)
     local untilTime = os.clock() + (timeout or 5)
     repeat
         local addon = _get_addon(name)
@@ -1513,7 +1268,7 @@ function CloseAddonIfMounted(addonName)
     end
 end
 
-local function IsAddonReady(name)
+function IsAddonReady(name)
     return _addon_ready(_get_addon(name))
 end
 
@@ -1628,7 +1383,7 @@ function WaitForTeleportCompletion(targetTerritoryId, timeoutSec, sourceLabel)
                     tostring(sawBetweenAreas)
                 ))
                 if Instances ~= nil and Instances.Framework ~= nil then
-                    GetTravelRuntime().lastTeleport = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
+                    Runtime.lastTeleport = EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime)
                 end
                 return true
             end
@@ -1763,8 +1518,6 @@ local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_RESTART = 0
 local STUCK_MONITOR_RESTART_COOLDOWN_AFTER_TELEPORT = 15
 local STUCK_MONITOR_LOCAL_AETHERYTE_SKIP_DISTANCE = 25.0
 
---## Stuck Monitor
-
 local function CloneVector3(vec)
     if vec == nil then
         return nil
@@ -1776,10 +1529,10 @@ local function StuckMonitorLog(message, verboseOnly)
     if not Settings.enableStuckMonitor then
         return
     end
-    if Runtime == nil then
+    if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
-    local monitor = GetStuckMonitorRuntime()
+    local monitor = Runtime.stuckMonitor
     local now = os.clock()
     local lastMessage = monitor.lastLogMessage
     local lastTime = monitor.lastLogTime or 0
@@ -1796,10 +1549,10 @@ local function StuckMonitorLog(message, verboseOnly)
 end
 
 function ResetStuckMonitor(reason)
-    if Runtime == nil then
+    if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
-    local monitor = GetStuckMonitorRuntime()
+    local monitor = Runtime.stuckMonitor
     monitor.lastPosition = nil
     monitor.lastMovementTime = os.clock()
     monitor.triggered = false
@@ -1809,20 +1562,22 @@ function ResetStuckMonitor(reason)
 end
 
 function ClearStuckMonitor(reason)
-    if Runtime == nil then
+    if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
-    local monitor = GetStuckMonitorRuntime()
-    monitor.consecutiveTriggers = 0
-    monitor.lastRecoveryType = nil
+    Runtime.stuckMonitor.consecutiveTriggers = 0
+    Runtime.stuckMonitor.lastRecoveryType = nil
     ResetStuckMonitor(reason)
 end
 
 local function UpdateStuckMonitorMovement(position)
-    if Runtime == nil then
+    if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
-    local monitor = GetStuckMonitorRuntime()
+    if position == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
     monitor.lastPosition = CloneVector3(position)
     monitor.lastMovementTime = os.clock()
     monitor.consecutiveTriggers = 0
@@ -1831,10 +1586,13 @@ local function UpdateStuckMonitorMovement(position)
 end
 
 local function PrimeStuckMonitorPosition(position)
-    if Runtime == nil then
+    if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
-    local monitor = GetStuckMonitorRuntime()
+    if position == nil then
+        return
+    end
+    local monitor = Runtime.stuckMonitor
     monitor.lastPosition = CloneVector3(position)
     monitor.lastMovementTime = os.clock()
     monitor.triggered = false
@@ -1872,7 +1630,7 @@ local function DistanceBetweenFlat(pos1, pos2)
     return math.sqrt(dx * dx + dz * dz)
 end
 
-function GetAetherytesInTerritory(territoryId)
+local function GetAetherytesInTerritory(territoryId)
     local results = {}
     if territoryId == nil or not (Svc and Svc.AetheryteList) then
         return results
@@ -1885,7 +1643,7 @@ function GetAetherytesInTerritory(territoryId)
     return results
 end
 
-function GetAetheryteName(aetheryte)
+local function GetAetheryteName(aetheryte)
     if aetheryte == nil then
         return nil
     end
@@ -1986,7 +1744,7 @@ local function HandleMountedFateStuck(position)
 end
 
 local function HandleStuckMonitorTrigger(position)
-    local monitor = GetStuckMonitorRuntime()
+    local monitor = Runtime.stuckMonitor
     monitor.lastRestartTime = os.clock()
     monitor.triggered = true
     monitor.consecutiveTriggers = math.min((monitor.consecutiveTriggers or 0) + 1, 2)
@@ -2016,10 +1774,10 @@ local function HandleStuckMonitorTrigger(position)
 end
 
 function UpdateStuckMonitor()
-    if Runtime == nil then
+    if Runtime == nil or Runtime.stuckMonitor == nil then
         return
     end
-    local monitor = GetStuckMonitorRuntime()
+    local monitor = Runtime.stuckMonitor
     if not Settings.enableStuckMonitor then
         if monitor.enabled then
             ClearStuckMonitor("disabled")
@@ -2094,7 +1852,7 @@ function UpdateStuckMonitor()
 
     local playerPos = Entity and Entity.Player and Entity.Player.Position
     if playerPos == nil then
-        ResetStuckMonitor("player unavailable")
+        StuckMonitorLog("player unavailable", true)
         return
     end
 
@@ -2152,8 +1910,6 @@ local TELEPORT_LOCK_TIMEOUT = 180
 local TELEPORT_SUCCESS_COOLDOWN = 2
 local TELEPORT_FAILURE_COOLDOWN = 3
 
---## Travel Core
-
 function TeleportIndicatorsActive()
     if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
         local ok, busy = pcall(IPC.Lifestream.IsBusy)
@@ -2173,57 +1929,54 @@ function TeleportIndicatorsActive()
 end
 
 function AcquireTeleportLock(destName)
-    local travelLock = GetTravelLockRuntime()
     local now = os.clock()
-    if travelLock.active then
-        if (travelLock.nextLog or 0) <= now then
+    if Runtime.teleportLockActive then
+        if (Runtime.nextTeleportLockLog or 0) <= now then
             Dalamud.Log(string.format("[Toolkit Helper] Teleport request for %s deferred; %s already in progress",
                 tostring(destName or "destination"),
-                tostring(travelLock.destination or "another teleport")))
-            travelLock.nextLog = now + 1
+                tostring(Runtime.teleportLockDestination or "another teleport")))
+            Runtime.nextTeleportLockLog = now + 1
         end
         return false
     end
-    local cooldown = travelLock.expires or 0
+    local cooldown = Runtime.teleportLockExpires or 0
     if cooldown > now then
-        if (travelLock.nextLog or 0) <= now then
+        if (Runtime.nextTeleportLockLog or 0) <= now then
             Dalamud.Log(string.format("[Toolkit Helper] Teleport request for %s throttled for %.1fs",
                 tostring(destName or "destination"),
                 cooldown - now))
-            travelLock.nextLog = now + 1
+            Runtime.nextTeleportLockLog = now + 1
         end
         return false
     end
-    travelLock.active = true
-    travelLock.destination = destName
-    travelLock.started = now
-    travelLock.nextLog = 0
+    Runtime.teleportLockActive = true
+    Runtime.teleportLockDestination = destName
+    Runtime.teleportLockStarted = now
+    Runtime.nextTeleportLockLog = 0
     Dalamud.Log(string.format("[Toolkit Helper] Teleport lock acquired for %s", tostring(destName or "destination")))
     return true
 end
 
 function ReleaseTeleportLock(success)
-    local travelLock = GetTravelLockRuntime()
-    travelLock.active = false
-    travelLock.destination = nil
-    travelLock.started = 0
+    Runtime.teleportLockActive = false
+    Runtime.teleportLockDestination = nil
+    Runtime.teleportLockStarted = 0
     local cooldown = success and TELEPORT_SUCCESS_COOLDOWN or TELEPORT_FAILURE_COOLDOWN
-    travelLock.expires = os.clock() + cooldown
+    Runtime.teleportLockExpires = os.clock() + cooldown
 end
 
 function WaitForTeleportIdle(timeout)
-    local travelLock = GetTravelLockRuntime()
     local deadline = os.clock() + (timeout or 10)
     repeat
-        if travelLock.active then
-            local started = travelLock.started or 0
+        if Runtime.teleportLockActive then
+            local started = Runtime.teleportLockStarted or 0
             if started > 0 and os.clock() - started > TELEPORT_LOCK_TIMEOUT then
                 Dalamud.Log("[Toolkit Helper] Teleport lock timed out; forcing release")
                 ReleaseTeleportLock(false)
             end
         end
-        local cooldown = travelLock.expires or 0
-        if not travelLock.active and cooldown <= os.clock() and not TeleportIndicatorsActive() then
+        local cooldown = Runtime.teleportLockExpires or 0
+        if not Runtime.teleportLockActive and cooldown <= os.clock() and not TeleportIndicatorsActive() then
             return true
         end
         yield("/wait 0.1")
@@ -2264,38 +2017,32 @@ function StopToolkitRun(reason)
 end
 
 function EnsureRetainerToolkitStopped(reason)
-    local retainerRuntime = GetRetainerRuntime()
-    if not retainerRuntime.toolkitStopped then
+    if not Runtime.retainerToolkitStopped then
         StopToolkitRun(reason or "retainer pause")
-        retainerRuntime.toolkitStopped = true
+        Runtime.retainerToolkitStopped = true
     end
 end
 
 function ResumeToolkitAfterRetainers(reason)
-    local retainerRuntime = GetRetainerRuntime()
-    if retainerRuntime.toolkitStopped then
-        retainerRuntime.toolkitStopped = false
+    if Runtime.retainerToolkitStopped then
+        Runtime.retainerToolkitStopped = false
         ResumeToolkitRun(reason or "retainer resume")
     end
 end
 
 function EnsureRepairToolkitStopped(reason)
-    local repairRuntime = GetRepairRuntime()
-    if not repairRuntime.toolkitStopped then
+    if not Runtime.repairToolkitStopped then
         StopToolkitRun(reason or "repair start")
-        repairRuntime.toolkitStopped = true
+        Runtime.repairToolkitStopped = true
     end
 end
 
 function ResumeToolkitAfterRepair(reason)
-    local repairRuntime = GetRepairRuntime()
-    if repairRuntime.toolkitStopped then
-        repairRuntime.toolkitStopped = false
+    if Runtime.repairToolkitStopped then
+        Runtime.repairToolkitStopped = false
         ResumeToolkitRun(reason or "repair resume")
     end
 end
-
---## Plugin Integration
 
 function HasPlugin(name)
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
@@ -2326,7 +2073,6 @@ function SetPluginEnabledState(name, enabled)
 end
 
 function EnsureTextAdvanceEnabled()
-    local textAdvanceRuntime = GetTextAdvanceRuntime()
     if not IPC or not IPC.TextAdvance or not IPC.TextAdvance.IsEnabled then
         return
     end
@@ -2336,7 +2082,7 @@ function EnsureTextAdvanceEnabled()
     else
         Dalamud.Log("[Toolkit Helper] Enabling TextAdvance")
         yield("/at y")
-        textAdvanceRuntime.enabledByScript = true
+        Runtime.textAdvanceEnabledByScript = true
     end
     if not IPC.TextAdvance.GetEnableTalkSkip then
         return
@@ -2348,24 +2094,22 @@ function EnsureTextAdvanceEnabled()
 end
 
 function RestoreTextAdvanceState()
-    local textAdvanceRuntime = GetTextAdvanceRuntime()
-    if not textAdvanceRuntime.enabledByScript then
+    if not Runtime.textAdvanceEnabledByScript then
         return
     end
     Dalamud.Log("[Toolkit Helper] Disabling TextAdvance")
     yield("/at n")
-    textAdvanceRuntime.enabledByScript = false
+    Runtime.textAdvanceEnabledByScript = false
 end
 
 function EnsureBossModPreferredState()
-    local bossmodRuntime = GetBossModRuntime()
     local bossModEnabled = GetPluginEnabledState("BossMod")
     local rebornEnabled = GetPluginEnabledState("BossModReborn")
     if bossModEnabled == nil or rebornEnabled == nil then
         return
     end
-    if bossmodRuntime.recordedState == nil then
-        bossmodRuntime.recordedState = {
+    if Runtime.bossmodRecordedState == nil then
+        Runtime.bossmodRecordedState = {
             bossModEnabled = bossModEnabled,
             bossModRebornEnabled = rebornEnabled
         }
@@ -2378,16 +2122,15 @@ function EnsureBossModPreferredState()
         SetPluginEnabledState("BossModReborn", false)
         SetPluginEnabledState("BossMod", true)
         yield("/wait 2")
-        bossmodRuntime.stateChanged = true
+        Runtime.bossmodStateChanged = true
     end
 end
 
 function RestoreBossModPreferredState()
-    local bossmodRuntime = GetBossModRuntime()
-    if not bossmodRuntime.stateChanged or bossmodRuntime.recordedState == nil then
+    if not Runtime.bossmodStateChanged or Runtime.bossmodRecordedState == nil then
         return
     end
-    local original = bossmodRuntime.recordedState
+    local original = Runtime.bossmodRecordedState
     Dalamud.Log("[Toolkit Helper] Restoring BossMod plugin configuration")
     local currentBossMod = GetPluginEnabledState("BossMod")
     if currentBossMod ~= nil and currentBossMod ~= original.bossModEnabled then
@@ -2398,7 +2141,7 @@ function RestoreBossModPreferredState()
         SetPluginEnabledState("BossModReborn", original.bossModRebornEnabled)
     end
     yield("/wait 2")
-    bossmodRuntime.stateChanged = false
+    Runtime.bossmodStateChanged = false
 end
 
 function HasStatusId(statusId)
@@ -2420,6 +2163,33 @@ end
 
 --## Aetheryte & Return Handling
 
+function GetAetherytesInTerritory(territoryId)
+    local aetherytesInZone = {}
+    if Svc.AetheryteList == nil then
+        return aetherytesInZone
+    end
+    for _, aetheryte in ipairs(Svc.AetheryteList) do
+        if aetheryte.TerritoryId == territoryId then
+            table.insert(aetherytesInZone, aetheryte)
+        end
+    end
+    return aetherytesInZone
+end
+
+function GetAetheryteName(aetheryte)
+    if aetheryte == nil or aetheryte.AetheryteData == nil then
+        return ""
+    end
+    local placeName = aetheryte.AetheryteData.Value.PlaceName
+    if placeName ~= nil and placeName.Value ~= nil then
+        local name = placeName.Value.Name:GetText()
+        if name ~= nil then
+            return name
+        end
+    end
+    return ""
+end
+
 function GetAetherytePlaceNameByRowId(rowId)
     local numericId = tonumber(rowId)
     if not numericId then return nil end
@@ -2438,7 +2208,7 @@ end
 function ExtractAetheryteRowId(aetheryte)
     if not aetheryte then return nil end
 
-    local function normalize(value)
+    function normalize(value)
         if value == nil then return nil end
         local valueType = type(value)
         if valueType == "number" then
@@ -2507,63 +2277,15 @@ function GetPreferredReturnAetheryteName(territoryId)
     return nil
 end
 
-function ResolveAetheryteDestinationName(rowId, fallbackName)
-    return GetAetherytePlaceNameByRowId(rowId) or fallbackName
-end
-
-function BuildAetheryteDestination(rowId, territoryId, fallbackName, opts)
-    opts = opts or {}
-    local destination = {
-        name = ResolveAetheryteDestinationName(rowId, fallbackName),
-        aetheryteId = rowId,
-        rowId = rowId,
-        territoryId = territoryId
-    }
-    if opts.isMiniAetheryte == true or opts.isMini == true or opts.mini == true then
-        destination.isMiniAetheryte = true
-        destination.isMini = true
-        destination.mini = true
-        destination.miniAetheryteId = rowId
-        destination.miniAetheryteRowId = rowId
-    end
-    if opts.forceTeleport == true then
-        destination.forceTeleport = true
-    end
-    return destination
-end
-
-function BuildLimsaAetheryteDestination()
-    EnsureSummoningBellAetheryte()
-    return BuildAetheryteDestination(
-        SUMMONING_BELL.aetheryteRowId,
-        SUMMONING_BELL.territoryId,
-        SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks"
-    )
-end
-
 function ClearReturnTarget()
-    local returnTarget = GetReturnTargetRuntime()
-    returnTarget.aetheryteName = nil
-    returnTarget.territoryId = nil
-    returnTarget.aetheryteId = nil
-    returnTarget.destinationTerritoryId = nil
-end
-
-function BuildSavedReturnDestination()
-    local returnTarget = GetReturnTargetRuntime()
-    if returnTarget.aetheryteName == nil then
-        return nil
-    end
-    return BuildAetheryteDestination(
-        returnTarget.aetheryteId,
-        returnTarget.destinationTerritoryId,
-        returnTarget.aetheryteName
-    )
+    Runtime.returnAetheryteName = nil
+    Runtime.returnTerritoryId = nil
+    Runtime.returnAetheryteId = nil
+    Runtime.returnDestinationTerritoryId = nil
 end
 
 function SaveReturnLocationForCurrentTerritory()
-    local returnTarget = GetReturnTargetRuntime()
-    if returnTarget.aetheryteName ~= nil then
+    if Runtime.returnAetheryteName ~= nil then
         return
     end
     local territory = Svc.ClientState.TerritoryType
@@ -2575,24 +2297,27 @@ function SaveReturnLocationForCurrentTerritory()
         Dalamud.Log("[Toolkit Helper] No known aetheryte for territory "..tostring(territory).."; return teleport unavailable")
         return
     else
-        returnTarget.territoryId = territory
-        returnTarget.aetheryteName = preferred.name
-        returnTarget.aetheryteId = preferred.aetheryteId
-        returnTarget.destinationTerritoryId = territory
+        Runtime.returnTerritoryId = territory
+        Runtime.returnAetheryteName = preferred.name
+        Runtime.returnAetheryteId = preferred.aetheryteId
+        Runtime.returnDestinationTerritoryId = territory
         Dalamud.Log(string.format("[Toolkit Helper] Saved return target %s (id=%s) for territory %s", preferred.name, tostring(preferred.aetheryteId), tostring(territory)))
     end
 end
 
 function AttemptReturnToSavedLocation(context)
-    local returnTarget = GetReturnTargetRuntime()
-    local destination = BuildSavedReturnDestination()
-    if destination == nil then
+    if Runtime.returnAetheryteName == nil then
         return false
     end
-    if returnTarget.territoryId ~= nil and returnTarget.territoryId == Svc.ClientState.TerritoryType then
+    if Runtime.returnTerritoryId ~= nil and Runtime.returnTerritoryId == Svc.ClientState.TerritoryType then
         ClearReturnTarget()
         return true
     end
+    local destination = {
+        name = Runtime.returnAetheryteName,
+        aetheryteId = Runtime.returnAetheryteId,
+        territoryId = Runtime.returnDestinationTerritoryId
+    }
     Dalamud.Log("[Toolkit Helper] Attempting to return to "..destination.name..(context and (" ("..context..")") or "").." id="..tostring(destination.aetheryteId))
     local returned = false
     if TeleportTo(destination) then
@@ -2650,28 +2375,11 @@ end
 
 function AcceptTeleportOfferLocation(destinationAetheryte)
     local notification = Addons.GetAddon("_NotificationTelepo")
-    if notification ~= nil and notification.Ready then
-        local location = GetNodeText("_NotificationTelepo", 3, 4)
-        yield("/callback _Notification true 0 16 "..location)
-        yield("/wait 1")
-    end
-
     local yesno = Addons.GetAddon("SelectYesno")
-    if yesno ~= nil and yesno.Ready then
-        local teleportOfferMessage = GetNodeText("SelectYesno", 1, 2)
-        if type(teleportOfferMessage) == "string" then
-            local teleportOfferLocation = teleportOfferMessage:match("Accept Teleport to (.+)%?")
-            if teleportOfferLocation ~= nil then
-                if string.lower(teleportOfferLocation) == string.lower(destinationAetheryte) then
-                    yield("/callback SelectYesno true 0")
-                    return
-                else
-                    Dalamud.Log("[Toolkit Helper] Offer for "..teleportOfferLocation.." and destination "..destinationAetheryte.." differ. Declining teleport.")
-                end
-            end
-            yield("/callback SelectYesno true 2")
-            return
-        end
+    if notification ~= nil and notification.Ready and yesno ~= nil and yesno.Ready then
+        Dalamud.Log("[Toolkit Helper] Accepting party teleport offer"..(destinationAetheryte and (" for "..tostring(destinationAetheryte)) or ""))
+        yield("/callback SelectYesno true 0")
+        return
     end
 end
 
@@ -2685,7 +2393,7 @@ function ResolveDestinationName(dest)
     local id = dest.aetheryteId or dest.rowId or dest.aetheryteRowId
     local miniId = dest.miniAetheryteId or dest.miniRowId or dest.miniAetheryteRowId
 
-    local function tryRow(rowId)
+    function tryRow(rowId)
         if name ~= nil and name ~= "" then return name end
         if rowId == nil then return nil end
         local resolved = GetAetherytePlaceNameByRowId(rowId)
@@ -2720,7 +2428,7 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         return false
     end
 
-    local function WaitForLifestreamBusyState(desiredBusy, timeout)
+    function WaitForLifestreamBusyState(desiredBusy, timeout)
         local deadline = os.clock() + (timeout or 3)
         repeat
             local indicators = TeleportIndicatorsActive()
@@ -2735,25 +2443,24 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         return false
     end
 
-    local function WaitForLifestreamReady(timeout)
+    function WaitForLifestreamReady(timeout)
         return WaitForLifestreamBusyState(false, timeout or 5)
     end
 
-    local function dispatchCall(label, fn)
+    function dispatchCall(label, fn)
         Dalamud.Log(string.format("[Toolkit Helper] %s preparing", label))
         local ready = WaitForLifestreamReady(5)
         if not ready then
             Dalamud.Log("[Toolkit Helper] Lifestream is still busy before "..label.."; delaying attempt")
             yield("/wait 0.5")
         end
-        local travelRuntime = GetTravelRuntime()
-        local sinceLast = os.clock() - (travelRuntime.lastLifestreamCommand or 0)
+        local sinceLast = os.clock() - (Runtime.lastLifestreamCommand or 0)
         if sinceLast < 2 then
             local waitTime = 2 - sinceLast
             Dalamud.Log(string.format("[Toolkit Helper] %s throttling %.3fs", label, waitTime))
             yield(string.format("/wait %.3f", waitTime))
         end
-        travelRuntime.lastLifestreamCommand = os.clock()
+        Runtime.lastLifestreamCommand = os.clock()
         local ok, err = pcall(fn)
         if not ok then
             Dalamud.Log(string.format("[Toolkit Helper] %s error: %s", label, tostring(err)))
@@ -2763,7 +2470,7 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         return true
     end
 
-    local function tryTeleportById()
+    function tryTeleportById()
         if not destId then
             Dalamud.Log("[Toolkit Helper] tryTeleportById skipped: destId missing")
             return false
@@ -2780,7 +2487,7 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         )
     end
 
-    local function tryMiniAethernetTeleport()
+    function tryMiniAethernetTeleport()
         if not isMini then
             Dalamud.Log("[Toolkit Helper] tryMiniAethernetTeleport skipped: not mini destination")
             return false
@@ -2801,7 +2508,7 @@ function ExecuteLifestreamCommand(destName, destId, isMini)
         )
     end
 
-    local function tryTeleportByName()
+    function tryTeleportByName()
         if not destName then
             Dalamud.Log("[Toolkit Helper] tryTeleportByName skipped: no destination name")
             return false
@@ -2880,227 +2587,6 @@ function WaitForTeleportStart(startTerritoryId, expectedTerritoryId, timeout)
     return false
 end
 
-function RunTravelPreflight(request)
-    local label = tostring((request and request.label) or "travel")
-
-    if request == nil or request.waitForTeleportIdle ~= false then
-        if not WaitForTeleportIdle((request and request.teleportIdleTimeout) or 15) then
-            Dalamud.Log((request and request.teleportBusyLog)
-                or string.format("[Toolkit Helper] Travel to %s aborted; teleport channel busy", label))
-            return false
-        end
-    end
-
-    if request == nil or request.requireStationary ~= false then
-        if not WaitForPlayerStationary((request and request.stationaryTimeout) or 5) then
-            return false
-        end
-    end
-
-    if request == nil or request.requireMountStable ~= false then
-        if not WaitForMountStable((request and request.mountStableSeconds) or 2, (request and request.mountStableTimeout) or 10) then
-            Dalamud.Log((request and request.mountStableFailureLog)
-                or string.format("[Toolkit Helper] Mount stability check failed; travel to %s aborted", label))
-            return false
-        end
-    end
-
-    if (request == nil or request.checkCasting ~= false)
-        and Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting]
-    then
-        Dalamud.Log((request and request.castingFailureLog)
-            or string.format("[Toolkit Helper] Travel to %s aborted; character is casting", label))
-        return false
-    end
-
-    if (request == nil or request.checkBetweenAreas ~= false)
-        and Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas]
-    then
-        Dalamud.Log((request and request.betweenAreasFailureLog)
-            or string.format("[Toolkit Helper] Travel to %s aborted; character changing zones", label))
-        return false
-    end
-
-    return true
-end
-
-function WaitForLastTeleportThrottle(timeoutSeconds)
-    local travelRuntime = GetTravelRuntime()
-    local start = os.clock()
-    while Instances ~= nil and Instances.Framework ~= nil and EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - travelRuntime.lastTeleport < 5 do
-        Dalamud.Log("[Toolkit Helper] Too soon since last teleport. Waiting...")
-        yield("/wait 5.001")
-        if os.clock() - start > (timeoutSeconds or 30) then
-            EchoAll("Teleport failed: timeout while waiting to cast")
-            return false
-        end
-    end
-    return true
-end
-
-function DispatchReturnAction()
-    local usedNative = false
-    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
-        local ok, err = pcall(function()
-            Actions.ExecuteGeneralAction(RETURN_GENERAL_ACTION_ID)
-        end)
-        usedNative = ok
-        if not ok then
-            Dalamud.Log("[Toolkit Helper] Failed to execute Return general action: "..tostring(err))
-        end
-    end
-    if not usedNative then
-        Dalamud.Log("[Toolkit Helper] Using /generalaction return fallback")
-        yield("/generalaction return")
-    end
-    return true
-end
-
-function DispatchTravelRequest(request)
-    local method = request and request.method or "lifestream"
-    if method == "return" then
-        return DispatchReturnAction()
-    end
-
-    if method == "lifestream_command" then
-        local command = request and request.command or nil
-        return ExecuteLifestreamCommand(command, nil, false)
-    end
-
-    local destination = request and request.destination or nil
-    local destName = request and request.destName or nil
-    local destId = request and request.destId or nil
-    local isMini = request and request.isMini or false
-    if type(destination) == "table" then
-        destName = destName or destination.name or destination.aetheryteName or destination.destinationName
-        destId = destId or destination.aetheryteId or destination.rowId or destination.aetheryteRowId
-    end
-    return ExecuteLifestreamCommand(destName, destId, isMini)
-end
-
-function ConfirmTravelTerritory(expectedTerritoryId, timeoutSeconds, label)
-    if expectedTerritoryId == nil then
-        return true
-    end
-    local confirmDeadline = os.clock() + (timeoutSeconds or 5)
-    repeat
-        if Svc and Svc.ClientState and Svc.ClientState.TerritoryType == expectedTerritoryId then
-            return true
-        end
-        yield("/wait 0.5")
-    until os.clock() > confirmDeadline
-    Dalamud.Log(string.format("[Toolkit Helper] %s completed but territory %s != expected %s",
-        tostring(label or "travel"),
-        tostring(Svc and Svc.ClientState and Svc.ClientState.TerritoryType),
-        tostring(expectedTerritoryId)))
-    return false
-end
-
-function ExecuteTravelLifecycle(request, startTerritoryId)
-    local expectedTerritoryId = request and request.expectedTerritoryId or nil
-    local label = tostring((request and request.label) or "travel")
-    yield(string.format("/wait %.3f", (request and request.postDispatchWaitSeconds) or 1))
-
-    local success = false
-    if WaitForTeleportStart(startTerritoryId, expectedTerritoryId, (request and request.startTimeoutSeconds) or 8) then
-        success = WaitForTeleportCompletion(expectedTerritoryId, (request and request.completionTimeoutSeconds) or 30, label)
-    elseif request == nil or request.acceptArrivalWithoutStart ~= false then
-        if IsInExpectedTerritory(expectedTerritoryId) then
-            Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached for %s without observable start conditions", label))
-            success = true
-        else
-            Dalamud.Log((request and request.noStartLog)
-                or string.format("[Toolkit Helper] No travel start detected for %s", label))
-        end
-    else
-        Dalamud.Log((request and request.noStartLog)
-            or string.format("[Toolkit Helper] No travel start detected for %s", label))
-    end
-
-    local confirmTimeout = request and request.confirmTerritoryAfterSuccess or nil
-    if success and confirmTimeout ~= nil and confirmTimeout > 0 then
-        success = ConfirmTravelTerritory(expectedTerritoryId, confirmTimeout, label)
-    end
-
-    return success
-end
-
-function ExecuteTravel(request)
-    local label = tostring((request and request.label) or "travel")
-    local expectedTerritoryId = request and request.expectedTerritoryId or nil
-    local forceTeleport = request and request.forceTeleport == true or false
-    local maxAttempts = math.max(1, math.floor((request and request.retries) or 1))
-
-    if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
-        Dalamud.Log(string.format("[Toolkit Helper] Already in destination territory for %s", label))
-        return true
-    end
-
-    for attempt = 1, maxAttempts do
-        Dalamud.Log(string.format("[Toolkit Helper] Travel attempt %d/%d to %s", attempt, maxAttempts, label))
-        if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
-            Dalamud.Log(string.format("[Toolkit Helper] Destination territory already reached before attempt %d for %s", attempt, label))
-            return true
-        end
-
-        if not RunTravelPreflight(request) then
-            return false
-        end
-
-        if request and request.acceptTeleportOffer then
-            AcceptTeleportOfferLocation((request.offerDestinationName or request.destName or label))
-        end
-
-        if request == nil or request.applyLastTeleportThrottle ~= false then
-            if not WaitForLastTeleportThrottle((request and request.lastTeleportThrottleTimeout) or 30) then
-                return false
-            end
-        end
-
-        local lockHeld = false
-        if request == nil or request.useTeleportLock ~= false then
-            if not AcquireTeleportLock(label) then
-                return false
-            end
-            lockHeld = true
-        end
-
-        local startTerritoryId = GetCurrentTerritoryType()
-        local success = false
-        local executed = DispatchTravelRequest(request)
-        if executed then
-            success = ExecuteTravelLifecycle(request, startTerritoryId)
-            if request and request.lifecycleLogPrefix ~= nil then
-                Dalamud.Log(string.format("[Toolkit Helper] %s for %s success=%s", request.lifecycleLogPrefix, label, tostring(success)))
-            end
-        else
-            Dalamud.Log((request and request.dispatchFailureLog)
-                or string.format("[Toolkit Helper] Unable to dispatch travel command for %s", label))
-        end
-
-        if lockHeld then
-            ReleaseTeleportLock(success)
-        end
-
-        if success then
-            return true
-        end
-
-        if attempt < maxAttempts then
-            if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
-                Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached after attempt %d for %s", attempt, label))
-                return true
-            end
-            Dalamud.Log((request and request.retryLog)
-                or string.format("[Toolkit Helper] Travel retry scheduled for %s", label))
-        end
-    end
-
-    Dalamud.Log((request and request.finalFailureLog)
-        or string.format("[Toolkit Helper] Travel to %s failed after %d attempts", label, maxAttempts))
-    return false
-end
-
 function TeleportTo(destination)
     local destName
     local isMini = false
@@ -3120,31 +2606,88 @@ function TeleportTo(destination)
         return false
     end
 
-    return ExecuteTravel({
-        label = tostring(destName),
-        method = "lifestream",
-        destination = destination,
-        destName = destName,
-        destId = destId,
-        isMini = isMini,
-        expectedTerritoryId = expectedTerritoryId,
-        forceTeleport = forceTeleport,
-        retries = 3,
-        acceptTeleportOffer = true,
-        applyLastTeleportThrottle = true,
-        requireStationary = true,
-        requireMountStable = true,
-        checkCasting = true,
-        checkBetweenAreas = true,
-        teleportBusyLog = string.format("[Toolkit Helper] Teleport to %s aborted; teleport channel busy", tostring(destName)),
-        mountStableFailureLog = "[Toolkit Helper] Mount stability check failed; teleport aborted",
-        castingFailureLog = string.format("[Toolkit Helper] Teleport to %s aborted; character is casting", tostring(destName)),
-        betweenAreasFailureLog = string.format("[Toolkit Helper] Teleport to %s aborted; character changing zones", tostring(destName)),
-        noStartLog = string.format("[Toolkit Helper] No teleport start detected for %s; retrying if attempts remain", tostring(destName)),
-        retryLog = string.format("[Toolkit Helper] Teleport retry scheduled for %s", tostring(destName)),
-        finalFailureLog = string.format("[Toolkit Helper] Teleport to %s failed after %d attempts", tostring(destName), 3),
-        lifecycleLogPrefix = "TeleportTo completion"
-    })
+    if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
+        Dalamud.Log(string.format("[Toolkit Helper] Already in destination territory for %s", tostring(destName)))
+        return true
+    end
+
+    local maxAttempts = 3
+    for attempt = 1, maxAttempts do
+        Dalamud.Log(string.format("[Toolkit Helper] Teleport attempt %d/%d to %s", attempt, maxAttempts, tostring(destName)))
+        if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
+            Dalamud.Log(string.format("[Toolkit Helper] Destination territory already reached before attempt %d for %s", attempt, tostring(destName)))
+            return true
+        end
+        if not WaitForTeleportIdle(15) then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; teleport channel busy", tostring(destName)))
+            return false
+        end
+        if not WaitForPlayerStationary(5) then
+            return false
+        end
+        if not WaitForMountStable(2, 10) then
+            Dalamud.Log("[Toolkit Helper] Mount stability check failed; teleport aborted")
+            return false
+        end
+        if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character is casting", tostring(destName)))
+            return false
+        end
+        if Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas] then
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s aborted; character changing zones", tostring(destName)))
+            return false
+        end
+
+        AcceptTeleportOfferLocation(destName)
+        local start = os.clock()
+        local startTerritoryId = GetCurrentTerritoryType()
+
+        while Instances ~= nil and Instances.Framework ~= nil and EorzeaTimeToUnixTime(Instances.Framework.EorzeaTime) - Runtime.lastTeleport < 5 do
+            Dalamud.Log("[Toolkit Helper] Too soon since last teleport. Waiting...")
+            yield("/wait 5.001")
+            if os.clock() - start > 30 then
+                EchoAll("Teleport failed: timeout while waiting to cast")
+                return false
+            end
+        end
+
+        if not AcquireTeleportLock(destName) then
+            return false
+        end
+
+        local executed = ExecuteLifestreamCommand(destName, destId, isMini)
+        local success = false
+        if executed then
+            yield("/wait 1")
+            if WaitForTeleportStart(startTerritoryId, expectedTerritoryId, 8) then
+                success = WaitForTeleportCompletion(expectedTerritoryId, 30, tostring(destName))
+                Dalamud.Log(string.format("[Toolkit Helper] TeleportTo completion for %s success=%s", tostring(destName), tostring(success)))
+            elseif IsInExpectedTerritory(expectedTerritoryId) then
+                Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached for %s without observable start conditions", tostring(destName)))
+                success = true
+            else
+                Dalamud.Log(string.format("[Toolkit Helper] No teleport start detected for %s; retrying if attempts remain", tostring(destName)))
+            end
+        else
+            Dalamud.Log(string.format("[Toolkit Helper] Unable to dispatch teleport command for %s", tostring(destName)))
+        end
+        ReleaseTeleportLock(success)
+
+        if success then
+            return true
+        end
+
+        if attempt < maxAttempts then
+            if not forceTeleport and IsInExpectedTerritory(expectedTerritoryId) then
+                Dalamud.Log(string.format("[Toolkit Helper] Destination territory reached after attempt %d for %s", attempt, tostring(destName)))
+                return true
+            end
+            Dalamud.Log(string.format("[Toolkit Helper] Teleport retry scheduled for %s", tostring(destName)))
+        end
+    end
+
+    Dalamud.Log(string.format("[Toolkit Helper] Teleport to %s failed after %d attempts", tostring(destName), maxAttempts))
+    return false
 end
 
 function IsSolutionNineAetheryte(dest)
@@ -3181,28 +2724,92 @@ function TryReturnToSolutionNine(expectedTerritoryId)
     if not Settings.useReturnToSolutionNine then
         return false
     end
-    return ExecuteTravel({
-        label = "Return (Solution Nine)",
-        method = "return",
-        expectedTerritoryId = expectedTerritoryId,
-        retries = 1,
-        acceptTeleportOffer = false,
-        applyLastTeleportThrottle = false,
-        requireStationary = true,
-        requireMountStable = true,
-        checkCasting = true,
-        checkBetweenAreas = true,
-        teleportBusyLog = "[Toolkit Helper] Return to Solution Nine aborted; teleport channel busy",
-        mountStableFailureLog = "[Toolkit Helper] Mount stability check failed; return aborted",
-        castingFailureLog = "[Toolkit Helper] Return to Solution Nine aborted; character is casting",
-        betweenAreasFailureLog = "[Toolkit Helper] Return to Solution Nine aborted; character changing zones",
-        confirmTerritoryAfterSuccess = 5,
-        lifecycleLogPrefix = "Return to Solution Nine",
-        finalFailureLog = "[Toolkit Helper] Return to Solution Nine success=false"
-    })
+    if not WaitForTeleportIdle(15) then
+        Dalamud.Log("[Toolkit Helper] Return to Solution Nine aborted; teleport channel busy")
+        return false
+    end
+    if not WaitForPlayerStationary(5) then
+        return false
+    end
+    if not WaitForMountStable(2, 10) then
+        Dalamud.Log("[Toolkit Helper] Mount stability check failed; return aborted")
+        return false
+    end
+    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.casting] then
+        Dalamud.Log("[Toolkit Helper] Return to Solution Nine aborted; character is casting")
+        return false
+    end
+    if Svc and Svc.Condition and Svc.Condition[CharacterCondition.betweenAreas] then
+        Dalamud.Log("[Toolkit Helper] Return to Solution Nine aborted; character changing zones")
+        return false
+    end
+    if not AcquireTeleportLock("Return (Solution Nine)") then
+        return false
+    end
+    local lockHeld = true
+    local startTerritoryId = GetCurrentTerritoryType()
+    local usedNative = false
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok, err = pcall(function()
+            Actions.ExecuteGeneralAction(RETURN_GENERAL_ACTION_ID)
+        end)
+        usedNative = ok
+        if not ok then
+            Dalamud.Log("[Toolkit Helper] Failed to execute Return general action: "..tostring(err))
+        end
+    end
+    if not usedNative then
+        Dalamud.Log("[Toolkit Helper] Using /generalaction return fallback")
+        yield("/generalaction return")
+    end
+    yield("/wait 1")
+    local success = false
+    if WaitForTeleportStart(startTerritoryId, expectedTerritoryId, 8) then
+        success = WaitForTeleportCompletion(expectedTerritoryId, 30, "return")
+    elseif expectedTerritoryId ~= nil and GetCurrentTerritoryType() == expectedTerritoryId then
+        success = true
+    end
+    if success and expectedTerritoryId ~= nil then
+        local confirmDeadline = os.clock() + 5
+        repeat
+            if Svc and Svc.ClientState and Svc.ClientState.TerritoryType == expectedTerritoryId then
+                break
+            end
+            yield("/wait 0.5")
+        until os.clock() > confirmDeadline
+        if not (Svc and Svc.ClientState and Svc.ClientState.TerritoryType == expectedTerritoryId) then
+            Dalamud.Log(string.format("[Toolkit Helper] Return completed but territory %s != expected %s",
+                tostring(Svc and Svc.ClientState and Svc.ClientState.TerritoryType),
+                tostring(expectedTerritoryId)))
+            success = false
+        end
+    end
+    if lockHeld then
+        ReleaseTeleportLock(success)
+    end
+    Dalamud.Log(string.format("[Toolkit Helper] Return to Solution Nine success=%s", tostring(success)))
+    return success
 end
 
---## Buddy Helpers
+--## Repair Utilities
+
+function ExecuteRepairGeneralAction()
+    local usedNative = false
+    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
+        local ok, err = pcall(function()
+            Actions.ExecuteGeneralAction(REPAIR_GENERAL_ACTION_ID)
+        end)
+        usedNative = ok
+        if not ok then
+            Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction failed: "..tostring(err))
+        end
+    end
+    if not usedNative then
+        Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction unavailable; falling back to /generalaction command")
+        yield("/generalaction repair")
+    end
+    yield("/wait 0.5")
+end
 
 function GetCurrentChocoboStanceCommand()
     if Instances == nil or Instances.Buddy == nil or Instances.Buddy.CompanionInfo == nil then
@@ -3239,49 +2846,32 @@ function ExecuteBuddyAction(actionId)
 end
 
 function ApplyChocoboStanceIfNeeded()
-    local buddyRuntime = GetBuddyRuntime()
     local now = os.clock()
-    if now < (buddyRuntime.nextChocoboStanceCheck or 0) then
+    if now < (Runtime.nextChocoboStanceCheck or 0) then
         return
     end
-    buddyRuntime.nextChocoboStanceCheck = now + CHOCOBO_STANCE_CHECK_INTERVAL_SECONDS
+    Runtime.nextChocoboStanceCheck = now + CHOCOBO_STANCE_CHECK_INTERVAL_SECONDS
+
+    local desiredCommand = Settings.chocoboStanceActionId
+    if desiredCommand == nil then
+        return
+    end
+
     local currentCommand = GetCurrentChocoboStanceCommand()
-    local desiredAction = Settings.chocoboStanceActionId
-    if desiredAction == nil then
+    if currentCommand == nil or currentCommand == desiredCommand then
         return
     end
-    if currentCommand == desiredAction then
+
+    local ok, err = ExecuteBuddyAction(desiredCommand)
+    if not ok then
+        Dalamud.Log("[Toolkit Helper] Failed to set chocobo stance: "..tostring(err))
         return
     end
-    local success, err = ExecuteBuddyAction(desiredAction)
-    if success then
-        Dalamud.Log("[Toolkit Helper] Applied chocobo stance: "..tostring(Settings.chocoboStance))
-    elseif err ~= nil and ECHO_ALL_LOGS then
-        Dalamud.Log("[Toolkit Helper] Failed to apply chocobo stance: "..tostring(err))
-    end
+
+    EchoAll(string.format("Set chocobo stance to %s", tostring(Settings.chocoboStance)))
 end
 
---## Repair Utilities
-
-function ExecuteRepairGeneralAction()
-    local usedNative = false
-    if Actions ~= nil and Actions.ExecuteGeneralAction ~= nil then
-        local ok, err = pcall(function()
-            Actions.ExecuteGeneralAction(REPAIR_GENERAL_ACTION_ID)
-        end)
-        usedNative = ok
-        if not ok then
-            Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction failed: "..tostring(err))
-        end
-    end
-    if not usedNative then
-        Dalamud.Log("[Toolkit Helper] Actions.ExecuteGeneralAction unavailable; falling back to /generalaction command")
-        yield("/generalaction repair")
-    end
-    yield("/wait 0.5")
-end
-
---## Shared Gating Helpers
+--## Retainer & Runtime Checks
 
 function CurrentCharacterRetainersReady()
     local ok, result = pcall(function()
@@ -3359,20 +2949,19 @@ function ShouldDelayProcessing()
     return false
 end
 
---## Gemstone Helpers
+-- Gemstone helpers
 local SelectedGemstoneEntry = nil
 
 function ResetPurchaseCycleTracking()
     if Runtime == nil then
         return
     end
-    local purchaseLimit = GetGemstonePurchaseLimitRuntime()
-    purchaseLimit.cycleCount = 0
-    purchaseLimit.reached = false
-    purchaseLimit.handled = false
-    purchaseLimit.followUpIssued = false
-    purchaseLimit.deferredFollowUpScript = nil
-    purchaseLimit.deferredEnableMultiMode = false
+    Runtime.purchaseCycleCount = 0
+    Runtime.purchaseLimitReached = false
+    Runtime.purchaseLimitHandled = false
+    Runtime.purchaseLimitFollowUpIssued = false
+    Runtime.deferredFollowUpScript = nil
+    Runtime.deferredEnableMultiMode = false
 end
 
 function GetPurchaseCycleLimit()
@@ -3388,28 +2977,25 @@ function HasReachedPurchaseCycleLimit()
     if limit <= 0 then
         return false
     end
-    local purchaseLimit = GetGemstonePurchaseLimitRuntime()
-    if purchaseLimit.reached then
+    if Runtime.purchaseLimitReached then
         return true
     end
-    local count = purchaseLimit.cycleCount or 0
+    local count = Runtime.purchaseCycleCount or 0
     return count >= limit
 end
 
 function RegisterGemstonePurchaseCycle()
-    local purchaseLimit = GetGemstonePurchaseLimitRuntime()
-    purchaseLimit.cycleCount = (purchaseLimit.cycleCount or 0) + 1
+    Runtime.purchaseCycleCount = (Runtime.purchaseCycleCount or 0) + 1
     local limit = GetPurchaseCycleLimit()
-    local hitLimit = limit > 0 and purchaseLimit.cycleCount >= limit
+    local hitLimit = limit > 0 and Runtime.purchaseCycleCount >= limit
     if hitLimit then
-        purchaseLimit.reached = true
+        Runtime.purchaseLimitReached = true
     end
-    return purchaseLimit.cycleCount, limit, hitLimit
+    return Runtime.purchaseCycleCount, limit, hitLimit
 end
 
 function RunFollowUpScript(scriptName)
-    local purchaseLimit = GetGemstonePurchaseLimitRuntime()
-    if purchaseLimit.followUpIssued then
+    if Runtime.purchaseLimitFollowUpIssued then
         return false
     end
     if type(scriptName) ~= "string" then
@@ -3422,26 +3008,25 @@ function RunFollowUpScript(scriptName)
     local sanitized = trimmed:gsub('"', '\\"')
     Dalamud.Log(string.format("[Toolkit Helper] Running follow-up script '%s'", trimmed))
     yield(string.format('/snd run "%s"', sanitized))
-    purchaseLimit.followUpIssued = true
+    Runtime.purchaseLimitFollowUpIssued = true
     return true
 end
 
 function HandlePurchaseLimitReached()
-    local purchaseLimit = GetGemstonePurchaseLimitRuntime()
-    if purchaseLimit.handled then
+    if Runtime.purchaseLimitHandled then
         return
     end
-    purchaseLimit.reached = true
-    purchaseLimit.handled = true
-    local count = purchaseLimit.cycleCount or 0
+    Runtime.purchaseLimitReached = true
+    Runtime.purchaseLimitHandled = true
+    local count = Runtime.purchaseCycleCount or 0
     local limit = GetPurchaseCycleLimit()
     Dalamud.Log(string.format("[Toolkit Helper] Gemstone purchase limit reached (%d/%d)", count, limit))
     EchoAll("Gemstone purchase limit reached; stopping Toolkit Helper")
     local followUp = Settings.purchaseLimitFollowUp or ""
     if followUp ~= nil and followUp ~= "" then
-        purchaseLimit.deferredFollowUpScript = followUp
+        Runtime.deferredFollowUpScript = followUp
     elseif Settings.enableMultiModeOnLimit then
-        purchaseLimit.deferredEnableMultiMode = true
+        Runtime.deferredEnableMultiMode = true
     end
     StopToolkitRun("purchase limit reached")
     Runtime.stopScript = true
@@ -3487,64 +3072,60 @@ function GetRequiredDarkMatterCount(needsCount)
 end
 
 function ResetRepairActionState()
-    local repairRuntime = GetRepairRuntime()
-    repairRuntime.action.pending = false
-    repairRuntime.action.startedAt = 0
-    repairRuntime.action.conditionSeen = false
-    repairRuntime.action.retryCount = 0
+    Runtime.repairActionPending = false
+    Runtime.repairActionStartedAt = 0
+    Runtime.repairConditionSeen = false
+    Runtime.repairRetryCount = 0
 end
 
 function BeginRepairActionAttempt()
-    local repairRuntime = GetRepairRuntime()
-    repairRuntime.action.pending = true
-    repairRuntime.action.startedAt = os.clock()
-    repairRuntime.action.conditionSeen = false
+    Runtime.repairActionPending = true
+    Runtime.repairActionStartedAt = os.clock()
+    Runtime.repairConditionSeen = false
 end
 
 function HandlePendingRepairAction(maxWaitSeconds, maxRetries)
-    local repairRuntime = GetRepairRuntime()
-    local repairAction = repairRuntime.action
     maxWaitSeconds = maxWaitSeconds or 5
     maxRetries = maxRetries or 2
 
-    if not repairAction.pending then
+    if not Runtime.repairActionPending then
         return false, false
     end
 
     if Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] then
-        if not repairAction.conditionSeen then
+        if not Runtime.repairConditionSeen then
             Dalamud.Log("[Toolkit Helper] Repair condition detected; waiting for repair to finish")
-            repairAction.conditionSeen = true
+            Runtime.repairConditionSeen = true
         end
         return true, false
     end
 
-    if repairAction.conditionSeen then
+    if Runtime.repairConditionSeen then
         Dalamud.Log("[Toolkit Helper] Repair condition cleared")
-        repairAction.pending = false
-        repairAction.startedAt = 0
-        repairAction.conditionSeen = false
-        repairAction.retryCount = 0
+        Runtime.repairActionPending = false
+        Runtime.repairActionStartedAt = 0
+        Runtime.repairConditionSeen = false
+        Runtime.repairRetryCount = 0
         return false, true
     end
 
-    if (os.clock() - (repairAction.startedAt or 0)) < maxWaitSeconds then
+    if (os.clock() - (Runtime.repairActionStartedAt or 0)) < maxWaitSeconds then
         return true, false
     end
 
-    repairAction.retryCount = (repairAction.retryCount or 0) + 1
-    if repairAction.retryCount >= maxRetries then
-        Dalamud.Log(string.format("[Toolkit Helper] Repair condition timeout after %d attempts; falling back to NPC repair", repairAction.retryCount))
-        repairAction.pending = false
-        repairAction.startedAt = 0
-        repairAction.conditionSeen = false
-        repairAction.retryCount = 0
-        repairRuntime.useNpcFallback = true
+    Runtime.repairRetryCount = (Runtime.repairRetryCount or 0) + 1
+    if Runtime.repairRetryCount >= maxRetries then
+        Dalamud.Log(string.format("[Toolkit Helper] Repair condition timeout after %d attempts; falling back to NPC repair", Runtime.repairRetryCount))
+        Runtime.repairActionPending = false
+        Runtime.repairActionStartedAt = 0
+        Runtime.repairConditionSeen = false
+        Runtime.repairRetryCount = 0
+        Runtime.repairUseNpcFallback = true
         return false, false
     end
 
-    Dalamud.Log(string.format("[Toolkit Helper] Repair condition timeout; retrying repair callback (%d/%d)", repairAction.retryCount, maxRetries))
-    repairAction.startedAt = os.clock()
+    Dalamud.Log(string.format("[Toolkit Helper] Repair condition timeout; retrying repair callback (%d/%d)", Runtime.repairRetryCount, maxRetries))
+    Runtime.repairActionStartedAt = os.clock()
     return false, false
 end
 
@@ -3619,7 +3200,6 @@ function DetermineToolkitRunCount()
 end
 
 function _ResumeToolkitRun(reason)
-    local lifecycle = GetLifecycleRuntime()
     local runs = DetermineToolkitRunCount()
     local suffix = ""
     if reason ~= nil and reason ~= "" then
@@ -3627,19 +3207,19 @@ function _ResumeToolkitRun(reason)
     end
     Dalamud.Log(string.format("[Toolkit Helper] Issuing /vfate run %d%s", runs, suffix))
     yield(string.format("/vfate run %d", runs))
-    lifecycle.initialToolkitStarted = true
+    Runtime.initialToolkitStarted = true
 end
 
 ResumeToolkitRun = _ResumeToolkitRun
 
 
 function IssueToolkitGemstoneRun(runCount, goal)
-    local gemstoneMaintenance = GetGemstoneMaintenanceRuntime()
     local count = math.max(1, runCount)
     local gemstoneGoal = goal or Settings.gemstoneTarget or 0
     Dalamud.Log(string.format("[Toolkit Helper] Issuing /vfate run %d to reach %d gemstones", count, gemstoneGoal))
     yield(string.format("/vfate run %d", count))
-    gemstoneMaintenance.pendingGoal = gemstoneGoal
+    Runtime.pendingGemstoneGoal = gemstoneGoal
+    Runtime.gemstoneRunIssuedAt = os.clock()
 end
 
 function WaitForGemstoneGoal(goal)
@@ -3700,19 +3280,21 @@ function EnsureGemstoneSelection()
     entry.localizedItemName = GetItemNameByRowId(entry.itemId) or token
     entry.vendorLocalizedName = GetNpcNameByRowId(entry.vendorId) or entry.vendorName
     if entry.aetheryte then
-        entry.aetheryteTeleport = BuildAetheryteDestination(
-            entry.aetheryte.rowId,
-            entry.territoryId,
-            entry.aetheryte.name
-        )
+        local aethName = GetAetherytePlaceNameByRowId(entry.aetheryte.rowId) or entry.aetheryte.name
+        entry.aetheryteTeleport = {
+            aetheryteRowId = entry.aetheryte.rowId,
+            name = aethName,
+            aetheryteId = entry.aetheryte.rowId
+        }
     end
     if entry.miniAetheryte then
-        entry.miniAetheryteTeleport = BuildAetheryteDestination(
-            entry.miniAetheryte.rowId,
-            entry.territoryId,
-            entry.miniAetheryte.name,
-            { isMiniAetheryte = true }
-        )
+        local miniName = GetAetherytePlaceNameByRowId(entry.miniAetheryte.rowId) or entry.miniAetheryte.name
+        entry.miniAetheryteTeleport = {
+            aetheryteRowId = entry.miniAetheryte.rowId,
+            name = miniName,
+            isMiniAetheryte = true,
+            aetheryteId = entry.miniAetheryte.rowId
+        }
     end
     if Settings.gemstoneTarget < entry.price then
         Settings.gemstoneTarget = entry.price
@@ -3723,14 +3305,13 @@ function EnsureGemstoneSelection()
 end
 
 function ShouldExchangeGemstones()
-    local gemstoneMaintenance = GetGemstoneMaintenanceRuntime()
     if not Settings.exchangeGemstones then
         return false
     end
     if HasReachedPurchaseCycleLimit() then
         return false
     end
-    if gemstoneMaintenance.pendingGoal ~= nil then
+    if Runtime.pendingGemstoneGoal ~= nil then
         return false
     end
     local target = Settings.gemstoneTarget or 0
@@ -3761,12 +3342,14 @@ function MoveWithinLimsaTarget(targetPos)
     end
     if GetDistanceToPoint(targetPos) > (DistanceBetween(HAWKERS_ALLEY_POSITION, targetPos) + 10) then
         Dalamud.Log("[Toolkit Helper] Using mini aetheryte to reach Limsa vendor")
-        local miniDest = BuildAetheryteDestination(
-            HAWKERS_MINI_AETHERYTE_ID,
-            SUMMONING_BELL.territoryId,
-            "Hawkers' Alley",
-            { isMiniAetheryte = true }
-        )
+        local miniDest = {
+            name = "Hawkers' Alley",
+            isMiniAetheryte = true,
+            isMini = true,
+            mini = true,
+            aetheryteId = HAWKERS_MINI_AETHERYTE_ID,
+            miniAetheryteId = HAWKERS_MINI_AETHERYTE_ID
+        }
         local teleported = TeleportTo(miniDest)
         if not teleported then
             Dalamud.Log("[Toolkit Helper] Mini aetheryte teleport failed; will retry shortly")
@@ -3895,7 +3478,6 @@ function EnsureGemstoneShopOpen(entry)
 end
 
 function PurchaseGemstoneItem(entry, shop)
-    local gemstoneMaintenance = GetGemstoneMaintenanceRuntime()
     local gemstoneCount = GetBicolorGemCount()
     local quantity = math.floor(gemstoneCount / entry.price)
     if quantity <= 0 then
@@ -3911,7 +3493,7 @@ function PurchaseGemstoneItem(entry, shop)
         yield("/callback SelectYesno true 0")
         WaitForAddonClosed("SelectYesno", 3)
     end
-    gemstoneMaintenance.lastCheck = 0
+    Runtime.lastGemstoneCheck = 0
     yield("/wait 0.3")
     yield("/callback ShopExchangeCurrency true -1")
     WaitForAddonClosed("ShopExchangeCurrency", 3)
@@ -3919,21 +3501,19 @@ function PurchaseGemstoneItem(entry, shop)
 end
 
 function ResetExchangeState()
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
-    exchangeRuntime.inProgress = false
-    exchangeRuntime.started = false
-    exchangeRuntime.usedMiniTeleport = false
-    exchangeRuntime.delay.active = false
-    exchangeRuntime.delay.lastLog = 0
+    Runtime.exchangeInProgress = false
+    Runtime.exchangeStarted = false
+    Runtime.usedMiniTeleport = false
+    Runtime.exchangeDelayActive = false
+    Runtime.lastExchangeDelayLog = 0
 end
 
 function FinishGemstoneExchange(reason, options)
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
     options = options or {}
     local suppressResume = options.suppressResume == true
     local skipReturnTeleport = options.skipReturnTeleport == true
     ResetExchangeState()
-    exchangeRuntime.nextCheck = os.clock() + 30
+    Runtime.nextExchangeCheck = os.clock() + 30
     if reason then
         Dalamud.Log("[Toolkit Helper] "..reason)
     end
@@ -3947,664 +3527,20 @@ function FinishGemstoneExchange(reason, options)
 end
 
 function FinishRepairWorkflow(reason)
-    local repairRuntime = GetRepairRuntime()
     if reason then
         Dalamud.Log("[Toolkit Helper] "..reason)
     end
     ResetRepairActionState()
-    repairRuntime.useNpcFallback = false
-    repairRuntime.nextCheck = os.clock() + 120
+    Runtime.repairUseNpcFallback = false
+    Runtime.pendingRepair = false
+    Runtime.nextRepairCheck = os.clock() + 120
     AttemptReturnToSavedLocation("repair workflow")
     ResumeToolkitAfterRepair("repair workflow complete")
     ChangeState(CharacterState.idle, "Idle")
 end
 
-function ClearPendingGemstoneMaintenance()
-    local gemstoneMaintenance = GetGemstoneMaintenanceRuntime()
-    gemstoneMaintenance.pendingGoal = nil
-end
-
-function EnterRetainerProcessingFromMaintenance()
-    Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for retainer processing")
-    ClearPendingGemstoneMaintenance()
-    ChangeState(CharacterState.processRetainers, "ProcessRetainers")
-end
-
-function EnterRepairFromMaintenance()
-    Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for repairs")
-    ClearPendingGemstoneMaintenance()
-    ChangeState(CharacterState.repairGear, "RepairGear")
-end
-
-function FinishMaintainGemstonesToIdle(reason, stopToolkitReason)
-    if reason then
-        Dalamud.Log("[Toolkit Helper] "..reason)
-    end
-    if stopToolkitReason then
-        StopToolkitRun(stopToolkitReason)
-    end
-    ClearPendingGemstoneMaintenance()
-    ChangeState(CharacterState.idle, "Idle")
-end
-
-function HandleMaintainGemstoneWaitResult(target, reached, interrupt)
-    if reached == true then
-        FinishMaintainGemstonesToIdle(
-            string.format("Gemstone goal of %d reached (current=%d)", target, GetBicolorGemCount()),
-            "gemstone goal reached"
-        )
-        return
-    end
-
-    if interrupt == "repair" then
-        Dalamud.Log("[Toolkit Helper] Stopping gemstone run to handle repairs")
-        StopToolkitRun("repair priority")
-        ClearPendingGemstoneMaintenance()
-        ChangeState(CharacterState.repairGear, "RepairGear")
-        return
-    end
-
-    if interrupt == "retainer" then
-        Dalamud.Log("[Toolkit Helper] Stopping gemstone run to process retainers")
-        StopToolkitRun("retainer priority")
-        ClearPendingGemstoneMaintenance()
-        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
-        return
-    end
-
-    FinishMaintainGemstonesToIdle(
-        string.format("Timed out waiting for gemstone goal (%d). Current=%d", target, GetBicolorGemCount()),
-        "gemstone goal timeout"
-    )
-end
-
-function HandleIdleRetainerCheck(now)
-    local retainerRuntime = GetRetainerRuntime()
-    if not Settings.pauseRetainers or now < retainerRuntime.nextCheck then
-        return false
-    end
-
-    retainerRuntime.nextCheck = now + RETAINER_CHECK_INTERVAL_SECONDS
-    if not ReadyToProcess() then
-        return false
-    end
-
-    local delay, reason, pauseToolkit, retryInterval = ShouldDelayProcessing()
-    if delay then
-        if pauseToolkit then
-            EnsureRetainerToolkitStopped("retainer delay: "..tostring(reason))
-        end
-        if retryInterval ~= nil then
-            retainerRuntime.nextCheck = os.clock() + retryInterval
-        end
-        Dalamud.Log("[Toolkit Helper] Ventures ready but delaying retainer processing because "..reason)
-        return true
-    end
-
-    Dalamud.Log("[Toolkit Helper] Detected ventures ready and sufficient inventory space; entering ProcessRetainers state")
-    ChangeState(CharacterState.processRetainers, "ProcessRetainers")
-    return true
-end
-
-function HandleIdleRepairCheck()
-    local repairRuntime = GetRepairRuntime()
-    local repairThreshold = Settings.repairThreshold or 0
-    if repairThreshold <= 0 then
-        return false
-    end
-
-    local nowCheck = os.clock()
-    if nowCheck < (repairRuntime.nextCheck or 0) then
-        return false
-    end
-
-    repairRuntime.nextCheck = nowCheck + 30
-    local shouldRepair, repairCount = ShouldRepairNow()
-    if shouldRepair then
-        Dalamud.Log(string.format("[Toolkit Helper] Repair check: %d items at/below %d%% durability", repairCount or 0, repairThreshold))
-        Dalamud.Log("[Toolkit Helper] Durability threshold reached; entering RepairGear state")
-        ChangeState(CharacterState.repairGear, "RepairGear")
-        return true
-    end
-
-    if ECHO_ALL_LOGS then
-        Dalamud.Log(string.format("[Toolkit Helper] Repair check: no items below %d%%", repairThreshold))
-    end
-    return false
-end
-
-function HandleIdleExchangeCheck()
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
-    if not Settings.exchangeGemstones then
-        return false
-    end
-
-    if exchangeRuntime.inProgress then
-        ChangeState(CharacterState.exchangeGemstones)
-        return true
-    end
-
-    if os.clock() < (exchangeRuntime.nextCheck or 0) or not ShouldExchangeGemstones() then
-        return false
-    end
-
-    if EnsureGemstoneSelection() then
-        exchangeRuntime.inProgress = true
-        exchangeRuntime.started = false
-        exchangeRuntime.usedMiniTeleport = false
-        Dalamud.Log("[Toolkit Helper] Gemstone threshold met; entering ExchangeGemstones state")
-        ChangeState(CharacterState.exchangeGemstones, "ExchangeGemstones")
-        return true
-    end
-
-    return false
-end
-
-function HandleIdleGemstoneMaintenanceCheck()
-    local gemstoneMaintenance = GetGemstoneMaintenanceRuntime()
-    if not Settings.maintainGemstones or gemstoneMaintenance.pendingGoal ~= nil then
-        return false
-    end
-
-    if os.clock() < gemstoneMaintenance.lastCheck then
-        return false
-    end
-
-    gemstoneMaintenance.lastCheck = os.clock() + 30
-    if not NeedsGemstones() then
-        return false
-    end
-
-    local delay, reason = ShouldDelayProcessing()
-    if delay then
-        Dalamud.Log("[Toolkit Helper] Need gemstones but delaying because "..reason)
-        return true
-    end
-
-    Dalamud.Log("[Toolkit Helper] Gemstones below target; entering MaintainGemstones state")
-    ChangeState(CharacterState.maintainGemstones, "MaintainGemstones")
-    return true
-end
-
-function HandleRetainerFeatureDisabled()
-    if Settings.pauseRetainers then
-        return true
-    end
-    ChangeState(CharacterState.idle)
-    ResumeToolkitAfterRetainers("retainer feature disabled")
-    return false
-end
-
-function HandleRetainerWorkflowDelay()
-    local retainerRuntime = GetRetainerRuntime()
-    local delay, reason, pauseToolkit, retryInterval = ShouldDelayProcessing()
-    if not delay then
-        return false
-    end
-    if pauseToolkit then
-        EnsureRetainerToolkitStopped("retainer abort delay: "..tostring(reason))
-    end
-    if retryInterval ~= nil then
-        retainerRuntime.nextCheck = os.clock() + retryInterval
-    end
-    Dalamud.Log("[Toolkit Helper] Abort ProcessRetainers due to "..reason.."; returning to idle")
-    ChangeState(CharacterState.idle)
-    ResumeToolkitAfterRetainers("retainer delay abort")
-    return true
-end
-
-function HandleRetainerWorkflowCompletion()
-    if ReadyToProcess() then
-        return false
-    end
-
-    local retainerList = Addons.GetAddon("RetainerList")
-    if retainerList ~= nil and retainerList.Ready then
-        if Settings.closeRetainerList ~= false then
-            Dalamud.Log("[Toolkit Helper] Closing RetainerList addon")
-            yield("/callback RetainerList true -1")
-            return true
-        else
-            Dalamud.Log("[Toolkit Helper] Leaving RetainerList open per configuration")
-        end
-    end
-
-    if GetReturnTargetRuntime().aetheryteName ~= nil then
-        if Svc.ClientState.TerritoryType == SUMMONING_BELL.territoryId and not Svc.Condition[CharacterCondition.occupiedSummoningBell] then
-            if AttemptReturnToSavedLocation("retainer workflow") then
-                ResumeToolkitAfterRetainers("resuming after retainer teleport")
-                return true
-            end
-        elseif Svc.ClientState.TerritoryType ~= SUMMONING_BELL.territoryId then
-            ResumeToolkitAfterRetainers("retainer return aetheryte cleared")
-            ClearReturnTarget()
-        end
-    end
-
-    if not Svc.Condition[CharacterCondition.occupiedSummoningBell] then
-        ChangeState(CharacterState.idle, "Idle")
-        ResumeToolkitAfterRetainers("retainer processing complete")
-    end
-    return true
-end
-
-function EnsureAtSummoningBellTerritory()
-    if Svc.ClientState.TerritoryType == SUMMONING_BELL.territoryId then
-        return true
-    end
-    SaveReturnLocationForCurrentTerritory()
-    EnsureRetainerToolkitStopped("retainer teleport to Limsa")
-    StopVnav()
-    local limsaDestination = BuildLimsaAetheryteDestination()
-    if TeleportTo(limsaDestination) then
-        EchoAll("Teleporting to "..limsaDestination.name)
-        Dalamud.Log("[Toolkit Helper] Teleporting to "..limsaDestination.name.." for retainer processing")
-    end
-    return false
-end
-
-function MoveToSummoningBellIfNeeded()
-    if GetDistanceToPoint(SUMMONING_BELL.position) <= 4.5 then
-        return true
-    end
-    IPC.vnavmesh.PathfindAndMoveTo(SUMMONING_BELL.position, false)
-    return false
-end
-
-function OpenRetainerBellAndHandOffToAutoRetainer()
-    if Svc.Condition[CharacterCondition.occupiedSummoningBell] then
-        return true
-    end
-    if not InteractWithSummoningBell() then
-        return false
-    end
-    local retainerList = WaitForAddonReady("RetainerList", 5)
-    if retainerList ~= nil then
-        yield("/ays e")
-        EchoAll("Processing retainers")
-        Dalamud.Log("[Toolkit Helper] Handed control to AutoRetainer via /ays e")
-        yield("/wait 1")
-    end
-    return true
-end
-
-function HandleExchangeDisabledOrLimitExit()
-    if not Settings.exchangeGemstones then
-        ResetExchangeState()
-        ChangeState(CharacterState.idle)
-        return false
-    end
-
-    if HasReachedPurchaseCycleLimit() then
-        ResetExchangeState()
-        ChangeState(CharacterState.idle)
-        HandlePurchaseLimitReached()
-        return false
-    end
-
-    return true
-end
-
-function HandleExchangeInterruptions()
-    if ShouldProcessRetainersNow() then
-        Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for retainer processing")
-        ResetExchangeState()
-        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
-        return true
-    end
-
-    if ShouldRepairNow() then
-        Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for repairs")
-        ResetExchangeState()
-        ChangeState(CharacterState.repairGear, "RepairGear")
-        return true
-    end
-
-    return false
-end
-
-function HandleExchangeSelectionGuards()
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
-    if not EnsureGemstoneSelection() then
-        ResetExchangeState()
-        exchangeRuntime.nextCheck = os.clock() + 60
-        ResumeToolkitRun("gemstone exchange unavailable")
-        ChangeState(CharacterState.idle)
-        return false
-    end
-
-    if not ShouldExchangeGemstones() then
-        ResetExchangeState()
-        ChangeState(CharacterState.idle)
-        return false
-    end
-
-    return true
-end
-
-function HandleExchangeDelayGate()
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
-    local delayRuntime = exchangeRuntime.delay
-    local delay, reason, pauseToolkit = ShouldDelayProcessing()
-    if delay then
-        if pauseToolkit then
-            StopToolkitRun("gemstone exchange delay: "..tostring(reason))
-            delayRuntime.active = false
-        end
-        if not pauseToolkit and not delayRuntime.active then
-            ResumeToolkitRun("exchange delay: "..tostring(reason))
-            delayRuntime.active = true
-        end
-        local now = os.clock()
-        if now >= (delayRuntime.lastLog or 0) then
-            Dalamud.Log("[Toolkit Helper] Gemstone exchange waiting because "..tostring(reason))
-            delayRuntime.lastLog = now + 5
-        end
-        return false
-    end
-
-    if delayRuntime.active then
-        StopToolkitRun("gemstone exchange delay cleared")
-        delayRuntime.active = false
-    end
-
-    return true
-end
-
-function BeginExchangeWorkflowSession()
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
-    if exchangeRuntime.started then
-        return
-    end
-    SaveReturnLocationForCurrentTerritory()
-    StopToolkitRun("gemstone exchange start")
-    exchangeRuntime.started = true
-end
-
-function ResolveSelectedExchangeEntry()
-    local entry = SelectedGemstoneEntry
-    if entry ~= nil then
-        return entry
-    end
-    ResetExchangeState()
-    ResumeToolkitRun("gemstone entry missing")
-    ChangeState(CharacterState.idle)
-    return nil
-end
-
-function EnsureAtExchangeTerritory(entry)
-    if Svc.ClientState.TerritoryType == entry.territoryId then
-        return true
-    end
-    if entry.aetheryteTeleport ~= nil then
-        if ShouldUseReturnForSolutionNine(entry) then
-            local returned = TryReturnToSolutionNine(entry.territoryId)
-            if returned then
-                return false
-            else
-                Dalamud.Log("[Toolkit Helper] Return to Solution Nine failed; falling back to teleport")
-            end
-        end
-        TeleportTo(entry.aetheryteTeleport)
-    end
-    return false
-end
-
-function EnsureAtExchangeVendorApproach(entry)
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
-    if entry.miniAetheryteTeleport and not exchangeRuntime.usedMiniTeleport then
-        TeleportTo(entry.miniAetheryteTeleport)
-        exchangeRuntime.usedMiniTeleport = true
-        return false
-    end
-
-    local targetPosition = entry.position
-    local stopDistance = 4.5
-    if entry.vendorId == GADFRID_VENDOR_ID then
-        targetPosition = GADFRID_POSITION
-        stopDistance = 5.5
-    end
-
-    return MoveNearPosition(targetPosition, stopDistance)
-end
-
-function ExecuteExchangePurchase(entry)
-    local shop = EnsureGemstoneShopOpen(entry)
-    if not shop then
-        return false, nil
-    end
-
-    return PurchaseGemstoneItem(entry, shop)
-end
-
-function FinalizeExchangePurchase(entry)
-    local count, limit, hitLimit = RegisterGemstonePurchaseCycle()
-    local completionMessage = string.format("Completed gemstone exchange #%d for %s", count or 0, entry.localizedItemName)
-    if hitLimit then
-        FinishGemstoneExchange(
-            completionMessage.." (purchase limit reached)",
-            { suppressResume = true, skipReturnTeleport = true }
-        )
-        HandlePurchaseLimitReached()
-        return true
-    end
-
-    FinishGemstoneExchange(completionMessage)
-    return true
-end
-
-function BuildRepairSnapshot()
-    local snapshot = {}
-    snapshot.threshold = Settings.repairThreshold or 0
-    snapshot.needsRepair = Inventory.GetItemsInNeedOfRepairs(snapshot.threshold)
-    snapshot.needsCount = snapshot.needsRepair and snapshot.needsRepair.Count or 0
-    snapshot.darkMatterCount = GetDarkMatterCount()
-    snapshot.requiredDarkMatter = GetRequiredDarkMatterCount(snapshot.needsCount)
-    return snapshot
-end
-
-function HandleRepairDisabled(snapshot)
-    local repairRuntime = GetRepairRuntime()
-    if (snapshot and snapshot.threshold or 0) > 0 then
-        return false
-    end
-    ResetRepairActionState()
-    repairRuntime.useNpcFallback = false
-    ResumeToolkitAfterRepair("repair disabled")
-    ChangeState(CharacterState.idle)
-    return true
-end
-
-function HandleRepairConfirmationPrompt()
-    local yesno = Addons.GetAddon("SelectYesno")
-    if yesno == nil or not yesno.Ready then
-        return false
-    end
-    Dalamud.Log("[Toolkit Helper] Confirming repair prompt")
-    yield("/callback SelectYesno true 0")
-    WaitForAddonClosed("SelectYesno", 3)
-    yield("/wait 0.5")
-    return true
-end
-
-function HandleOpenRepairAddon(snapshot)
-    local repairRuntime = GetRepairRuntime()
-    local repairAddon = Addons.GetAddon("Repair")
-    if repairAddon == nil or not repairAddon.Ready then
-        return false
-    end
-
-    if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] then
-        Dalamud.Log("[Toolkit Helper] Mount detected while repair addon open; closing and retrying")
-        CloseAddonIfMounted("Repair")
-        ResetRepairActionState()
-        return true
-    end
-
-    if snapshot.needsCount == nil or snapshot.needsCount == 0 then
-        ResetRepairActionState()
-        Dalamud.Log("[Toolkit Helper] Repairs complete; closing repair menu")
-        yield("/callback Repair true -1")
-        WaitForAddonClosed("Repair", 3)
-        FinishRepairWorkflow("repair menu closed")
-        return true
-    end
-
-    if repairRuntime.useNpcFallback then
-        Dalamud.Log("[Toolkit Helper] Repair menu open; issuing repair callback")
-        yield("/callback Repair true 0")
-        local confirmAddon = WaitForAddonVisible("SelectYesno", 3)
-        if confirmAddon ~= nil and confirmAddon.Ready then
-            Dalamud.Log("[Toolkit Helper] Confirming repair after repair callback")
-            yield("/callback SelectYesno true 0")
-            WaitForAddonClosed("SelectYesno", 3)
-            yield("/wait 0.5")
-        else
-            Dalamud.Log("[Toolkit Helper] Repair confirmation did not appear; retrying")
-        end
-        return true
-    end
-
-    local waitingOnRepair, repairFinished = HandlePendingRepairAction(5, 2)
-    if waitingOnRepair then
-        if repairRuntime.action.conditionSeen then
-            yield("/wait 0.5")
-        end
-        return true
-    end
-    if repairRuntime.useNpcFallback then
-        Dalamud.Log("[Toolkit Helper] Closing self-repair menu before NPC fallback")
-        yield("/callback Repair true -1")
-        WaitForAddonClosed("Repair", 3)
-        return true
-    end
-    if repairFinished then
-        yield("/wait 0.5")
-        return true
-    end
-
-    Dalamud.Log("[Toolkit Helper] Repair menu open; issuing repair callback")
-    yield("/callback Repair true 0")
-    BeginRepairActionAttempt()
-    return true
-end
-
-function PrepareRepairWorkflow(snapshot)
-    if snapshot.needsCount == nil or snapshot.needsCount == 0 then
-        FinishRepairWorkflow("durability restored")
-        return false
-    end
-
-    EnsureRepairToolkitStopped("repair start")
-    SaveReturnLocationForCurrentTerritory()
-    return true
-end
-
-function HandleRepairBusyOrVendorState(snapshot)
-    if Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] then
-        Dalamud.Log("[Toolkit Helper] Repair UI indicates character is busy repairing; waiting")
-        yield("/wait 1")
-        return true
-    end
-
-    local shopAddon = Addons.GetAddon("Shop")
-    if shopAddon ~= nil and shopAddon.Ready and snapshot.darkMatterCount >= snapshot.requiredDarkMatter then
-        Dalamud.Log("[Toolkit Helper] Closing vendor shop before resuming repairs")
-        yield("/callback Shop true -1")
-        WaitForAddonClosed("Shop", 2)
-        yield("/wait 0.5")
-        return true
-    end
-
-    return false
-end
-
-function TrySelfRepair(snapshot)
-    local repairRuntime = GetRepairRuntime()
-    if not Settings.selfRepair then
-        return false
-    end
-    if snapshot.darkMatterCount < snapshot.requiredDarkMatter or repairRuntime.useNpcFallback then
-        return false
-    end
-
-    Dalamud.Log("[Toolkit Helper] Ensuring character is dismounted before repair")
-    if not EnsureDismounted() then
-        Dalamud.Log("[Toolkit Helper] Dismount failed; retrying later")
-        return true
-    end
-    Dalamud.Log("[Toolkit Helper] Executing self-repair general action")
-    ResetRepairActionState()
-    ExecuteRepairGeneralAction()
-    return true
-end
-
-function TryPurchaseDarkMatter(snapshot)
-    if not Settings.selfRepair or not Settings.autoBuyDarkMatter then
-        return false
-    end
-    if snapshot.darkMatterCount >= snapshot.requiredDarkMatter then
-        return false
-    end
-
-    Dalamud.Log(string.format("[Toolkit Helper] Insufficient Dark Matter for self-repair (have=%d, need=%d); purchasing more", snapshot.darkMatterCount, snapshot.requiredDarkMatter))
-    if not EnsureInLimsa("dark matter purchase") then
-        return true
-    end
-
-    local shopAddon = Addons.GetAddon("Shop")
-    if shopAddon == nil or not shopAddon.Ready then
-        if not EnsureDismounted() then
-            Dalamud.Log("[Toolkit Helper] Unable to dismount before vendor interaction; retrying")
-            return true
-        end
-        if not InteractWithNpcAtPosition(UNSYNRAEL_POSITION, UNSYNRAEL_ROW_ID, "Unsynrael") then
-            return true
-        end
-        shopAddon = WaitForAddonReady("Shop", 3)
-        if shopAddon == nil then
-            Dalamud.Log("[Toolkit Helper] Waiting for Shop addon to open before purchasing Dark Matter")
-            return true
-        end
-    end
-
-    Dalamud.Log("[Toolkit Helper] Purchasing Grade 8 Dark Matter from "..GetLocalizedNpcName(UNSYNRAEL_ROW_ID, "Unsynrael"))
-    yield("/callback Shop true 0 9 99")
-    local purchaseConfirm = WaitForAddonVisible("SelectYesno", 3)
-    if purchaseConfirm ~= nil and purchaseConfirm.Ready then
-        Dalamud.Log("[Toolkit Helper] Confirming Dark Matter purchase")
-        yield("/callback SelectYesno true 0")
-        WaitForAddonClosed("SelectYesno", 3)
-        yield("/wait 0.5")
-    else
-        Dalamud.Log("[Toolkit Helper] Dark Matter purchase confirmation did not appear yet; retrying")
-    end
-    return true
-end
-
-function TryNpcRepairFallback(snapshot)
-    local repairRuntime = GetRepairRuntime()
-    if repairRuntime.useNpcFallback then
-        Dalamud.Log("[Toolkit Helper] Self-repair failed; falling back to Limsa mender")
-    elseif Settings.selfRepair and not Settings.autoBuyDarkMatter then
-        Dalamud.Log(string.format("[Toolkit Helper] Insufficient Dark Matter (have=%d, need=%d) and auto-buy disabled; falling back to Limsa mender", snapshot.darkMatterCount, snapshot.requiredDarkMatter))
-    end
-    if not EnsureInLimsa("mender repair") then
-        return true
-    end
-    if not EnsureDismounted() then
-        Dalamud.Log("[Toolkit Helper] Unable to dismount before mender interaction; retrying")
-        return true
-    end
-    InteractWithNpcAtPosition(ALISTAIR_POSITION, ALISTAIR_ROW_ID, "Alistair")
-    return true
-end
-
---## Lifecycle & Shutdown
-
 function LogFeatureFlagsOnce()
-    local lifecycle = GetLifecycleRuntime()
-    if lifecycle.featureLogPrinted then return end
+    if Runtime.featureLogPrinted then return end
     local entries = {}
 
     local function flagLabel(value)
@@ -4624,7 +3560,7 @@ function LogFeatureFlagsOnce()
     table.insert(entries, string.format("Pause for retainers: %s (close list: %s, check interval: %ds)",
         flagLabel(Settings.pauseRetainers),
         yesNo(Settings.closeRetainerList),
-        RETAINER_CHECK_INTERVAL_SECONDS))
+        Settings.checkInterval or 0))
 
     table.insert(entries, string.format("Maintain gemstone stockpile: %s (target=%d)",
         flagLabel(Settings.maintainGemstones),
@@ -4661,19 +3597,21 @@ function LogFeatureFlagsOnce()
         flagLabel(Settings.enableStuckMonitor),
         STUCK_MONITOR_THRESHOLD_SECONDS))
 
+    table.insert(entries, string.format("Echo logs level: %s",
+        Settings.echoLevel or "none"))
+
     for _, msg in ipairs(entries) do
         Dalamud.Log("[Toolkit Helper] "..msg)
     end
-    lifecycle.featureLogPrinted = true
+    Runtime.featureLogPrinted = true
 end
 
 function OnStop()
-    local purchaseLimit = GetGemstonePurchaseLimitRuntime()
-    local repairRuntime = GetRepairRuntime()
-    if not purchaseLimit.handled then
+    if not Runtime.purchaseLimitHandled then
         StopToolkitRun("script stop")
     end
-    repairRuntime.toolkitStopped = false
+    Runtime.pendingRepair = false
+    Runtime.repairToolkitStopped = false
     if IPC and IPC.Lifestream and IPC.Lifestream.Abort then
         pcall(function()
             IPC.Lifestream.Abort()
@@ -4683,10 +3621,10 @@ function OnStop()
     RestoreTextAdvanceState()
     RestoreBossModPreferredState()
 
-    local deferredFollowUp = purchaseLimit.deferredFollowUpScript
-    local deferredEnableMultiMode = purchaseLimit.deferredEnableMultiMode == true
-    purchaseLimit.deferredFollowUpScript = nil
-    purchaseLimit.deferredEnableMultiMode = false
+    local deferredFollowUp = Runtime.deferredFollowUpScript
+    local deferredEnableMultiMode = Runtime.deferredEnableMultiMode == true
+    Runtime.deferredFollowUpScript = nil
+    Runtime.deferredEnableMultiMode = false
 
     if deferredFollowUp ~= nil and deferredFollowUp ~= "" then
         local started = RunFollowUpScript(deferredFollowUp)
@@ -4708,7 +3646,6 @@ end
 --#region State Functions
 
 function Idle()
-    local lifecycle = GetLifecycleRuntime()
     RefreshSettings()
     if Runtime.stopScript then return end
 
@@ -4724,12 +3661,79 @@ function Idle()
     end
 
     local now = os.clock()
-    if HandleIdleRetainerCheck(now) then return end
-    if HandleIdleRepairCheck() then return end
-    if HandleIdleExchangeCheck() then return end
-    if HandleIdleGemstoneMaintenanceCheck() then return end
+    if Settings.pauseRetainers then
+        if now >= Runtime.nextCheck then
+            Runtime.nextCheck = now + Settings.checkInterval
+            if ReadyToProcess() then
+                local delay, reason, pauseToolkit, retryInterval = ShouldDelayProcessing()
+                if delay then
+                    if pauseToolkit then
+                        EnsureRetainerToolkitStopped("retainer delay: "..tostring(reason))
+                    end
+                    if retryInterval ~= nil then
+                        Runtime.nextCheck = os.clock() + retryInterval
+                    end
+                    Dalamud.Log("[Toolkit Helper] Ventures ready but delaying retainer processing because "..reason)
+                    return
+                end
+                Dalamud.Log("[Toolkit Helper] Detected ventures ready and sufficient inventory space; entering ProcessRetainers state")
+                ChangeState(CharacterState.processRetainers, "ProcessRetainers")
+                return
+            end
+        end
+    end
 
-    if not lifecycle.initialToolkitStarted then
+    local repairThreshold = Settings.repairThreshold or 0
+    if repairThreshold > 0 then
+        local nowCheck = os.clock()
+        if nowCheck >= (Runtime.nextRepairCheck or 0) then
+            Runtime.nextRepairCheck = nowCheck + 30
+            local shouldRepair, repairCount = ShouldRepairNow()
+            if shouldRepair then
+                Dalamud.Log(string.format("[Toolkit Helper] Repair check: %d items at/below %d%% durability", repairCount or 0, repairThreshold))
+                Dalamud.Log("[Toolkit Helper] Durability threshold reached; entering RepairGear state")
+                Runtime.pendingRepair = true
+                ChangeState(CharacterState.repairGear, "RepairGear")
+                return
+            elseif Settings.echoLevel == "all" then
+                Dalamud.Log(string.format("[Toolkit Helper] Repair check: no items below %d%%", repairThreshold))
+            end
+        end
+    end
+
+    if Settings.exchangeGemstones then
+        if Runtime.exchangeInProgress then
+            ChangeState(CharacterState.exchangeGemstones)
+            return
+        elseif os.clock() >= (Runtime.nextExchangeCheck or 0) and ShouldExchangeGemstones() then
+            if EnsureGemstoneSelection() then
+                Runtime.exchangeInProgress = true
+                Runtime.exchangeStarted = false
+                Runtime.usedMiniTeleport = false
+                Dalamud.Log("[Toolkit Helper] Gemstone threshold met; entering ExchangeGemstones state")
+                ChangeState(CharacterState.exchangeGemstones, "ExchangeGemstones")
+                return
+            end
+        end
+    end
+
+    if Settings.maintainGemstones and Runtime.pendingGemstoneGoal == nil then
+        if os.clock() >= Runtime.lastGemstoneCheck then
+            Runtime.lastGemstoneCheck = os.clock() + 30
+            if NeedsGemstones() then
+                local delay, reason = ShouldDelayProcessing()
+                if delay then
+                    Dalamud.Log("[Toolkit Helper] Need gemstones but delaying because "..reason)
+                    return
+                end
+                Dalamud.Log("[Toolkit Helper] Gemstones below target; entering MaintainGemestones state")
+                ChangeState(CharacterState.maintainGemstones, "MaintainGemestones")
+                return
+            end
+        end
+    end
+
+    if not Runtime.initialToolkitStarted then
         ResumeToolkitRun("initial start")
     end
 end
@@ -4737,31 +3741,107 @@ end
 function ProcessRetainers()
     RefreshSettings()
     EnsureSummoningBellNameLocalized()
-    if not HandleRetainerFeatureDisabled() then return end
-    if HandleRetainerWorkflowDelay() then return end
+    if not Settings.pauseRetainers then
+        ChangeState(CharacterState.idle)
+        ResumeToolkitAfterRetainers("retainer feature disabled")
+        return
+    end
+    local delay, reason, pauseToolkit, retryInterval = ShouldDelayProcessing()
+    if delay then
+        if pauseToolkit then
+            EnsureRetainerToolkitStopped("retainer abort delay: "..tostring(reason))
+        end
+        if retryInterval ~= nil then
+            Runtime.nextCheck = os.clock() + retryInterval
+        end
+        Dalamud.Log("[Toolkit Helper] Abort ProcessRetainers due to "..reason.."; returning to idle")
+        ChangeState(CharacterState.idle)
+        ResumeToolkitAfterRetainers("retainer delay abort")
+        return
+    end
 
     EnsureRetainerToolkitStopped("retainer processing start")
-    if HandleRetainerWorkflowCompletion() then return end
+
+    if not ReadyToProcess() then
+        local retainerList = Addons.GetAddon("RetainerList")
+        if retainerList ~= nil and retainerList.Ready then
+            if Settings.closeRetainerList ~= false then
+                Dalamud.Log("[Toolkit Helper] Closing RetainerList addon")
+                yield("/callback RetainerList true -1")
+                return
+            else
+                Dalamud.Log("[Toolkit Helper] Leaving RetainerList open per configuration")
+            end
+        end
+        if Runtime.returnAetheryteName ~= nil then
+            if Svc.ClientState.TerritoryType == SUMMONING_BELL.territoryId and not Svc.Condition[CharacterCondition.occupiedSummoningBell] then
+                if AttemptReturnToSavedLocation("retainer workflow") then
+                    ResumeToolkitAfterRetainers("resuming after retainer teleport")
+                    return
+                end
+            elseif Svc.ClientState.TerritoryType ~= SUMMONING_BELL.territoryId then
+                ResumeToolkitAfterRetainers("retainer return aetheryte cleared")
+                ClearReturnTarget()
+            end
+        end
+        if not Svc.Condition[CharacterCondition.occupiedSummoningBell] then
+            ChangeState(CharacterState.idle, "Idle")
+            ResumeToolkitAfterRetainers("retainer processing complete")
+        end
+        return
+    end
 
     if IPC.vnavmesh.PathfindInProgress() or IPC.vnavmesh.IsRunning() then
         return
     end
 
-    if not EnsureAtSummoningBellTerritory() then return end
-    if not MoveToSummoningBellIfNeeded() then return end
-    OpenRetainerBellAndHandOffToAutoRetainer()
+    if Svc.ClientState.TerritoryType ~= SUMMONING_BELL.territoryId then
+        SaveReturnLocationForCurrentTerritory()
+        EnsureRetainerToolkitStopped("retainer teleport to Limsa")
+        StopVnav()
+        EnsureSummoningBellAetheryte()
+        local limsaDestination = {
+            name = SUMMONING_BELL.aetheryteName or "Limsa Lominsa Lower Decks",
+            aetheryteId = SUMMONING_BELL.aetheryteRowId,
+            rowId = SUMMONING_BELL.aetheryteRowId,
+            territoryId = SUMMONING_BELL.territoryId
+        }
+        if TeleportTo(limsaDestination) then
+            EchoAll("Teleporting to "..limsaDestination.name)
+            Dalamud.Log("[Toolkit Helper] Teleporting to "..limsaDestination.name.." for retainer processing")
+        end
+        return
+    end
+
+    if GetDistanceToPoint(SUMMONING_BELL.position) > 4.5 then
+        IPC.vnavmesh.PathfindAndMoveTo(SUMMONING_BELL.position, false)
+        return
+    end
+
+    if not Svc.Condition[CharacterCondition.occupiedSummoningBell] then
+        if not InteractWithSummoningBell() then
+            return
+        end
+        local retainerList = WaitForAddonReady("RetainerList", 5)
+        if retainerList ~= nil then
+            yield("/ays e")
+            EchoAll("Processing retainers")
+            Dalamud.Log("[Toolkit Helper] Handed control to AutoRetainer via /ays e")
+            yield("/wait 1")
+        end
+    end
 end
 
 function MaintainGemstones()
     RefreshSettings()
     if not Settings.maintainGemstones then
-        ClearPendingGemstoneMaintenance()
+        Runtime.pendingGemstoneGoal = nil
         ChangeState(CharacterState.idle)
         return
     end
 
     if HasReachedPurchaseCycleLimit() then
-        ClearPendingGemstoneMaintenance()
+        Runtime.pendingGemstoneGoal = nil
         ChangeState(CharacterState.idle)
         HandlePurchaseLimitReached()
         return
@@ -4770,85 +3850,358 @@ function MaintainGemstones()
     ApplyChocoboStanceIfNeeded()
 
     if ShouldProcessRetainersNow() then
-        EnterRetainerProcessingFromMaintenance()
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for retainer processing")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
         return
     end
 
     if ShouldRepairNow() then
-        EnterRepairFromMaintenance()
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone maintenance for repairs")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.repairGear, "RepairGear")
         return
     end
 
     local target = Settings.gemstoneTarget or 0
     if target <= 0 or not NeedsGemstones() then
-        ClearPendingGemstoneMaintenance()
+        Runtime.pendingGemstoneGoal = nil
         ChangeState(CharacterState.idle)
         return
     end
 
     local delay, reason = ShouldDelayProcessing()
     if delay then
-        FinishMaintainGemstonesToIdle("MaintainGemstones aborted due to "..reason)
+        Dalamud.Log("[Toolkit Helper] MaintainGemstones aborted due to "..reason)
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.idle)
         return
     end
 
     local runs = ComputeGemstoneRunCount(target)
     if runs <= 0 then
-        ClearPendingGemstoneMaintenance()
+        Runtime.pendingGemstoneGoal = nil
         ChangeState(CharacterState.idle)
         return
     end
 
     IssueToolkitGemstoneRun(runs, target)
     local reached, interrupt = WaitForGemstoneGoal(target)
-    HandleMaintainGemstoneWaitResult(target, reached, interrupt)
+    if reached == true then
+        Dalamud.Log(string.format("[Toolkit Helper] Gemstone goal of %d reached (current=%d)", target, GetBicolorGemCount()))
+        StopToolkitRun("gemstone goal reached")
+    elseif interrupt == "repair" then
+        Dalamud.Log("[Toolkit Helper] Stopping gemstone run to handle repairs")
+        StopToolkitRun("repair priority")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.repairGear, "RepairGear")
+        return
+    elseif interrupt == "retainer" then
+        Dalamud.Log("[Toolkit Helper] Stopping gemstone run to process retainers")
+        StopToolkitRun("retainer priority")
+        Runtime.pendingGemstoneGoal = nil
+        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
+        return
+    else
+        Dalamud.Log(string.format("[Toolkit Helper] Timed out waiting for gemstone goal (%d). Current=%d", target, GetBicolorGemCount()))
+        StopToolkitRun("gemstone goal timeout")
+    end
+    Runtime.pendingGemstoneGoal = nil
+    ChangeState(CharacterState.idle, "Idle")
 end
 
 function RepairGear()
     RefreshSettings()
-    local snapshot = BuildRepairSnapshot()
-    if HandleRepairDisabled(snapshot) then
+    local threshold = Settings.repairThreshold or 0
+    if threshold <= 0 then
+        ResetRepairActionState()
+        Runtime.repairUseNpcFallback = false
+        Runtime.pendingRepair = false
+        ResumeToolkitAfterRepair("repair disabled")
+        ChangeState(CharacterState.idle)
         return
     end
 
-    Dalamud.Log(string.format("[Toolkit Helper] RepairGear state: threshold=%d%%, needs=%d, darkMatter=%d, requiredDarkMatter=%d", snapshot.threshold, snapshot.needsCount or 0, snapshot.darkMatterCount, snapshot.requiredDarkMatter))
+    local needsRepair = Inventory.GetItemsInNeedOfRepairs(threshold)
+    local needsCount = needsRepair and needsRepair.Count or 0
+    local darkMatterCount = GetDarkMatterCount()
+    local requiredDarkMatter = GetRequiredDarkMatterCount(needsCount)
+    Dalamud.Log(string.format("[Toolkit Helper] RepairGear state: threshold=%d%%, needs=%d, darkMatter=%d, requiredDarkMatter=%d", threshold, needsCount or 0, darkMatterCount, requiredDarkMatter))
 
-    if HandleRepairConfirmationPrompt() then return end
-    if HandleOpenRepairAddon(snapshot) then return end
-    if not PrepareRepairWorkflow(snapshot) then return end
-    if HandleRepairBusyOrVendorState(snapshot) then return end
-    if TrySelfRepair(snapshot) then return end
-    if TryPurchaseDarkMatter(snapshot) then return end
-    TryNpcRepairFallback(snapshot)
+    local yesno = Addons.GetAddon("SelectYesno")
+    if yesno ~= nil and yesno.Ready then
+        Dalamud.Log("[Toolkit Helper] Confirming repair prompt")
+        yield("/callback SelectYesno true 0")
+        WaitForAddonClosed("SelectYesno", 3)
+        yield("/wait 0.5")
+        return
+    end
+
+    local repairAddon = Addons.GetAddon("Repair")
+    if repairAddon ~= nil and repairAddon.Ready then
+        if Svc.Condition[CharacterCondition.mounted] or Svc.Condition[CharacterCondition.mounting57] or Svc.Condition[CharacterCondition.mounting64] then
+            Dalamud.Log("[Toolkit Helper] Mount detected while repair addon open; closing and retrying")
+            CloseAddonIfMounted("Repair")
+            ResetRepairActionState()
+            return
+        end
+        if needsCount == nil or needsCount == 0 then
+            ResetRepairActionState()
+            Dalamud.Log("[Toolkit Helper] Repairs complete; closing repair menu")
+            yield("/callback Repair true -1")
+            WaitForAddonClosed("Repair", 3)
+            FinishRepairWorkflow("repair menu closed")
+        else
+            if Runtime.repairUseNpcFallback then
+                Dalamud.Log("[Toolkit Helper] Repair menu open; issuing repair callback")
+                yield("/callback Repair true 0")
+                local confirmAddon = WaitForAddonVisible("SelectYesno", 3)
+                if confirmAddon ~= nil and confirmAddon.Ready then
+                    Dalamud.Log("[Toolkit Helper] Confirming repair after repair callback")
+                    yield("/callback SelectYesno true 0")
+                    WaitForAddonClosed("SelectYesno", 3)
+                    yield("/wait 0.5")
+                else
+                    Dalamud.Log("[Toolkit Helper] Repair confirmation did not appear; retrying")
+                end
+            else
+                local waitingOnRepair, repairFinished = HandlePendingRepairAction(5, 2)
+                if waitingOnRepair then
+                    if Runtime.repairConditionSeen then
+                        yield("/wait 0.5")
+                    end
+                    return
+                end
+                if Runtime.repairUseNpcFallback then
+                    Dalamud.Log("[Toolkit Helper] Closing self-repair menu before NPC fallback")
+                    yield("/callback Repair true -1")
+                    WaitForAddonClosed("Repair", 3)
+                    return
+                end
+                if repairFinished then
+                    yield("/wait 0.5")
+                    return
+                end
+
+                Dalamud.Log("[Toolkit Helper] Repair menu open; issuing repair callback")
+                yield("/callback Repair true 0")
+                BeginRepairActionAttempt()
+            end
+        end
+        return
+    end
+
+    if needsCount == nil or needsCount == 0 then
+        FinishRepairWorkflow("durability restored")
+        return
+    end
+
+    EnsureRepairToolkitStopped("repair start")
+    SaveReturnLocationForCurrentTerritory()
+
+    if Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] then
+        Dalamud.Log("[Toolkit Helper] Repair UI indicates character is busy repairing; waiting")
+        yield("/wait 1")
+        return
+    end
+
+    local shopAddon = Addons.GetAddon("Shop")
+    if shopAddon ~= nil and shopAddon.Ready and darkMatterCount >= requiredDarkMatter then
+        Dalamud.Log("[Toolkit Helper] Closing vendor shop before resuming repairs")
+        yield("/callback Shop true -1")
+        WaitForAddonClosed("Shop", 2)
+        yield("/wait 0.5")
+        return
+    end
+
+    if Settings.selfRepair then
+        if darkMatterCount >= requiredDarkMatter and not Runtime.repairUseNpcFallback then
+            Dalamud.Log("[Toolkit Helper] Ensuring character is dismounted before repair")
+            if not EnsureDismounted() then
+                Dalamud.Log("[Toolkit Helper] Dismount failed; retrying later")
+                return
+            end
+            Dalamud.Log("[Toolkit Helper] Executing self-repair general action")
+            ResetRepairActionState()
+            ExecuteRepairGeneralAction()
+            return
+        elseif Settings.autoBuyDarkMatter then
+            Dalamud.Log(string.format("[Toolkit Helper] Insufficient Dark Matter for self-repair (have=%d, need=%d); purchasing more", darkMatterCount, requiredDarkMatter))
+            if not EnsureInLimsa("dark matter purchase") then
+                return
+            end
+            shopAddon = Addons.GetAddon("Shop")
+            if shopAddon == nil or not shopAddon.Ready then
+                if not EnsureDismounted() then
+                    Dalamud.Log("[Toolkit Helper] Unable to dismount before vendor interaction; retrying")
+                    return
+                end
+                if not InteractWithNpcAtPosition(UNSYNRAEL_POSITION, UNSYNRAEL_ROW_ID, "Unsynrael") then
+                    return
+                end
+                shopAddon = WaitForAddonReady("Shop", 3)
+                if shopAddon == nil then
+                    Dalamud.Log("[Toolkit Helper] Waiting for Shop addon to open before purchasing Dark Matter")
+                    return
+                end
+            end
+            Dalamud.Log("[Toolkit Helper] Purchasing Grade 8 Dark Matter from "..GetLocalizedNpcName(UNSYNRAEL_ROW_ID, "Unsynrael"))
+            yield("/callback Shop true 0 9 99")
+            local purchaseConfirm = WaitForAddonVisible("SelectYesno", 3)
+            if purchaseConfirm ~= nil and purchaseConfirm.Ready then
+                Dalamud.Log("[Toolkit Helper] Confirming Dark Matter purchase")
+                yield("/callback SelectYesno true 0")
+                WaitForAddonClosed("SelectYesno", 3)
+                yield("/wait 0.5")
+            else
+                Dalamud.Log("[Toolkit Helper] Dark Matter purchase confirmation did not appear yet; retrying")
+            end
+            return
+        end
+    end
+
+    if Runtime.repairUseNpcFallback then
+        Dalamud.Log("[Toolkit Helper] Self-repair failed; falling back to Limsa mender")
+    elseif Settings.selfRepair and not Settings.autoBuyDarkMatter then
+        Dalamud.Log(string.format("[Toolkit Helper] Insufficient Dark Matter (have=%d, need=%d) and auto-buy disabled; falling back to Limsa mender", darkMatterCount, requiredDarkMatter))
+    end
+    if not EnsureInLimsa("mender repair") then
+        return
+    end
+    if not EnsureDismounted() then
+        Dalamud.Log("[Toolkit Helper] Unable to dismount before mender interaction; retrying")
+        return
+    end
+    InteractWithNpcAtPosition(ALISTAIR_POSITION, ALISTAIR_ROW_ID, "Alistair")
 end
 
 function ExchangeGemstones()
-    local exchangeRuntime = GetGemstoneExchangeRuntime()
     RefreshSettings()
-    if not HandleExchangeDisabledOrLimitExit() then return end
-    if HandleExchangeInterruptions() then return end
-    if not HandleExchangeSelectionGuards() then return end
-    if not HandleExchangeDelayGate() then return end
+    if not Settings.exchangeGemstones then
+        ResetExchangeState()
+        if Runtime.exchangeStarted then
+            ResumeToolkitRun("gemstone exchange disabled")
+        end
+        ChangeState(CharacterState.idle)
+        return
+    end
 
-    BeginExchangeWorkflowSession()
+    if HasReachedPurchaseCycleLimit() then
+        ResetExchangeState()
+        ChangeState(CharacterState.idle)
+        HandlePurchaseLimitReached()
+        return
+    end
 
-    local entry = ResolveSelectedExchangeEntry()
+    if ShouldProcessRetainersNow() then
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for retainer processing")
+        ResetExchangeState()
+        ChangeState(CharacterState.processRetainers, "ProcessRetainers")
+        return
+    end
+
+    if ShouldRepairNow() then
+        Dalamud.Log("[Toolkit Helper] Interrupting gemstone exchange for repairs")
+        ResetExchangeState()
+        ChangeState(CharacterState.repairGear, "RepairGear")
+        return
+    end
+
+    if not EnsureGemstoneSelection() then
+        ResetExchangeState()
+        Runtime.nextExchangeCheck = os.clock() + 60
+        ResumeToolkitRun("gemstone exchange unavailable")
+        ChangeState(CharacterState.idle)
+        return
+    end
+
+    if not ShouldExchangeGemstones() then
+        ResetExchangeState()
+        if Runtime.exchangeStarted then
+            ResumeToolkitRun("gemstone threshold cleared")
+        end
+        ChangeState(CharacterState.idle)
+        return
+    end
+
+    local delay, reason, pauseToolkit = ShouldDelayProcessing()
+    if delay then
+        if pauseToolkit then
+            StopToolkitRun("gemstone exchange delay: "..tostring(reason))
+            Runtime.exchangeDelayActive = false
+        end
+        if not pauseToolkit and not Runtime.exchangeDelayActive then
+            ResumeToolkitRun("exchange delay: "..tostring(reason))
+            Runtime.exchangeDelayActive = true
+        end
+        local now = os.clock()
+        if now >= (Runtime.lastExchangeDelayLog or 0) then
+            Dalamud.Log("[Toolkit Helper] Gemstone exchange waiting because "..tostring(reason))
+            Runtime.lastExchangeDelayLog = now + 5
+        end
+        return
+    end
+
+    if Runtime.exchangeDelayActive then
+        StopToolkitRun("gemstone exchange delay cleared")
+        Runtime.exchangeDelayActive = false
+    end
+
+    if not Runtime.exchangeStarted then
+        SaveReturnLocationForCurrentTerritory()
+        StopToolkitRun("gemstone exchange start")
+        Runtime.exchangeStarted = true
+    end
+
+    local entry = SelectedGemstoneEntry
     if entry == nil then
+        ResetExchangeState()
+        ResumeToolkitRun("gemstone entry missing")
+        ChangeState(CharacterState.idle)
         return
     end
 
-    if not EnsureAtExchangeTerritory(entry) then
+    if Svc.ClientState.TerritoryType ~= entry.territoryId then
+        if entry.aetheryteTeleport ~= nil then
+            if ShouldUseReturnForSolutionNine(entry) then
+                local returned = TryReturnToSolutionNine(entry.territoryId)
+                if returned then
+                    return
+                else
+                    Dalamud.Log("[Toolkit Helper] Return to Solution Nine failed; falling back to teleport")
+                end
+            end
+            TeleportTo(entry.aetheryteTeleport)
+        end
         return
     end
 
-    if not EnsureAtExchangeVendorApproach(entry) then
+    if entry.miniAetheryteTeleport and not Runtime.usedMiniTeleport then
+        TeleportTo(entry.miniAetheryteTeleport)
+        Runtime.usedMiniTeleport = true
         return
     end
 
-    local success, reason = ExecuteExchangePurchase(entry)
+    local targetPosition = entry.position
+    local stopDistance = 4.5
+    if entry.vendorId == GADFRID_VENDOR_ID then
+        targetPosition = GADFRID_POSITION
+        stopDistance = 5.5
+    end
+
+    if not MoveNearPosition(targetPosition, stopDistance) then
+        return
+    end
+
+    local shop = EnsureGemstoneShopOpen(entry)
+    if not shop then
+        return
+    end
+
+    local success, reason = PurchaseGemstoneItem(entry, shop)
     if not success then
         if reason == "insufficient" then
-            exchangeRuntime.nextCheck = os.clock() + 60
+            Runtime.nextExchangeCheck = os.clock() + 60
             ResetExchangeState()
             ResumeToolkitRun("insufficient gemstones for exchange")
             ChangeState(CharacterState.idle)
@@ -4856,7 +4209,18 @@ function ExchangeGemstones()
         return
     end
 
-    FinalizeExchangePurchase(entry)
+    local count, limit, hitLimit = RegisterGemstonePurchaseCycle()
+    local completionMessage = string.format("Completed gemstone exchange #%d for %s", count or 0, entry.localizedItemName)
+    if hitLimit then
+        FinishGemstoneExchange(
+            completionMessage.." (purchase limit reached)",
+            { suppressResume = true, skipReturnTeleport = true }
+        )
+        HandlePurchaseLimitReached()
+        return
+    end
+
+    FinishGemstoneExchange(completionMessage)
 end
 
 --#endregion State Functions
