@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.9
+version: 1.0.10
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -65,6 +65,7 @@ local SAFE_HUNT_STALL_GRACE_AFTER_TARGET = 1.5
 local SAFE_HUNT_STALL_GRACE_AFTER_REPATH = 2.0
 local SAFE_HUNT_TARGET_ACQUIRE_TIMEOUT = 8.0
 local ENGAGED_VERBOSE_LOG_INTERVAL = 2.0
+local VNAV_STOP_IDLE_TIMEOUT = 1.5
 local STARTUP_REPEAT_CALL_DISTANCE = 45
 local FLAG_MOVEMENT_START_TIMEOUT = 2.0
 local FLAG_NO_PROGRESS_TIMEOUT = 10.0
@@ -1115,7 +1116,18 @@ end
 
 local function ResetMovementBeforeStart()
     StopVnav()
-    sleep(POLL_INTERVAL)
+
+    local idle = WaitUntil(function()
+        return not IsVnavMovementActive()
+    end, VNAV_STOP_IDLE_TIMEOUT, POLL_INTERVAL, 0)
+
+    if not idle then
+        verboseLogf("vnav did not go idle within %.2fs after stop; proceeding with movement restart.", VNAV_STOP_IDLE_TIMEOUT)
+        sleep(POLL_INTERVAL)
+        return false
+    end
+
+    return true
 end
 
 local function normalizeDestination(position)
@@ -1662,6 +1674,14 @@ local function StartApproachMovement(position)
     end
 
     StopVnav()
+
+    local idle = WaitUntil(function()
+        return not IsVnavMovementActive()
+    end, VNAV_STOP_IDLE_TIMEOUT, POLL_INTERVAL, 0)
+    if not idle then
+        verboseLogf("vnav still busy after flyto failure; waiting one extra poll before grounded fallback.")
+        sleep(POLL_INTERVAL)
+    end
 
     log("/vnav flyto did not start; falling back to grounded pathfind for hunt approach.")
     return StartConfirmedApproachPathfind(position)
@@ -2341,31 +2361,13 @@ local function TryRestartEngagedHuntHandoff(runtime, currentEntity)
         return RESULT_CONTINUE
     end
 
-    if runtime.huntApproachRepathCount >= 1 then
-        if not runtime.huntRetryExhaustedLogged then
-            local hitboxDistance = GetEngagedHuntHitboxDistance(currentEntity)
-            logf(
-                "Hunt '%s' engaged handoff is still stalled; retry budget exhausted, continuing current path (hitboxDistance=%.2f, best=%.2f).",
-                tostring(runtime.chasedHuntName),
-                hitboxDistance,
-                runtime.bestDistance
-            )
-            runtime.huntRetryExhaustedLogged = true
-        end
-        return RESULT_CONTINUE
-    end
-
     local movePoint = currentEntity and currentEntity.Position or nil
     if movePoint == nil then
         return RESULT_ERROR, string.format("failed to rebuild engaged hunt position for '%s'", tostring(runtime.chasedHuntName))
     end
 
     if runtime.huntApproachPoint ~= nil and DistanceBetweenFlat(runtime.huntApproachPoint, movePoint) < 2 then
-        logf("Engaged handoff retry found no meaningfully different hunt position for '%s'; keeping current path.", tostring(runtime.chasedHuntName))
-        runtime.huntApproachRepathCount = runtime.huntApproachRepathCount + 1
-        runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_REPATH
-        runtime.huntRetryExhaustedLogged = false
-        return RESULT_CONTINUE
+        logf("Engaged handoff retry found no meaningfully different hunt position for '%s'; forcing a direct chase refresh.", tostring(runtime.chasedHuntName))
     end
 
     if not StartApproachMovement(movePoint) then
@@ -2381,8 +2383,9 @@ local function TryRestartEngagedHuntHandoff(runtime, currentEntity)
     runtime.lastProgressAt = os.clock()
 
     logf(
-        "Hunt '%s' engaged handoff stalled; retrying direct chase at %.2f, %.2f, %.2f.",
+        "Hunt '%s' engaged handoff stalled; retrying direct chase #%d at %.2f, %.2f, %.2f.",
         tostring(runtime.chasedHuntName),
+        runtime.huntApproachRepathCount,
         movePoint.X,
         movePoint.Y,
         movePoint.Z
