@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.1.0
 description: Wait for crafting to finish, then enable AutoRetainer MultiMode.
 configs:
   Idle Seconds After Craft:
@@ -30,10 +30,77 @@ local function log(message)
     yield(string.format("/echo %s", text))
 end
 
+local function isAddonReady(name)
+    local ok, addon = pcall(Addons.GetAddon, name)
+    return ok and addon and addon.Ready and addon.Exists or false
+end
+
+local function quoteArg(value)
+    local text = tostring(value)
+    text = text:gsub("\\", "\\\\"):gsub('"', '\\"')
+    return '"' .. text .. '"'
+end
+
+local function safeCallback(...)
+    local args = { ... }
+    local index = 1
+    local addon = args[index]
+    index = index + 1
+
+    if type(addon) ~= "string" or addon == "" then
+        log("SafeCallback skipped: invalid addon name.")
+        return false
+    end
+
+    local update = args[index]
+    index = index + 1
+    local updateStr = "true"
+
+    if type(update) == "boolean" then
+        updateStr = update and "true" or "false"
+    elseif type(update) == "string" then
+        local normalized = update:lower()
+        if normalized == "false" or normalized == "f" or normalized == "0" or normalized == "off" then
+            updateStr = "false"
+        end
+    else
+        index = index - 1
+    end
+
+    if not isAddonReady(addon) then
+        return false
+    end
+
+    local command = "/callback " .. addon .. " " .. updateStr
+    for i = index, #args do
+        local value = args[i]
+        local valueType = type(value)
+        if valueType == "number" then
+            command = command .. " " .. tostring(value)
+        elseif valueType == "boolean" then
+            command = command .. " " .. (value and "true" or "false")
+        elseif valueType == "string" then
+            command = command .. " " .. quoteArg(value)
+        end
+    end
+
+    yield(command)
+    return true
+end
+
 local function hasAutoRetainerIpc()
     return IPC
         and IPC.AutoRetainer
         and IPC.AutoRetainer.SetMultiModeEnabled
+end
+
+local function isCraftStartActive()
+    if not (Svc and Svc.Condition) then
+        return false
+    end
+
+    return Svc.Condition[CharacterCondition.preparingToCraft] == true
+        or Svc.Condition[CharacterCondition.executingCraftingAction] == true
 end
 
 local function isCraftFlowActive()
@@ -42,17 +109,14 @@ local function isCraftFlowActive()
     end
 
     return Svc.Condition[CharacterCondition.executingCraftingAction] == true
-        or Svc.Condition[CharacterCondition.preparingToCraft] == true
         or Svc.Condition[CharacterCondition.occupiedMateriaExtractionAndRepair] == true
 end
 
-local function isCraftingActive()
-    if not (Svc and Svc.Condition) then
-        return false
+local function closeRecipeNote()
+    if safeCallback("RecipeNote", -1) then
+        log("Closed RecipeNote before enabling MultiMode.")
+        sleep(2)
     end
-
-    return Svc.Condition[CharacterCondition.executingCraftingAction] == true
-        or Svc.Condition[CharacterCondition.preparingToCraft] == true
 end
 
 local function enableMultiMode()
@@ -89,7 +153,7 @@ end
 
 log("Waiting for crafting activity.")
 
-while not isCraftingActive() do
+while not isCraftStartActive() do
     sleep(1)
 end
 
@@ -117,5 +181,6 @@ while idleFor < idleSeconds do
     sleep(1)
 end
 
+closeRecipeNote()
 enableMultiMode()
 log("Exiting.")
