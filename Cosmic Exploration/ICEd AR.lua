@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.2
+version: 1.0.3
 description: Somewhat intergrate AutoRetainer into ICE
 plugin_dependencies:
 - vnavmesh
@@ -13,6 +13,9 @@ configs:
   Close Retainer List:
     description: Close the retainer list after AutoRetainer finishes.
     default: true
+  Return Random Radius:
+    description: Random return distance from the original spot after retainer processing. Set 0 to disable.
+    default: 0
 [[End Metadata]]
 --]=====]
 
@@ -24,6 +27,7 @@ import("System.Numerics")
 local SETTINGS = {
     echoLog = false,
     closeRetainerList = (Config.Get("Close Retainer List") ~= false),
+    returnRandomRadius = math.max(0, tonumber(Config.Get("Return Random Radius")) or 0),
 }
 
 local PREFIX = "[ICEd AR]"
@@ -52,6 +56,9 @@ local LIMITS = {
     zoneCompletionTimeout = 30.0,
     zoneCompletionStable = 1.0,
     postReturnBellResolveTimeout = 5.0,
+    randomReturnAttempts = 10,
+    randomReturnMinDistance = 0.5,
+    randomReturnMaxVerticalDelta = 5.0,
 }
 
 -- =========================================================
@@ -455,6 +462,68 @@ end
 local function DistanceBetweenPositions(pos1, pos2)
     if not (pos1 and pos2) then return math.huge end
     return Vector3.Distance(pos1, pos2)
+end
+
+local function DistanceBetweenFlat(pos1, pos2)
+    if not (pos1 and pos2) then return math.huge end
+    local dx = pos1.X - pos2.X
+    local dz = pos1.Z - pos2.Z
+    return math.sqrt((dx * dx) + (dz * dz))
+end
+
+local function TryProjectPointToFloor(position)
+    if not position then
+        return nil
+    end
+
+    if IPC and IPC.vnavmesh and IPC.vnavmesh.PointOnFloor then
+        local ok, projected = pcall(function()
+            return IPC.vnavmesh.PointOnFloor(position, true, 10)
+        end)
+        if ok and projected ~= nil then
+            return projected
+        end
+    end
+
+    return nil
+end
+
+local function BuildRandomReturnPoint(origin, radius)
+    if not origin then
+        return nil
+    end
+
+    radius = tonumber(radius) or 0
+    if radius <= 0 then
+        return origin
+    end
+
+    local minDistance = math.min(radius, math.max(LIMITS.randomReturnMinDistance, radius * 0.25))
+    for attempt = 1, LIMITS.randomReturnAttempts do
+        local angle = math.random() * math.pi * 2
+        local distance = minDistance + (math.random() * math.max(0, radius - minDistance))
+        local candidate = Vector3(
+            origin.X + (math.cos(angle) * distance),
+            origin.Y,
+            origin.Z + (math.sin(angle) * distance)
+        )
+        local projected = TryProjectPointToFloor(candidate)
+
+        if projected then
+            local flatDistance = DistanceBetweenFlat(origin, projected)
+            local verticalDelta = math.abs((projected.Y or origin.Y) - origin.Y)
+            if flatDistance >= LIMITS.randomReturnMinDistance
+                and flatDistance <= (radius + 1.0)
+                and verticalDelta <= LIMITS.randomReturnMaxVerticalDelta then
+                Log("selected random return point attempt %d at x=%.2f y=%.2f z=%.2f (flat=%.2f)",
+                    attempt, projected.X, projected.Y, projected.Z, flatDistance)
+                return projected
+            end
+        end
+    end
+
+    Log("failed to find valid random return point within radius %.2f; falling back to origin", radius)
+    return origin
 end
 
 -- =========================================================
@@ -1052,8 +1121,17 @@ local function ReturnToOriginIfCrafter(origin)
         return true
     end
 
-    Log("crafter job detected; returning to origin")
-    return MoveNearVnav(origin, LIMITS.moveStopDistance, false)
+    local returnRadius = tonumber(SETTINGS.returnRandomRadius) or 0
+    local destination = origin
+
+    if returnRadius > 0 then
+        destination = BuildRandomReturnPoint(origin, returnRadius)
+        Log("crafter job detected; returning near origin with radius %.2f", returnRadius)
+    else
+        Log("crafter job detected; returning to exact origin")
+    end
+
+    return MoveNearVnav(destination, LIMITS.moveStopDistance, false)
 end
 
 -- =========================================================
