@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 2.0.0
+version: 2.0.1
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -4038,7 +4038,7 @@ function HandleIdleRetainerCheck(now)
             retainerRuntime.nextCheck = os.clock() + retryInterval
         end
         Dalamud.Log("[Toolkit Helper] Ventures ready but delaying retainer processing because "..reason)
-        return true
+        return pauseToolkit == true
     end
 
     Dalamud.Log("[Toolkit Helper] Detected ventures ready and sufficient inventory space; entering ProcessRetainers state")
