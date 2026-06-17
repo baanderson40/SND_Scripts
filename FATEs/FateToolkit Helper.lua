@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 2.0.1
+version: 2.0.2
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -3113,6 +3113,10 @@ function TeleportTo(destination)
         forceTeleport = destination.forceTeleport == true
     else
         destName = destination
+    end
+
+    if isMini then
+        forceTeleport = true
     end
 
     if destName == nil or destName == "" then
