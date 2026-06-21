@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.2
+version: 0.1.0
 description: |
   Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -78,7 +78,7 @@ local TIME = {
 }
 
 local FLOTPASSANT_CALLBACK_DELAY = 1.0
-local POTKIN_TURNIN_DELAY = 2.5
+local POTKIN_TURNIN_DELAY = 1.0
 
 local MINIMUM_COLLECTABILITY = 1
 
@@ -355,6 +355,30 @@ local function waitAddonClosed(name, timeoutSec)
     end, timeoutSec or 10, TIME.POLL, 0.2)
 end
 
+local function isAddonVisible(name)
+    local addon = getAddon(name)
+    if not addon then
+        return false
+    end
+
+    return addon.Exists == true
+        or addon.Visible == true
+        or addon.IsVisible == true
+        or addon.IsOpen == true
+        or addon.Ready == true
+end
+
+local function handleTalkIfOpen()
+    if not isAddonVisible("Talk") then
+        return false
+    end
+
+    log("Advancing Talk addon.")
+    Engines.Native.Run("/click Talk Click")
+    sleep(TIME.SHORT)
+    return true
+end
+
 local function handleSelectYesnoIfOpen()
     if not isAddonReady("SelectYesno") then
         return false
@@ -398,7 +422,14 @@ end
 local function enablePandoraTurninAutomation()
     local state = getPandoraTurninAutomationState()
     if state == nil then
+        log("Pandora turn-in automation unavailable; continuing without Pandora support.")
         return nil
+    end
+
+    if state.featureEnabled and state.configEnabled then
+        log("Pandora Auto-select Turn-ins and AutoConfirm already enabled.")
+    else
+        log("Ensuring Pandora Auto-select Turn-ins and AutoConfirm are enabled.")
     end
 
     if not state.featureEnabled and IPC.PandorasBox.SetFeatureEnabled then
@@ -407,6 +438,7 @@ local function enablePandoraTurninAutomation()
         end)
         if ok then
             state.changedFeature = true
+            log("Enabled Pandora Auto-select Turn-ins.")
         end
     end
 
@@ -416,6 +448,7 @@ local function enablePandoraTurninAutomation()
         end)
         if ok then
             state.changedConfig = true
+            log("Enabled Pandora AutoConfirm.")
         end
     end
 
@@ -426,6 +459,12 @@ local function restorePandoraTurninAutomation(state)
     if state == nil or not (IPC and IPC.PandorasBox) then
         return
     end
+
+    if not state.changedConfig and not state.changedFeature then
+        return
+    end
+
+    log("Restoring Pandora turn-in settings.")
 
     if state.changedConfig and IPC.PandorasBox.SetConfigEnabled then
         pcall(function()
@@ -1118,7 +1157,16 @@ local function openNpcAddon(runtime, addonName)
 
     for attempt = 1, 5 do
         if interactByName(npc.name, 3) then
-            if waitAddonReady(addonName, 6) then
+            local opened = waitUntil(function()
+                if isAddonReady(addonName) then
+                    return true
+                end
+                if handleTalkIfOpen() then
+                    return false
+                end
+                return false
+            end, 6, TIME.POLL, 0.2)
+            if opened then
                 return npc
             end
         end
@@ -1259,6 +1307,70 @@ local function approveMaterials(materials)
     return true
 end
 
+local function hasEligibleRequiredNonApprovedMaterials(materials)
+    for _, material in ipairs(materials) do
+        if material.requiresApproval ~= false and itemCount(material.nonApprovedItemId) >= 5 then
+            return true
+        end
+    end
+    return false
+end
+
+local function getRequiredApprovalStateSignature(materials)
+    local parts = {}
+    for _, material in ipairs(materials) do
+        local approved = itemCount(material.approvedItemId)
+        local nonApproved = 0
+        if material.requiresApproval ~= false then
+            nonApproved = itemCount(material.nonApprovedItemId)
+        end
+        table.insert(parts, string.format("%s:%d:%d", tostring(material.approvedItemId), approved, nonApproved))
+    end
+    table.sort(parts)
+    return table.concat(parts, "|")
+end
+
+local function reconcileApprovedMaterials(materials)
+    local passNumber = 0
+    local previousSignature = nil
+
+    while true do
+        local approvedReady, blockingMaterial = approvedMaterialsReady(materials)
+        if approvedReady then
+            return true
+        end
+
+        if not hasEligibleRequiredNonApprovedMaterials(materials) then
+            return fail(string.format(
+                "Approved materials still insufficient after Flotpassant: %s (%d/%d approved).",
+                tostring(blockingMaterial.approvedItemName),
+                itemCount(blockingMaterial.approvedItemId),
+                blockingMaterial.totalRequired
+            ))
+        end
+
+        local currentSignature = getRequiredApprovalStateSignature(materials)
+        if previousSignature ~= nil and currentSignature == previousSignature then
+            return fail(string.format(
+                "Approval state stopped progressing before crafting requirements were met: %s (%d/%d approved).",
+                tostring(blockingMaterial.approvedItemName),
+                itemCount(blockingMaterial.approvedItemId),
+                blockingMaterial.totalRequired
+            ))
+        end
+
+        previousSignature = currentSignature
+        passNumber = passNumber + 1
+        if passNumber > 1 then
+            log(string.format("Rechecking Flotpassant approvals (pass %d).", passNumber))
+        end
+
+        if not approveMaterials(materials) then
+            return nil
+        end
+    end
+end
+
 local function approveRemainingNonApprovedInventory()
     local hasEligible, grouped = hasEligibleNonApprovedInventory()
     if not hasEligible then
@@ -1317,6 +1429,19 @@ local function approvedMaterialsReady(materials)
         end
     end
     return true, nil
+end
+
+local function getFreeInventorySlots()
+    if not (Inventory and Inventory.GetFreeInventorySlots) then
+        return nil
+    end
+
+    local ok, slots = pcall(Inventory.GetFreeInventorySlots)
+    if not ok then
+        return nil
+    end
+
+    return math.max(0, math.floor(tonumber(slots) or 0))
 end
 
 local function moveToCraftPosition()
@@ -1440,6 +1565,64 @@ local function turnInAtPotkin(craftConfig)
     return true
 end
 
+local function processCraftTurnInBatches(craftConfig, totalQuantity)
+    local remainingToCraft = totalQuantity
+
+    while remainingToCraft > 0 do
+        local freeSlots = getFreeInventorySlots()
+        if freeSlots == nil then
+            return fail("Unable to determine free inventory slots before crafting.")
+        end
+
+        if freeSlots <= 0 then
+            if getCraftedItemCount(craftConfig) > 0 then
+                if not turnInAtPotkin(craftConfig) then
+                    return nil
+                end
+                freeSlots = getFreeInventorySlots()
+                if freeSlots == nil then
+                    return fail("Unable to determine free inventory slots after turn-in.")
+                end
+            end
+
+            if freeSlots == nil or freeSlots <= 0 then
+                return fail(string.format(
+                    "No free inventory slots available to craft remaining %d item(s).",
+                    remainingToCraft
+                ))
+            end
+        end
+
+        local batchQuantity = math.min(remainingToCraft, freeSlots)
+        log(string.format(
+            "Free inventory slots: %d. Crafting batch of %d (%d remaining after batch).",
+            freeSlots,
+            batchQuantity,
+            remainingToCraft - batchQuantity
+        ))
+
+        if not moveToCraftPosition() then
+            return nil
+        end
+
+        if not craftWithArtisan(craftConfig, batchQuantity) then
+            return nil
+        end
+
+        if not approveRemainingNonApprovedInventory() then
+            return nil
+        end
+
+        if not turnInAtPotkin(craftConfig) then
+            return nil
+        end
+
+        remainingToCraft = remainingToCraft - batchQuantity
+    end
+
+    return true
+end
+
 local craftChoice = Config and Config.Get and tostring(Config.Get("Craft Item") or "") or ""
 local quantity = toInteger(Config and Config.Get and Config.Get("Target Amount") or 1, 1, 1, 999)
 local totalCycles = toInteger(Config and Config.Get and Config.Get("Turn-in Cycles") or 1, 1, 0, 999)
@@ -1480,34 +1663,11 @@ while totalCycles == 0 or completedCycles < totalCycles do
         return
     end
 
-    if not approveMaterials(materials) then
+    if not reconcileApprovedMaterials(materials) then
         return
     end
 
-    local approvedReady, blockingMaterial = approvedMaterialsReady(materials)
-    if not approvedReady then
-        fail(string.format(
-            "Approved materials still insufficient after Flotpassant: %s (%d/%d approved).",
-            tostring(blockingMaterial.approvedItemName),
-            itemCount(blockingMaterial.approvedItemId),
-            blockingMaterial.totalRequired
-        ))
-        return
-    end
-
-    if not moveToCraftPosition() then
-        return
-    end
-
-    if not craftWithArtisan(craftConfig, quantity) then
-        return
-    end
-
-    if not approveRemainingNonApprovedInventory() then
-        return
-    end
-
-    if not turnInAtPotkin(craftConfig) then
+    if not processCraftTurnInBatches(craftConfig, quantity) then
         return
     end
 
