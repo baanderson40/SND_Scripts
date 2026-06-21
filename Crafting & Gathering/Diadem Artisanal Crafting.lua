@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.1
+version: 0.1.2
 description: |
   Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -279,28 +279,6 @@ local function isCraftingActive()
         or Svc.Condition[CHARACTER_CONDITION.crafting] == true
 end
 
-local function isLifestreamBusy()
-    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
-        local ok, busy = pcall(IPC.Lifestream.IsBusy)
-        return ok and busy == true
-    end
-    return false
-end
-
-local function waitForLifestreamIdle(timeoutSec)
-    return waitUntil(function()
-        return not isLifestreamBusy()
-    end, timeoutSec or 30, TIME.POLL, 0.5)
-end
-
-local function waitForTerritoryStable(targetTerritoryId, holdSeconds, timeoutSeconds)
-    return waitUntil(function()
-        local zoneMatches = currentTerritory() == targetTerritoryId
-        local moving = (Player and Player.IsMoving) or false
-        return zoneMatches and not moving and not isBusyZoning()
-    end, timeoutSeconds or 60, TIME.POLL, holdSeconds or 1.5)
-end
-
 local function waitUntil(predicate, timeoutSec, pollSec, stableSec)
     timeoutSec = tonumber(timeoutSec) or 10
     pollSec = tonumber(pollSec) or TIME.POLL
@@ -325,6 +303,28 @@ local function waitUntil(predicate, timeoutSec, pollSec, stableSec)
     end
 
     return false
+end
+
+local function isLifestreamBusy()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        return ok and busy == true
+    end
+    return false
+end
+
+local function waitForLifestreamIdle(timeoutSec)
+    return waitUntil(function()
+        return not isLifestreamBusy()
+    end, timeoutSec or 30, TIME.POLL, 0.5)
+end
+
+local function waitForTerritoryStable(targetTerritoryId, holdSeconds, timeoutSeconds)
+    return waitUntil(function()
+        local zoneMatches = currentTerritory() == targetTerritoryId
+        local moving = (Player and Player.IsMoving) or false
+        return zoneMatches and not moving and not isBusyZoning()
+    end, timeoutSeconds or 60, TIME.POLL, holdSeconds or 1.5)
 end
 
 local function getAddon(name)
@@ -1176,19 +1176,6 @@ local function openNpcAddon(runtime, addonName)
     return fail("Failed to open addon '" .. addonName .. "' from " .. npc.name .. ".")
 end
 
-local function getEligibleMaterialIds(materials, gatherClass)
-    local ids = {}
-    for _, material in ipairs(materials) do
-        if material.requiresApproval ~= false and material.gatherClass == gatherClass then
-            local current = itemCount(material.nonApprovedItemId)
-            if current >= 5 then
-                table.insert(ids, material.nonApprovedItemId)
-            end
-        end
-    end
-    return ids
-end
-
 local function getEligibleNonApprovedInventoryByClass()
     local grouped = {
         miner = {},
@@ -1230,14 +1217,13 @@ local function eligibleSignature(itemIds)
     return table.concat(parts, "|")
 end
 
-local function processFlotpassantClass(materials, gatherClass)
+local function processFlotpassantClass(eligibleIds, gatherClass, batchLabel)
     local config = CLASS_CONFIG[gatherClass]
     if config == nil then
         return fail("Unknown gather class '" .. tostring(gatherClass) .. "'.")
     end
 
     while true do
-        local eligibleIds = getEligibleMaterialIds(materials, gatherClass)
         if #eligibleIds == 0 then
             return true
         end
@@ -1250,7 +1236,7 @@ local function processFlotpassantClass(materials, gatherClass)
         end
 
         local beforeSignature = eligibleSignature(eligibleIds)
-        log(string.format("Submitting %s approval batch (%d eligible items).", gatherClass, #eligibleIds), true)
+        log(string.format("Submitting %s %s batch (%d eligible items).", gatherClass, batchLabel, #eligibleIds), true)
         safeCallback("HWDGathereInspect", true, 14, config.callbackIndex)
         sleep(FLOTPASSANT_CALLBACK_DELAY)
         safeCallback("HWDGathereInspect", true, 12)
@@ -1264,26 +1250,21 @@ local function processFlotpassantClass(materials, gatherClass)
             if not isAddonReady("HWDGathereInspect") then
                 return true
             end
-            return eligibleSignature(getEligibleMaterialIds(materials, gatherClass)) ~= beforeSignature
+            return eligibleSignature(getEligibleNonApprovedInventoryByClass()[gatherClass]) ~= beforeSignature
         end, 12, TIME.SHORT, 0.5)
         if not changed then
-            log("Approval batch did not visibly change inventory; continuing cautiously.", true)
+            log(string.format("%s batch did not visibly change inventory; continuing cautiously.", batchLabel:gsub("^%l", string.upper)), true)
             sleep(TIME.LONG)
         end
+
+        eligibleIds = getEligibleNonApprovedInventoryByClass()[gatherClass]
     end
 end
 
-local function approveMaterials(materials)
-    local needsApproval = false
-    for _, material in ipairs(materials) do
-        if material.requiresApproval ~= false and itemCount(material.nonApprovedItemId) >= 5 then
-            needsApproval = true
-            break
-        end
-    end
-
-    if not needsApproval then
-        log("No eligible non-approved items detected; skipping Flotpassant.", true)
+local function approveEligibleNonApprovedInventory(batchLabel, emptyLogMessage)
+    local hasEligible, grouped = hasEligibleNonApprovedInventory()
+    if not hasEligible then
+        log(emptyLogMessage, true)
         return true
     end
 
@@ -1294,7 +1275,7 @@ local function approveMaterials(materials)
 
     local classOrder = { "miner", "botanist", "fisher" }
     for _, gatherClass in ipairs(classOrder) do
-        local ok = processFlotpassantClass(materials, gatherClass)
+        local ok = processFlotpassantClass(grouped[gatherClass], gatherClass, batchLabel)
         if not ok then
             return nil
         end
@@ -1305,6 +1286,14 @@ local function approveMaterials(materials)
         waitAddonClosed("HWDGathereInspect", 3)
     end
     return true
+end
+
+local function approveMaterials(materials)
+    if materials == nil then
+        log("No eligible non-approved items detected; skipping Flotpassant.", true)
+        return true
+    end
+    return approveEligibleNonApprovedInventory("approval", "No eligible non-approved items detected; skipping Flotpassant.")
 end
 
 local function approvedMaterialsReady(materials)
@@ -1381,54 +1370,8 @@ local function reconcileApprovedMaterials(materials)
 end
 
 local function approveRemainingNonApprovedInventory()
-    local hasEligible, grouped = hasEligibleNonApprovedInventory()
-    if not hasEligible then
-        return true
-    end
-
     log("Eligible non-approved items remain; returning to Flotpassant before turn-in.", true)
-    local opened = openNpcAddon(FLOTPASSANT, "HWDGathereInspect")
-    if opened == nil then
-        return nil
-    end
-
-    local classOrder = { "miner", "botanist", "fisher" }
-    for _, gatherClass in ipairs(classOrder) do
-        while #grouped[gatherClass] > 0 do
-            local config = CLASS_CONFIG[gatherClass]
-            local beforeSignature = eligibleSignature(grouped[gatherClass])
-            log(string.format("Submitting %s cleanup batch (%d eligible items).", gatherClass, #grouped[gatherClass]), true)
-            safeCallback("HWDGathereInspect", true, 14, config.callbackIndex)
-            sleep(FLOTPASSANT_CALLBACK_DELAY)
-            safeCallback("HWDGathereInspect", true, 12)
-            sleep(FLOTPASSANT_CALLBACK_DELAY)
-            safeCallback("HWDGathereInspect", true, 11)
-
-            local changed = waitUntil(function()
-                if handleSelectYesnoIfOpen() then
-                    return false
-                end
-                if not isAddonReady("HWDGathereInspect") then
-                    return true
-                end
-                local refreshed = getEligibleNonApprovedInventoryByClass()
-                return eligibleSignature(refreshed[gatherClass]) ~= beforeSignature
-            end, 12, TIME.SHORT, 0.5)
-            if not changed then
-                log("Cleanup approval batch did not visibly change inventory; continuing cautiously.", true)
-                sleep(TIME.LONG)
-            end
-
-            grouped = getEligibleNonApprovedInventoryByClass()
-        end
-    end
-
-    if isAddonReady("HWDGathereInspect") then
-        safeCallback("HWDGathereInspect", true, -1)
-        waitAddonClosed("HWDGathereInspect", 3)
-    end
-
-    return true
+    return approveEligibleNonApprovedInventory("cleanup", "No eligible non-approved items detected; skipping Flotpassant.")
 end
 
 local function getFreeInventorySlots()
