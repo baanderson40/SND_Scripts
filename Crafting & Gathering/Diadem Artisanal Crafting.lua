@@ -1,8 +1,15 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.0.1
-description: Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
+version: 0.0.2
+description: |
+  Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
+  Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
+plugin_dependencies:
+- GatherBuddyReborn
+- vnavmesh
+- Artisan
+- PandorasBox
 configs:
   Craft Item:
     description: Grade 4 Artisanal Skybuilders' craft to make and turn in
@@ -13,6 +20,11 @@ configs:
     description: Number of selected crafted items to make this run
     default: 10
     min: 1
+    max: 999
+  Turn-in Cycles:
+    description: Number of full gather, craft, and turn-in cycles to perform; 0 repeats indefinitely
+    default: 1
+    min: 0
     max: 999
   Follow-up script:
     description: SND script to run after this Diadem script completes successfully
@@ -65,6 +77,7 @@ local TIME = {
     LONG = 2.0,
 }
 
+local FLOTPASSANT_CALLBACK_DELAY = 1.0
 local POTKIN_TURNIN_DELAY = 2.5
 
 local MINIMUM_COLLECTABILITY = 1
@@ -340,6 +353,91 @@ local function waitAddonClosed(name, timeoutSec)
     return waitUntil(function()
         return not isAddonReady(name)
     end, timeoutSec or 10, TIME.POLL, 0.2)
+end
+
+local function handleSelectYesnoIfOpen()
+    if not isAddonReady("SelectYesno") then
+        return false
+    end
+
+    log("Confirming SelectYesno.")
+    yield("/callback SelectYesno true 0")
+    sleep(TIME.SHORT)
+    waitAddonClosed("SelectYesno", 3)
+    return true
+end
+
+local function getPandoraTurninAutomationState()
+    if not (IPC and IPC.PandorasBox) then
+        return nil
+    end
+
+    if not (IPC.PandorasBox.GetFeatureEnabled and IPC.PandorasBox.GetConfigEnabled) then
+        return nil
+    end
+
+    local okFeature, featureEnabled = pcall(function()
+        return IPC.PandorasBox.GetFeatureEnabled("Auto-select Turn-ins")
+    end)
+    local okConfig, configEnabled = pcall(function()
+        return IPC.PandorasBox.GetConfigEnabled("Auto-select Turn-ins", "AutoConfirm")
+    end)
+
+    if not okFeature or not okConfig then
+        return nil
+    end
+
+    return {
+        featureEnabled = featureEnabled == true,
+        configEnabled = configEnabled == true,
+        changedFeature = false,
+        changedConfig = false,
+    }
+end
+
+local function enablePandoraTurninAutomation()
+    local state = getPandoraTurninAutomationState()
+    if state == nil then
+        return nil
+    end
+
+    if not state.featureEnabled and IPC.PandorasBox.SetFeatureEnabled then
+        local ok = pcall(function()
+            IPC.PandorasBox.SetFeatureEnabled("Auto-select Turn-ins", true)
+        end)
+        if ok then
+            state.changedFeature = true
+        end
+    end
+
+    if not state.configEnabled and IPC.PandorasBox.SetConfigEnabled then
+        local ok = pcall(function()
+            IPC.PandorasBox.SetConfigEnabled("Auto-select Turn-ins", "AutoConfirm", true)
+        end)
+        if ok then
+            state.changedConfig = true
+        end
+    end
+
+    return state
+end
+
+local function restorePandoraTurninAutomation(state)
+    if state == nil or not (IPC and IPC.PandorasBox) then
+        return
+    end
+
+    if state.changedConfig and IPC.PandorasBox.SetConfigEnabled then
+        pcall(function()
+            IPC.PandorasBox.SetConfigEnabled("Auto-select Turn-ins", "AutoConfirm", false)
+        end)
+    end
+
+    if state.changedFeature and IPC.PandorasBox.SetFeatureEnabled then
+        pcall(function()
+            IPC.PandorasBox.SetFeatureEnabled("Auto-select Turn-ins", false)
+        end)
+    end
 end
 
 local safeCallback
@@ -907,6 +1005,17 @@ local function runGatherBuddyAuto(enabled)
     yield(command)
 end
 
+local function ensureMaterialsReadyForCycle(materials)
+    if materialsFullyReady(materials) then
+        log("Materials already ready for this cycle; skipping GatherBuddy start.")
+        return true
+    end
+
+    runGatherBuddyAuto(true)
+    sleep(TIME.MEDIUM)
+    return waitForMaterials(materials)
+end
+
 local function leaveDiademIfNeeded()
     if currentTerritory() ~= DIADEM_TERRITORY_ID then
         return true
@@ -1095,12 +1204,15 @@ local function processFlotpassantClass(materials, gatherClass)
         local beforeSignature = eligibleSignature(eligibleIds)
         log(string.format("Submitting %s approval batch (%d eligible items).", gatherClass, #eligibleIds), true)
         safeCallback("HWDGathereInspect", true, 14, config.callbackIndex)
-        sleep(TIME.SHORT)
+        sleep(FLOTPASSANT_CALLBACK_DELAY)
         safeCallback("HWDGathereInspect", true, 12)
-        sleep(TIME.SHORT)
+        sleep(FLOTPASSANT_CALLBACK_DELAY)
         safeCallback("HWDGathereInspect", true, 11)
 
         local changed = waitUntil(function()
+            if handleSelectYesnoIfOpen() then
+                return false
+            end
             if not isAddonReady("HWDGathereInspect") then
                 return true
             end
@@ -1166,12 +1278,15 @@ local function approveRemainingNonApprovedInventory()
             local beforeSignature = eligibleSignature(grouped[gatherClass])
             log(string.format("Submitting %s cleanup batch (%d eligible items).", gatherClass, #grouped[gatherClass]), true)
             safeCallback("HWDGathereInspect", true, 14, config.callbackIndex)
-            sleep(TIME.SHORT)
+            sleep(FLOTPASSANT_CALLBACK_DELAY)
             safeCallback("HWDGathereInspect", true, 12)
-            sleep(TIME.SHORT)
+            sleep(FLOTPASSANT_CALLBACK_DELAY)
             safeCallback("HWDGathereInspect", true, 11)
 
             local changed = waitUntil(function()
+                if handleSelectYesnoIfOpen() then
+                    return false
+                end
                 if not isAddonReady("HWDGathereInspect") then
                     return true
                 end
@@ -1276,8 +1391,14 @@ local function craftWithArtisan(craftConfig, quantity)
 end
 
 local function turnInAtPotkin(craftConfig)
+    local pandoraState = enablePandoraTurninAutomation()
+    local function cleanupPandora()
+        restorePandoraTurninAutomation(pandoraState)
+    end
+
     local opened = openNpcAddon(POTKIN, "HWDSupply")
     if opened == nil then
+        cleanupPandora()
         return nil
     end
 
@@ -1285,18 +1406,23 @@ local function turnInAtPotkin(craftConfig)
         if not isAddonReady("HWDSupply") then
             opened = openNpcAddon(POTKIN, "HWDSupply")
             if opened == nil then
+                cleanupPandora()
                 return nil
             end
         end
 
         local before = getCraftedItemCount(craftConfig)
-        log(string.format("Turning in %s at Potkin (%d remaining).", tostring(craftChoice), before))
+        log(string.format("Turning in %s at Potkin (%d remaining).", tostring(craftConfig.displayName or craftConfig.outputItemId), before))
         safeCallback("HWDSupply", true, 1, 0)
 
         local changed = waitUntil(function()
+            if handleSelectYesnoIfOpen() then
+                return false
+            end
             return getCraftedItemCount(craftConfig) < before or not isAddonReady("HWDSupply")
         end, 12, TIME.SHORT, 0.5)
         if not changed then
+            cleanupPandora()
             return fail("Potkin turn-in did not change inventory.")
         end
 
@@ -1309,12 +1435,14 @@ local function turnInAtPotkin(craftConfig)
         safeCallback("HWDSupply", true, -1)
         waitAddonClosed("HWDSupply", 3)
     end
+    cleanupPandora()
     log("All crafted items turned in.", true)
     return true
 end
 
 local craftChoice = Config and Config.Get and tostring(Config.Get("Craft Item") or "") or ""
 local quantity = toInteger(Config and Config.Get and Config.Get("Target Amount") or 1, 1, 1, 999)
+local totalCycles = toInteger(Config and Config.Get and Config.Get("Turn-in Cycles") or 1, 1, 0, 999)
 local craftConfig = CRAFT_CHOICES[craftChoice]
 
 if craftConfig == nil then
@@ -1322,57 +1450,73 @@ if craftConfig == nil then
     return
 end
 
+craftConfig.displayName = craftChoice
+
 local materials, materialError = buildRecipeMaterials(craftConfig.recipeId, quantity)
 if materials == nil then
     return
 end
 
-log(string.format("Selected %s x%d.", craftChoice, quantity), true)
-
-if not waitForMaterials(materials) then
-    return
+if totalCycles == 0 then
+    log(string.format("Selected %s x%d for infinite cycles.", craftChoice, quantity))
+else
+    log(string.format("Selected %s x%d for %d cycle(s).", craftChoice, quantity, totalCycles))
 end
 
-runGatherBuddyAuto(false)
-sleep(TIME.MEDIUM)
+local completedCycles = 0
+while totalCycles == 0 or completedCycles < totalCycles do
+    if not ensureMaterialsReadyForCycle(materials) then
+        return
+    end
 
-if not leaveDiademIfNeeded() then
-    return
-end
+    runGatherBuddyAuto(false)
+    sleep(TIME.MEDIUM)
 
-if not ensureFirmament() then
-    return
-end
+    if not leaveDiademIfNeeded() then
+        return
+    end
 
-if not approveMaterials(materials) then
-    return
-end
+    if not ensureFirmament() then
+        return
+    end
 
-local approvedReady, blockingMaterial = approvedMaterialsReady(materials)
-if not approvedReady then
-    fail(string.format(
-        "Approved materials still insufficient after Flotpassant: %s (%d/%d approved).",
-        tostring(blockingMaterial.approvedItemName),
-        itemCount(blockingMaterial.approvedItemId),
-        blockingMaterial.totalRequired
-    ))
-    return
-end
+    if not approveMaterials(materials) then
+        return
+    end
 
-if not moveToCraftPosition() then
-    return
-end
+    local approvedReady, blockingMaterial = approvedMaterialsReady(materials)
+    if not approvedReady then
+        fail(string.format(
+            "Approved materials still insufficient after Flotpassant: %s (%d/%d approved).",
+            tostring(blockingMaterial.approvedItemName),
+            itemCount(blockingMaterial.approvedItemId),
+            blockingMaterial.totalRequired
+        ))
+        return
+    end
 
-if not craftWithArtisan(craftConfig, quantity) then
-    return
-end
+    if not moveToCraftPosition() then
+        return
+    end
 
-if not approveRemainingNonApprovedInventory() then
-    return
-end
+    if not craftWithArtisan(craftConfig, quantity) then
+        return
+    end
 
-if not turnInAtPotkin(craftConfig) then
-    return
+    if not approveRemainingNonApprovedInventory() then
+        return
+    end
+
+    if not turnInAtPotkin(craftConfig) then
+        return
+    end
+
+    completedCycles = completedCycles + 1
+    if totalCycles == 0 then
+        log(string.format("Completed cycle %d (infinite mode).", completedCycles))
+    else
+        log(string.format("Completed cycle %d/%d.", completedCycles, totalCycles))
+    end
 end
 
 if not runCompletionFollowUp() then
