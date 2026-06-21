@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.0
+version: 0.1.1
 description: |
   Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -1307,6 +1307,15 @@ local function approveMaterials(materials)
     return true
 end
 
+local function approvedMaterialsReady(materials)
+    for _, material in ipairs(materials) do
+        if itemCount(material.approvedItemId) < material.totalRequired then
+            return false, material
+        end
+    end
+    return true, nil
+end
+
 local function hasEligibleRequiredNonApprovedMaterials(materials)
     for _, material in ipairs(materials) do
         if material.requiresApproval ~= false and itemCount(material.nonApprovedItemId) >= 5 then
@@ -1420,15 +1429,6 @@ local function approveRemainingNonApprovedInventory()
     end
 
     return true
-end
-
-local function approvedMaterialsReady(materials)
-    for _, material in ipairs(materials) do
-        if itemCount(material.approvedItemId) < material.totalRequired then
-            return false, material
-        end
-    end
-    return true, nil
 end
 
 local function getFreeInventorySlots()
