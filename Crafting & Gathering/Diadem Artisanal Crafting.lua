@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.2
+version: 0.1.3
 description: |
   Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -26,6 +26,14 @@ configs:
     default: 1
     min: 0
     max: 999
+  Monitor Gather Stalls:
+    description: Leave Diadem and let GatherBuddy Reborn re-enter if no gather activity is detected while waiting for materials
+    default: false
+  Gather Stall Timeout Seconds:
+    description: Seconds with no gather activity before leaving Diadem so GatherBuddy Reborn can retry
+    default: 10
+    min: 3
+    max: 120
   Follow-up script:
     description: SND script to run after this Diadem script completes successfully
     default: ""
@@ -59,6 +67,8 @@ local POTKIN = {
 local CRAFT_POSITION = Vector3(37.868, -16.000, 164.464)
 local CRAFT_POSITION_RADIUS = 15.0
 local POTKIN_TARGET_COMMAND = '/target "Potkin"'
+local DIADEM_STALL_EXEMPT_POSITION = Vector3(-656.904, 285.346, -156.401)
+local DIADEM_STALL_EXEMPT_RADIUS = 30.0
 
 local CHARACTER_CONDITION = {
     mounted = 4,
@@ -259,6 +269,31 @@ end
 
 local function currentTerritory()
     return Svc and Svc.ClientState and Svc.ClientState.TerritoryType or nil
+end
+
+local function getPlayerPosition()
+    if Entity and Entity.Player and Entity.Player.Position then
+        return Entity.Player.Position
+    end
+    if Player and Player.Position then
+        return Player.Position
+    end
+    return nil
+end
+
+local function isWithinFlatDistance(targetPosition, radius)
+    local playerPosition = getPlayerPosition()
+    if playerPosition == nil or targetPosition == nil then
+        return false
+    end
+
+    local dx = playerPosition.X - targetPosition.X
+    local dz = playerPosition.Z - targetPosition.Z
+    return (dx * dx + dz * dz) <= (radius * radius)
+end
+
+local function isInDiademStallExemptZone()
+    return isWithinFlatDistance(DIADEM_STALL_EXEMPT_POSITION, DIADEM_STALL_EXEMPT_RADIUS)
 end
 
 local function isBusyZoning()
@@ -1020,13 +1055,39 @@ local function buildMaterialSnapshot(materials)
     return table.concat(parts, " | ")
 end
 
-local function waitForMaterials(materials)
+local function getGatherStallTimeout()
+    return toInteger(Config and Config.Get and Config.Get("Gather Stall Timeout Seconds") or 10, 10, 3, 120)
+end
+
+local function isGatherActivityObserved()
+    local moving = (Player and Player.IsMoving) == true
+    if not (Svc and Svc.Condition) then
+        return moving
+    end
+
+    return moving
+        or Svc.Condition[CHARACTER_CONDITION.mounted] == true
+        or Svc.Condition[6] == true
+        or Svc.Condition[CHARACTER_CONDITION.occupiedMateriaExtractionAndRepair] == true
+        or Svc.Condition[42] == true
+        or Svc.Condition[43] == true
+end
+
+local function waitForMaterialsOrGatherStall(materials)
     log("Waiting for required Diadem materials.", true)
+    local monitorEnabled = Config and Config.Get and Config.Get("Monitor Gather Stalls") == true
+    local stallTimeout = getGatherStallTimeout()
+    local lastActivityTime = os.clock()
     local lastSnapshot = ""
+
+    if monitorEnabled then
+        log(string.format("Gather activity monitor enabled (timeout: %ds).", stallTimeout))
+    end
+
     while true do
         if materialsFullyReady(materials) then
             log("All required materials detected.", true)
-            return true
+            return "ready"
         end
 
         local snapshot = buildMaterialSnapshot(materials)
@@ -1034,7 +1095,21 @@ local function waitForMaterials(materials)
             log(snapshot)
             lastSnapshot = snapshot
         end
-        sleep(60)
+
+        if monitorEnabled and isGatherActivityObserved() then
+            lastActivityTime = os.clock()
+        end
+
+        if monitorEnabled
+            and currentTerritory() == DIADEM_TERRITORY_ID
+            and (os.clock() - lastActivityTime) >= stallTimeout
+            and not isInDiademStallExemptZone()
+        then
+            log(string.format("Gather stall detected after %ds with no gather activity; leaving Diadem so GBR can re-enter.", stallTimeout))
+            return "stalled"
+        end
+
+        sleep(monitorEnabled and TIME.MEDIUM or 60)
     end
 end
 
@@ -1044,6 +1119,8 @@ local function runGatherBuddyAuto(enabled)
     yield(command)
 end
 
+local leaveDiademIfNeeded
+
 local function ensureMaterialsReadyForCycle(materials)
     if materialsFullyReady(materials) then
         log("Materials already ready for this cycle; skipping GatherBuddy start.")
@@ -1052,10 +1129,23 @@ local function ensureMaterialsReadyForCycle(materials)
 
     runGatherBuddyAuto(true)
     sleep(TIME.MEDIUM)
-    return waitForMaterials(materials)
+
+    while true do
+        local result = waitForMaterialsOrGatherStall(materials)
+        if result == "ready" then
+            return true
+        end
+
+        if result == "stalled" then
+            if not leaveDiademIfNeeded() then
+                return nil
+            end
+            sleep(TIME.MEDIUM)
+        end
+    end
 end
 
-local function leaveDiademIfNeeded()
+leaveDiademIfNeeded = function()
     if currentTerritory() ~= DIADEM_TERRITORY_ID then
         return true
     end
