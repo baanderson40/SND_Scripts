@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 2.0.2
+version: 2.0.3
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -982,7 +982,9 @@ local Runtime = {
         consecutiveTriggers = 0,
         triggered = false,
         lastLogMessage = nil,
-        lastLogTime = 0
+        lastLogTime = 0,
+        lastTargetHp = nil,
+        lastTargetHpTime = 0
     }
 }
 
@@ -1188,7 +1190,9 @@ function GetStuckMonitorRuntime()
             consecutiveTriggers = 0,
             triggered = false,
             lastLogMessage = nil,
-            lastLogTime = 0
+            lastLogTime = 0,
+            lastTargetHp = nil,
+            lastTargetHpTime = 0
         }
     end
     return Runtime.stuckMonitor
@@ -1802,6 +1806,8 @@ function ResetStuckMonitor(reason)
     local monitor = GetStuckMonitorRuntime()
     monitor.lastPosition = nil
     monitor.lastMovementTime = os.clock()
+    monitor.lastTargetHp = nil
+    monitor.lastTargetHpTime = 0
     monitor.triggered = false
     if reason ~= nil and reason ~= "" then
         StuckMonitorLog("Reset: "..reason, true)
@@ -2062,7 +2068,21 @@ function UpdateStuckMonitor()
     end
 
     if condition[CharacterCondition.inCombat] then
-        ResetStuckMonitor("in combat")
+        local target = Svc.Targets.Target
+        if target ~= nil and target.CurrentHp ~= nil then
+            local hp = target.CurrentHp
+            if monitor.lastTargetHp ~= nil and hp < monitor.lastTargetHp and hp > 0 then
+                if Entity and Entity.Player and Entity.Player.Position then
+                    UpdateStuckMonitorMovement(Entity.Player.Position)
+                end
+                monitor.lastTargetHp = hp
+                monitor.lastTargetHpTime = os.clock()
+                return
+            end
+            monitor.lastTargetHp = hp
+            monitor.lastTargetHpTime = os.clock()
+        end
+        StuckMonitorLog("in combat", true)
         return
     end
 
