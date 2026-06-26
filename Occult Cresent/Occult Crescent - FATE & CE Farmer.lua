@@ -1,9 +1,9 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.2.0
+version: 0.3.0
 description: >-
-  Route to South Horn Critical Encounters and FATEs, hand off to BossMod autorotation, apply self-buffs, and return to Base Camp.
+  Farm South Horn Critical Encounters and FATEs, hand off to BossMod autorotation, apply self-buffs, and return to Base Camp between activities.
 plugin_dependencies:
 - vnavmesh
 - Lifestream
@@ -11,6 +11,24 @@ configs:
     Autorotation Preset Name:
         default: "Occult"
         description: BossMod/BMR autorotation preset to validate at startup and enable during CE combat.
+    Farming Mode:
+        description: Choose which activities to farm.
+        is_choice: true
+        choices:
+          - "CE & FATE"
+          - "CE Only"
+          - "FATE Only"
+        default: "CE & FATE"
+    FATE Priority:
+        description: How to select which FATE to target.
+        is_choice: true
+        choices:
+          - Lowest Progress
+          - Nearest
+        default: Lowest Progress
+    Excluded FATEs:
+        default: ""
+        description: Comma-separated FATE names to skip.
     Enable Buff Rotation:
         default: true
         description: Auto apply phantom job buffs.
@@ -230,9 +248,10 @@ local IDLE_LOG_INTERVAL = 10.0
 local BUFF_SETTLE_SECONDS = 0.5
 local BUFF_TIMEOUT = 3.0
 local BUFF_FRESH_DURATION = 600.0
+local BUFF_VERIFY_RETRIES = 3
 
 local BUFF_ACTIONS = {
-    { jobId = 0,  name = "Freelancer", actionId = 46606, minLevel = 15, buffName = "Inquiring Mind",      appliesAll = true  },
+    { jobId = 0,  name = "Freelancer", actionId = 46606, minLevel = 15, buffName = "Inquiring Mind",      appliesAll = true,  checkStatusIds = { 4233, 4239, 4244, 4799 } },
     { jobId = 1,  name = "Knight",     actionId = 41589, minLevel = 2,  buffName = "Enduring Fortitude", statusId = 4233    },
     { jobId = 3,  name = "Monk",       actionId = 41597, minLevel = 3,  buffName = "Fleetfooted",        statusId = 4239    },
     { jobId = 6,  name = "Bard",       actionId = 41609, minLevel = 2,  buffName = "Romeo's Ballad",     statusId = 4244    },
@@ -244,8 +263,35 @@ local ENABLE_BUFF_ROTATION = Config.Get("Enable Buff Rotation") ~= false
 local BUFF_ZONE = {
     center = Vector3(836.07, 73.12, -709.45),
     radiusMin = 2.5,
-    radiusMax = 3.5,
+    radiusMax = 4.5,
 }
+
+local FateState = {
+    None = 0, Preparing = 1, Waiting = 2, Spawning = 3,
+    Running = 4, Ending = 5, Ended = 6, Failed = 7,
+}
+
+local FARMING_MODE = tostring(Config.Get("Farming Mode") or "CE & FATE")
+local ENABLE_CE_FARMING = FARMING_MODE ~= "FATE Only"
+local ENABLE_FATE_FARMING = FARMING_MODE ~= "CE Only"
+local FATE_PRIORITY = tostring(Config.Get("FATE Priority") or "Lowest Progress")
+
+local EXCLUDED_FATES = {}
+do
+    local raw = tostring(Config.Get("Excluded FATEs") or "")
+    if raw ~= "" then
+        for name in string.gmatch(raw, "([^,]+)") do
+            local trimmed = name:match("^%s*(.-)%s*$")
+            if trimmed and trimmed ~= "" then
+                EXCLUDED_FATES[trimmed] = true
+            end
+        end
+    end
+end
+
+local lastFateAt = 0
+local lastFateScanLogAt = 0
+local FATE_DISENGAGE_GRACE_SEC = 2
 
 local CharacterCondition = {
     dead = 2,
@@ -1225,9 +1271,45 @@ local function applyBuffRotation()
 
     logf("Starting buff rotation for originalJob=%d.", originalJob)
 
+    -- Pre-check: are any buffs actually needed?
+    local needsBuff = false
+    for _, entry in ipairs(BUFF_ACTIONS) do
+        local jobLevel = levels[entry.jobId]
+        if jobLevel ~= nil and jobLevel >= entry.minLevel then
+            if entry.appliesAll then
+                local anyExpired = false
+                for _, sid in ipairs(entry.checkStatusIds) do
+                    if getStatusRemaining(sid) < BUFF_FRESH_DURATION then
+                        anyExpired = true
+                        break
+                    end
+                end
+                if anyExpired then needsBuff = true; break end
+            elseif entry.statusId then
+                if getStatusRemaining(entry.statusId) < BUFF_FRESH_DURATION then
+                    needsBuff = true
+                    break
+                end
+            end
+        end
+    end
+
+    if not needsBuff then
+        log("Buff rotation: all buffs fresh, skipping.")
+        return
+    end
+
     if not moveIntoBuffZone() then
         log("Buff rotation: failed to reach buff zone, proceeding anyway.")
     end
+
+    if isMounted() then
+        log("Buff rotation: dismounting before casting.")
+        Actions.ExecuteGeneralAction(23)
+        sleep(0.5)
+    end
+
+    sleep(BUFF_SETTLE_SECONDS)
 
     for _, entry in ipairs(BUFF_ACTIONS) do
         local jobLevel = levels[entry.jobId]
@@ -1248,45 +1330,93 @@ local function applyBuffRotation()
             end
         end
 
-        logf("Buff rotation: switching to %s (jobId=%d).", entry.name, entry.jobId)
-        local ok, err = pcall(function()
-            ocState:ChangeSupportJob(entry.jobId)
-        end)
-        if not ok then
-            logf("Buff rotation: ChangeSupportJob(%d) failed: %s", entry.jobId, tostring(err))
-            goto continue
-        end
+        if entry.jobId ~= originalJob then
+            logf("Buff rotation: switching to %s (jobId=%d).", entry.name, entry.jobId)
+            local ok, err = pcall(function()
+                ocState:ChangeSupportJob(entry.jobId)
+            end)
+            if not ok then
+                logf("Buff rotation: ChangeSupportJob(%d) failed: %s", entry.jobId, tostring(err))
+                goto continue
+            end
 
-        waitUntil(function()
-            return ocState.CurrentSupportJob == entry.jobId
-        end, BUFF_TIMEOUT, BUFF_SETTLE_SECONDS)
-
-        logf("Buff rotation: casting %s (actionId=%d).", entry.buffName, entry.actionId)
-        ok, err = pcall(function()
-            Actions.ExecuteAction(entry.actionId)
-        end)
-        if not ok then
-            logf("Buff rotation: ExecuteAction(%d) failed: %s", entry.actionId, tostring(err))
-            goto continue
-        end
-
-        if entry.statusId then
             waitUntil(function()
-                return hasStatusId(entry.statusId)
+                return ocState.CurrentSupportJob == entry.jobId
             end, BUFF_TIMEOUT, BUFF_SETTLE_SECONDS)
+        else
+            logf("Buff rotation: already on %s (jobId=%d), skipping switch.", entry.name, entry.jobId)
+        end
+
+        local applied = false
+        for attempt = 1, BUFF_VERIFY_RETRIES do
+            sleep(BUFF_SETTLE_SECONDS)
+
+            logf("Buff rotation: casting %s (actionId=%d) attempt %d/%d.", entry.buffName, entry.actionId, attempt, BUFF_VERIFY_RETRIES)
+            local ok, err = pcall(function()
+                Actions.ExecuteAction(entry.actionId)
+            end)
+            if not ok then
+                logf("Buff rotation: ExecuteAction(%d) failed: %s", entry.actionId, tostring(err))
+                goto skip_retry
+            end
+
+            sleep(BUFF_SETTLE_SECONDS)
+
+            if entry.appliesAll then
+                for _, sid in ipairs(entry.checkStatusIds) do
+                    if hasStatusId(sid) then
+                        local remain = getStatusRemaining(sid)
+                        logf("Buff rotation: %s verified via status %d (%.0fs remaining).", entry.buffName, sid, remain)
+                        applied = true
+                        break
+                    else
+                        local remain = getStatusRemaining(sid)
+                        logf("Buff rotation: %s status %d not found (remain=%.0f).", entry.buffName, sid, remain)
+                    end
+                end
+            elseif entry.statusId then
+                local remain = getStatusRemaining(entry.statusId)
+                logf("Buff rotation: %s status %d remain=%.0fs.", entry.buffName, entry.statusId, remain)
+                applied = hasStatusId(entry.statusId)
+            else
+                applied = true
+            end
+
+            if applied then
+                break
+            end
+
+            if attempt < BUFF_VERIFY_RETRIES then
+                logf("Buff rotation: %s not verified, repositioning and retrying.", entry.buffName)
+                if not moveIntoBuffZone() then
+                    log("Buff rotation: repositioning failed, proceeding anyway.")
+                end
+                sleep(BUFF_SETTLE_SECONDS)
+            end
+        end
+
+        if not applied then
+            logf("Buff rotation: %s failed to apply after %d attempts.", entry.buffName, BUFF_VERIFY_RETRIES)
         end
 
         if entry.appliesAll then
-            log("Buff rotation: Freelancer Inquiring Mind covers all buffs, done.")
-            break
+            if applied then
+                log("Buff rotation: Freelancer Inquiring Mind covers all buffs, done.")
+            else
+                log("Buff rotation: Freelancer Inquiring Mind failed, falling through to individual buffs.")
+            end
+            if applied then
+                break
+            end
         end
 
+        ::skip_retry::
         sleep(BUFF_SETTLE_SECONDS)
         ::continue::
         ; -- no-op for label target
     end
 
-    if originalJob ~= nil then
+    if originalJob ~= nil and ocState.CurrentSupportJob ~= originalJob then
         logf("Buff rotation: restoring job %d.", originalJob)
         pcall(function()
             ocState:ChangeSupportJob(originalJob)
@@ -1498,9 +1628,230 @@ local function monitorCe(snapshot)
     return true
 end
 
+--#region FATE functions
+
+local function isInFate()
+    local cf = safeCall(function() return Fates.CurrentFate end)
+    if cf ~= nil and cf.InFate then
+        lastFateAt = os.clock()
+        return true
+    end
+    if lastFateAt > 0 and (os.clock() - lastFateAt) <= FATE_DISENGAGE_GRACE_SEC then
+        return true
+    end
+    return false
+end
+
+local function scanFates()
+    local result = {}
+    local activeFates = safeCall(function() return Fates.GetActiveFates() end)
+    if activeFates == nil then
+        return result
+    end
+    local count = tonumber(safeCall(function() return activeFates.Count end)) or 0
+    local shouldLog = (os.clock() - lastFateScanLogAt) >= IDLE_LOG_INTERVAL
+    if shouldLog then
+        lastFateScanLogAt = os.clock()
+        logf("scanFates: %d active entries.", count)
+    end
+    for i = 0, math.max(0, count - 1) do
+        local fate = safeCall(function() return activeFates[i] end)
+        if fate ~= nil then
+            local state = tonumber(safeCall(function() return fate.State end)) or 0
+            local name = tostring(safeCall(function() return fate.Name end) or "?")
+            local id = tonumber(safeCall(function() return fate.Id end)) or 0
+            local prog = tonumber(safeCall(function() return fate.Progress end)) or 0
+            local radius = tonumber(safeCall(function() return fate.Radius end)) or 0
+            local dist = tonumber(safeCall(function() return fate.DistanceToPlayer end)) or 0
+            if shouldLog then
+                logf("scanFates: [%d] '%s' id=%d state=%d progress=%.1f radius=%.1f dist=%.1f excluded=%s.", i, name, id, state, prog, radius, dist, tostring(EXCLUDED_FATES[name] == true))
+            end
+            if state ~= FateState.Ended and state ~= FateState.Failed and not EXCLUDED_FATES[name] then
+                table.insert(result, {
+                    id = id,
+                    name = name,
+                    location = safeCall(function() return fate.Location end),
+                    radius = radius,
+                    progress = prog,
+                    distance = dist,
+                    state = state,
+                })
+            end
+        end
+    end
+    return result
+end
+
+local function selectTargetFate(fates)
+    if #fates == 0 then return nil end
+    if FATE_PRIORITY == "Nearest" then
+        table.sort(fates, function(a, b) return a.distance < b.distance end)
+    else
+        table.sort(fates, function(a, b)
+            if a.progress ~= b.progress then return a.progress < b.progress end
+            return a.distance < b.distance
+        end)
+    end
+    local best = fates[1]
+    logf("Selected FATE '%s' (id=%d) progress=%.1f distance=%.1f radius=%.1f.", best.name, best.id, best.progress, best.distance, best.radius)
+    return best
+end
+
+local function chooseFateRoute(fate)
+    local playerPosition = getPlayerPosition()
+    local speed = metadata.mountedTravelSpeed or 14.13
+    local directTime = distanceFlat(playerPosition, fate.location) / speed
+
+    local nearestToPlayer, distToPlayer = getNearestConfiguredAethernet(playerPosition)
+    local nearestToFate, _ = getNearestConfiguredAethernet(fate.location)
+    local approachDist = math.max(0, (distToPlayer or 0) - (nearestToPlayer and nearestToPlayer.interactDistanceMax or metadata.aethernetInteractDistance or 4.5))
+    local dest = nearestToFate and nearestToFate.destination or fate.location
+    local shardTime = (approachDist / speed) + AETHERNET_TRANSITION_PENALTY + (distanceFlat(dest, fate.location) / speed)
+
+    local baseCamp = getAethernetByName("BaseCamp")
+    local baseDest = baseCamp and baseCamp.destination or fate.location
+    local returnTime = RETURN_PENALTY + (distanceFlat(baseDest, fate.location) / speed)
+
+    logf("FATE route for %s: direct=%.2f shard=%.2f return=%.2f.", fate.name, directTime, shardTime, returnTime)
+
+    if directTime <= shardTime and directTime <= returnTime then
+        return { kind = "direct", reason = "faster_direct" }
+    end
+    if returnTime < shardTime then
+        return { kind = "return", reason = "faster_return" }
+    end
+    return { kind = "aethernet", reason = "faster_shard", preferred = nearestToFate }
+end
+
+local function fateMoveToPosition(targetPosition, stopDistance, timeoutSec, fateId)
+    if targetPosition == nil then return false end
+    if distanceFlat(getPlayerPosition(), targetPosition) <= (stopDistance or ARRIVAL_DISTANCE) then
+        return true
+    end
+    if not pathfindTo(targetPosition) then return false end
+
+    local timeout = timeoutSec or CE_ATTEMPT_TIMEOUT
+    local deadline = os.clock() + timeout
+    while os.clock() < deadline do
+        local fate = safeCall(function() return Fates.GetFateById(fateId) end)
+        if fate then
+            local state = tonumber(safeCall(function() return fate.State end)) or 0
+            if state == FateState.Ended or state == FateState.Failed then
+                stopPathing()
+                logf("FATE %d ended/failed; aborting move.", fateId)
+                return nil
+            end
+        end
+        if isDead() then
+            stopPathing()
+            handleDeathState()
+            if not pathfindTo(targetPosition) then return false end
+        end
+        if distanceFlat(getPlayerPosition(), targetPosition) <= (stopDistance or ARRIVAL_DISTANCE) then
+            stopPathing()
+            return true
+        end
+        sleep(POLL_INTERVAL)
+    end
+    stopPathing()
+    return false
+end
+
+local function travelToFate(fate)
+    local route = chooseFateRoute(fate)
+    logf("Traveling to FATE '%s' via %s (%s).", fate.name, route.kind, route.reason)
+
+    if route.kind == "return" then
+        local ok, err = useReturn()
+        if not ok then return false, err end
+    elseif route.kind == "aethernet" then
+        local aethOk, aethErr = useOccultAethernet(route.preferred)
+        if not aethOk then return false, aethErr end
+    end
+
+    local stillExists = safeCall(function() return Fates.GetFateById(fate.id) end) ~= nil
+    if not stillExists then
+        logf("FATE %s vanished before travel.", fate.name)
+        return false, "FATE ended before travel"
+    end
+
+    if not ensureMounted() then return false, "failed to mount" end
+
+    local stopDist = math.min(fate.radius, 15)
+    local result = fateMoveToPosition(fate.location, stopDist, CE_ATTEMPT_TIMEOUT, fate.id)
+    if result == nil then
+        logf("FATE %s ended while traveling.", fate.name)
+        return false, "FATE ended during travel"
+    end
+    if not result then
+        return false, "failed to reach FATE position"
+    end
+    return true, nil
+end
+
+local function applyBossModForFate()
+    if applyBossModPreset(AUTOROTATION_PRESET_NAME) then
+        log("Autorotation enabled for FATE.")
+        return true
+    end
+    log("Autorotation preset activation failed for FATE; continuing without it.")
+    return false
+end
+
+local function monitorFate(fate)
+    local autorotationActive = false
+    local fateMonitorStart = os.clock()
+    logf("Monitoring FATE '%s' (id=%d).", fate.name, fate.id)
+
+    while true do
+        if (os.clock() - fateMonitorStart) >= 300 then
+            logf("FATE %s monitoring timeout (5 min).", fate.name)
+            break
+        end
+
+        local fateObj = safeCall(function() return Fates.GetFateById(fate.id) end)
+        if fateObj == nil then
+            logf("FATE %s vanished; ending monitor.", fate.name)
+            break
+        end
+
+        local state = tonumber(safeCall(function() return fateObj.State end)) or 0
+        if state == FateState.Ended or state == FateState.Failed then
+            logf("FATE %s finished (state=%d).", fate.name, state)
+            break
+        end
+
+        local inFate = safeCall(function() return fateObj.InFate end) == true
+        if isInCombat() or inFate then
+            if not autorotationActive then
+                autorotationActive = applyBossModForFate()
+            end
+        elseif autorotationActive then
+            logf("Combat ended for FATE %s; clearing autorotation.", fate.name)
+            clearBossModPreset()
+            autorotationActive = false
+        end
+
+        if isDead() then
+            logf("Player died during FATE %s.", fate.name)
+            handleDeathState()
+            autorotationActive = false
+        end
+
+        sleep(POLL_INTERVAL)
+    end
+
+    waitForCombatToSettle()
+    logf("Final combat clear for FATE %s. Clearing autorotation.", fate.name)
+    clearBossModPreset()
+    return true
+end
+
+--#endregion
+
 local function main()
     math.randomseed(os.time())
-    log("Starting Occult Crescent CE runner.")
+    log("Starting Occult Crescent FATE & CE Farmer.")
     if not isVnavAvailable() then
         stopScriptWithError("vnavmesh IPC is unavailable")
     end
@@ -1521,50 +1872,97 @@ local function main()
     end
 
     logf("Entered South Horn at position %s.", formatVector3(getPlayerPosition()))
+
+    applyBuffRotation()
+
     local baseOk, baseErr = ensureAtBaseCampWaitBand()
     if not baseOk then
         stopScriptWithError(baseErr)
     end
 
-    applyBuffRotation()
-
     while true do
         handleDeathState()
-        local snapshots = scanEvents()
-        local target = selectTargetCe(snapshots)
-        if target == nil then
-            if (os.clock() - lastScanSummaryAt) >= IDLE_LOG_INTERVAL then
-                logf("Scanned %d CE event entries; no valid pre-Battle CE candidate found.", #snapshots)
-                lastScanSummaryAt = os.clock()
-            end
-            if (os.clock() - lastIdleLogAt) >= IDLE_LOG_INTERVAL then
-                log("No active pre-Battle CE target; idling.")
-                lastIdleLogAt = os.clock()
-            end
-            sleep(POLL_INTERVAL)
-        else
-            local travelOk, travelErr = travelToCe(target)
-            if not travelOk then
-                logf("Travel to CE %s failed: %s. Resuming scan.", target.name, travelErr or "unknown error")
-            else
-                monitorCe(target)
 
-                if stopAfterCurrentCe then
+        -- CE farming
+        if ENABLE_CE_FARMING then
+            local snapshots = scanEvents()
+            local target = selectTargetCe(snapshots)
+            if target ~= nil then
+                local travelOk, travelErr = travelToCe(target)
+                if not travelOk then
+                    logf("Travel to CE %s failed: %s. Resuming scan.", target.name, travelErr or "unknown error")
+                else
+                    monitorCe(target)
+
+                    if stopAfterCurrentCe then
+                        local returnOk, returnErr = returnToBaseAndWait()
+                        if not returnOk then
+                            stopScriptWithError(returnErr or "failed to return to base after fatal CE error")
+                        end
+                        stopScriptWithError("Stopping after CE because autorotation failed during Battle")
+                    end
+
+                    -- Before committing to Return, check for nearby FATE
+                    local didFate = false
+                    if ENABLE_FATE_FARMING then
+                        local fateTarget = selectTargetFate(scanFates())
+                        if fateTarget then
+                            local route = chooseFateRoute(fateTarget)
+                            logf("Post-CE FATE '%s' via %s route.", fateTarget.name, route.kind)
+                            if route.kind ~= "direct" then
+                                if route.kind == "return" then
+                                    useReturn()
+                                elseif route.kind == "aethernet" then
+                                    useOccultAethernet(route.preferred)
+                                end
+                            end
+                            local fateOk, fateErr = travelToFate(fateTarget)
+                            if fateOk then
+                                monitorFate(fateTarget)
+                                didFate = true
+                            else
+                                logf("Post-CE FATE travel failed: %s.", tostring(fateErr))
+                            end
+                        end
+                    end
+
                     local returnOk, returnErr = returnToBaseAndWait()
                     if not returnOk then
-                        stopScriptWithError(returnErr or "failed to return to base after fatal CE error")
+                        stopScriptWithError(returnErr or "failed to return to base")
                     end
-                    stopScriptWithError("Stopping after CE because autorotation failed during Battle")
+                    applyBuffRotation()
                 end
-
-                local returnOk, returnErr = returnToBaseAndWait()
-                if not returnOk then
-                    stopScriptWithError(returnErr or "failed to return to base after CE completion")
-                end
-
-                applyBuffRotation()
+                goto continue_loop
             end
         end
+
+        -- FATE farming (no CE found or CE disabled)
+        if ENABLE_FATE_FARMING then
+            local fateTarget = selectTargetFate(scanFates())
+            if fateTarget then
+                local ok, err = travelToFate(fateTarget)
+                if ok then
+                    monitorFate(fateTarget)
+                else
+                    logf("Travel to FATE failed: %s.", tostring(err))
+                end
+                returnToBaseAndWait()
+                applyBuffRotation()
+                goto continue_loop
+            end
+        end
+
+        -- Idle
+        if (os.clock() - lastScanSummaryAt) >= IDLE_LOG_INTERVAL then
+            logf("Idle (mode=%s CE=%s FATE=%s).", FARMING_MODE, tostring(ENABLE_CE_FARMING), tostring(ENABLE_FATE_FARMING))
+            lastScanSummaryAt = os.clock()
+        end
+        if (os.clock() - lastIdleLogAt) >= IDLE_LOG_INTERVAL then
+            log("Idle.")
+            lastIdleLogAt = os.clock()
+        end
+        sleep(POLL_INTERVAL)
+        ::continue_loop::
     end
 end
 
