@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.1
+version: 1.1.2
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -77,6 +77,7 @@ local STARTUP_REPEAT_CALL_DISTANCE = 45
 local FLAG_MOVEMENT_START_TIMEOUT = 2.0
 local FLAG_NO_PROGRESS_TIMEOUT = 10.0
 local ENGAGED_HANDOFF_POINT_REACHED_DISTANCE = 5.0
+local DISMOUNT_HANDOFF_TIMEOUT = 3.0
 local STARTUP_HUNT_MISS_THRESHOLD = 3
 local STARTUP_HUNT_HEARTBEAT_INTERVAL = 5.0
 local autorotationPrefix = nil
@@ -2800,8 +2801,63 @@ local function TryCompleteHuntHandoff(runtime, currentEntity, waitDistance)
         if not runtime.dismountedForHandoff then
             StopVnav()
 
-            if not EnsureDismounted(MOUNT_TIMEOUT) then
-                return RESULT_ERROR, string.format("failed to dismount at hunt '%s'", tostring(runtime.chasedHuntName))
+            if not EnsureDismounted(DISMOUNT_HANDOFF_TIMEOUT) then
+                logf(
+                    "Dismount timed out after %.2fs at hunt '%s'; rebuilding a closer landing point and retrying.",
+                    DISMOUNT_HANDOFF_TIMEOUT,
+                    tostring(runtime.chasedHuntName)
+                )
+
+                local retryPoint, retryReason, retryMeta = BuildSafeHuntApproachPoint(currentEntity, "dismount-retry")
+                local movePoint = retryPoint or currentEntity.Position
+
+                if runtime.huntApproachPoint ~= nil and retryPoint ~= nil then
+                    local shiftDistance = DistanceBetweenFlat(runtime.huntApproachPoint, retryPoint)
+                    if shiftDistance < 2 then
+                        logf(
+                            "Dismount retry for '%s' found no meaningfully different landing point; trying it anyway.",
+                            tostring(runtime.chasedHuntName)
+                        )
+                    else
+                        verboseLogf(
+                            "Dismount retry produced new landing point for '%s' shifted by %.2f yalms.",
+                            tostring(runtime.chasedHuntName),
+                            shiftDistance
+                        )
+                    end
+                end
+
+                if not StartApproachMovement(movePoint) then
+                    return RESULT_ERROR, string.format("failed to restart approach movement for hunt '%s' after dismount timeout", tostring(runtime.chasedHuntName))
+                end
+
+                runtime.huntApproachPoint = retryPoint
+                runtime.huntApproachRepathCount = (runtime.huntApproachRepathCount or 0) + 1
+                runtime.huntApproachStartTime = os.clock()
+                runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_REPATH
+                runtime.huntRetryExhaustedLogged = false
+                runtime.bestDistance = math.huge
+                runtime.lastProgressAt = os.clock()
+                runtime.waitingForHuntDamage = false
+
+                if retryPoint ~= nil then
+                    logf(
+                        "Retrying hunt '%s' handoff approach with %s point at %.2f, %.2f, %.2f.",
+                        tostring(runtime.chasedHuntName),
+                        tostring(retryMeta and retryMeta.label or "validated"),
+                        movePoint.X,
+                        movePoint.Y,
+                        movePoint.Z
+                    )
+                else
+                    logf("Retrying hunt '%s' handoff approach with raw hunt position.", tostring(runtime.chasedHuntName))
+                end
+
+                if retryReason ~= nil then
+                    logf("Dismount retry note for '%s': %s", tostring(runtime.chasedHuntName), tostring(retryReason))
+                end
+
+                return RESULT_CONTINUE
             end
 
             runtime.dismountedForHandoff = true
