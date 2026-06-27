@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.1.2
+version: 1.1.3
 description: |
   Follow the current hunt flag, wait for any cross-zone teleport to finish, and redirect to the hunt mob once it loads.
 plugin_dependencies:
@@ -35,11 +35,6 @@ configs:
     default: 30
     min: 10
     max: 300
-  Mount Timeout:
-    description: Maximum seconds to keep retrying mount or dismount actions.
-    default: 10
-    min: 2
-    max: 60
 [[End Metadata]]
 --]=====]
 
@@ -78,6 +73,7 @@ local FLAG_MOVEMENT_START_TIMEOUT = 2.0
 local FLAG_NO_PROGRESS_TIMEOUT = 10.0
 local ENGAGED_HANDOFF_POINT_REACHED_DISTANCE = 5.0
 local DISMOUNT_HANDOFF_TIMEOUT = 3.0
+local MOUNT_TIMEOUT = 10.0
 local STARTUP_HUNT_MISS_THRESHOLD = 3
 local STARTUP_HUNT_HEARTBEAT_INTERVAL = 5.0
 local autorotationPrefix = nil
@@ -137,14 +133,12 @@ local MINIMUM_TELEPORT_SAVINGS = tonumber(getConfigValue("Minimum Teleport Savin
 local FLAG_STOP_DISTANCE = tonumber(getConfigValue("Flag Stop Distance", 10)) or 10
 local HUNT_WAIT_DISTANCE = tonumber(getConfigValue("Hunt Wait Distance", 25)) or 25
 local ZONE_TIMEOUT = tonumber(getConfigValue("Zone Timeout", 30)) or 30
-local MOUNT_TIMEOUT = tonumber(getConfigValue("Mount Timeout", 10)) or 10
 
 TELEPORT_PENALTY = math.max(0, math.min(60, TELEPORT_PENALTY))
 MINIMUM_TELEPORT_SAVINGS = math.max(0, math.min(30, MINIMUM_TELEPORT_SAVINGS))
 FLAG_STOP_DISTANCE = math.max(1, math.min(20, FLAG_STOP_DISTANCE))
 HUNT_WAIT_DISTANCE = math.max(10, math.min(40, HUNT_WAIT_DISTANCE))
 ZONE_TIMEOUT = math.max(10, math.min(300, ZONE_TIMEOUT))
-MOUNT_TIMEOUT = math.max(2, math.min(60, MOUNT_TIMEOUT))
 
 local function sleep(seconds)
     yield(string.format("/wait %.2f", tonumber(seconds) or 0))
@@ -2474,14 +2468,93 @@ local function EnsureDismountedForEngagedHandoff(runtime)
         return true, nil
     end
 
-    StopVnav()
+    while true do
+        StopVnav()
 
-    if not EnsureDismounted(MOUNT_TIMEOUT) then
-        return false, string.format("failed to dismount at engaged hunt '%s'", tostring(runtime.chasedHuntName))
+        if EnsureDismounted(DISMOUNT_HANDOFF_TIMEOUT) then
+            runtime.dismountedForHandoff = true
+            return true, nil
+        end
+
+        local currentEntity = TryReacquireChasedHunt(runtime)
+        if currentEntity == nil then
+            return false, string.format("hunt '%s' died during engaged dismount retry", tostring(runtime.chasedHuntName))
+        end
+
+        logf(
+            "Engaged dismount timed out after %.2fs for '%s'; rebuilding landing point and retrying.",
+            DISMOUNT_HANDOFF_TIMEOUT,
+            tostring(runtime.chasedHuntName)
+        )
+
+        local retryPoint, retryReason, retryMeta = BuildEngagedHuntApproachPoint(currentEntity, "engaged-dismount-retry")
+        local movePoint = retryPoint or currentEntity.Position
+
+        if runtime.huntApproachPoint ~= nil and retryPoint ~= nil then
+            local shiftDistance = DistanceBetweenFlat(runtime.huntApproachPoint, retryPoint)
+            if shiftDistance < 2 then
+                logf(
+                    "Engaged dismount retry for '%s' found no meaningfully different landing point; trying it anyway.",
+                    tostring(runtime.chasedHuntName)
+                )
+            else
+                verboseLogf(
+                    "Engaged dismount retry produced new landing point for '%s' shifted by %.2f yalms.",
+                    tostring(runtime.chasedHuntName),
+                    shiftDistance
+                )
+            end
+        end
+
+        runtime.huntApproachPoint = retryPoint
+        runtime.huntApproachRepathCount = (runtime.huntApproachRepathCount or 0) + 1
+        runtime.huntApproachStartTime = os.clock()
+        runtime.huntApproachGraceUntil = os.clock() + SAFE_HUNT_STALL_GRACE_AFTER_REPATH
+        runtime.huntRetryExhaustedLogged = false
+        runtime.bestDistance = math.huge
+        runtime.lastProgressAt = os.clock()
+        runtime.waitingForHuntDamage = false
+
+        if retryPoint ~= nil then
+            logf(
+                "Retrying engaged handoff for '%s' with %s point at %.2f, %.2f, %.2f.",
+                tostring(runtime.chasedHuntName),
+                tostring(retryMeta and retryMeta.label or "validated"),
+                movePoint.X,
+                movePoint.Y,
+                movePoint.Z
+            )
+        else
+            logf("Retrying engaged handoff for '%s' with raw hunt position.", tostring(runtime.chasedHuntName))
+        end
+
+        if retryReason ~= nil then
+            logf("Engaged dismount retry note for '%s': %s", tostring(runtime.chasedHuntName), tostring(retryReason))
+        end
+
+        local movementStarted, movementReason = StartConfirmedEngagedApproachMovement(movePoint, runtime.chasedHuntName)
+        if not movementStarted then
+            logf(
+                "Engaged dismount retry movement for '%s' was not confirmed yet: %s. Continuing retry loop.",
+                tostring(runtime.chasedHuntName),
+                tostring(movementReason)
+            )
+        end
+
+        WaitUntil(function()
+            local latestEntity = TryReacquireChasedHunt(runtime)
+            if latestEntity == nil then
+                return true
+            end
+
+            local reachedPoint = HasReachedEngagedHandoffPoint(runtime)
+            if reachedPoint then
+                return true
+            end
+
+            return GetEngagedHuntHitboxDistance(latestEntity) <= 1.0
+        end, 10.0, POLL_INTERVAL, 0)
     end
-
-    runtime.dismountedForHandoff = true
-    return true, nil
 end
 
 local function TryCompleteEngagedHuntHandoff(runtime, currentEntity)
