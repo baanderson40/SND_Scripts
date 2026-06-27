@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.4.0
+version: 1.0.0
 description: >-
   Farm South Horn Critical Encounters and FATEs, hand off to BossMod autorotation, apply self-buffs, and return to Base Camp between activities.
 plugin_dependencies:
