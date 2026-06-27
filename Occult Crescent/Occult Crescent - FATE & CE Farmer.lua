@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.3.0
+version: 0.4.0
 description: >-
   Farm South Horn Critical Encounters and FATEs, hand off to BossMod autorotation, apply self-buffs, and return to Base Camp between activities.
 plugin_dependencies:
@@ -32,9 +32,9 @@ configs:
     Enable Buff Rotation:
         default: true
         description: Auto apply phantom job buffs.
-    Use Return After CE:
+    Use Return:
         default: true
-        description: Return to Base Camp after each CE ends.
+        description: Use return to return to Base Camp.
 [[End Metadata]]
 --]=====]
 
@@ -220,7 +220,7 @@ local metadata = {
 
 local POLL_INTERVAL = 0.25
 local MINIMUM_ROUTE_SAVINGS = 0
-local USE_RETURN_AFTER_CE = Config.Get("Use Return After CE") == true
+local USE_RETURN_AFTER = Config.Get("Use Return") == true
 local BASE_DIRECT_THRESHOLD = 120
 local CE_WAIT_RING_MIN = 7
 local AUTOROTATION_PRESET_NAME = tostring(Config.Get("Autorotation Preset Name") or "")
@@ -245,7 +245,7 @@ local POST_CE_COMBAT_SETTLE_SECONDS = 2.0
 local RAISE_TIMEOUT = 300.0
 local CE_ATTEMPT_TIMEOUT = 30.0
 local IDLE_LOG_INTERVAL = 10.0
-local BUFF_SETTLE_SECONDS = 0.5
+local BUFF_SETTLE_SECONDS = 1.0
 local BUFF_TIMEOUT = 3.0
 local BUFF_FRESH_DURATION = 600.0
 local BUFF_VERIFY_RETRIES = 3
@@ -310,6 +310,8 @@ local lastIdleLogAt = 0
 local lastScanSummaryAt = 0
 local lastCeRadiusLogAt = 0
 local lastCeBattleLogAt = 0
+local lastFateMoveLogAt = 0
+local lastFateMonitorLogAt = 0
 local moveToPosition
 local isMounted
 local isMounting
@@ -446,6 +448,10 @@ local function handleDeathState()
         waitUntil(function()
             return not isDead()
         end, 5.0, 0)
+    end
+    if isDead() then
+        log("Release did not revive player. Giving up.")
+        return false
     end
     return true
 end
@@ -606,7 +612,9 @@ local function ensureMounted()
             log("Mounted state confirmed.")
             return true
         end
-        if not isMounted() and not isMounting() and (os.clock() - lastAttempt) >= 1.0 then
+        if isInCombat() then
+            sleep(1.0)
+        elseif not isMounted() and not isMounting() and (os.clock() - lastAttempt) >= 1.0 then
             log("Mount not active; attempting mount action.")
             executeGeneralAction(GENERAL_ACTION_MOUNT)
             lastAttempt = os.clock()
@@ -725,6 +733,16 @@ local function isWithinAethernetBand(position, aethernet)
     return distance >= minDistance and distance <= maxDistance, distance, minDistance, maxDistance
 end
 
+local function aethernetApproachDistance(playerPosition, aethernet)
+    if playerPosition == nil or aethernet == nil then return math.huge end
+    local dist = distanceFlat(playerPosition, aethernet.position)
+    local minR = tonumber(aethernet.interactDistanceMin or metadata.aethernetInteractDistanceMin) or 3.15
+    local maxR = tonumber(aethernet.interactDistanceMax or metadata.aethernetInteractDistance) or 4.5
+    if dist < minR then return minR - dist end
+    if dist > maxR then return dist - maxR end
+    return 0
+end
+
 local function getDirectionalApproachPoint(playerPosition, aethernet)
     local minDistance = tonumber(aethernet.interactDistanceMin or metadata.aethernetInteractDistanceMin) or 3.15
     local nx, nz = normalizeFlat(aethernet.position, playerPosition)
@@ -784,8 +802,7 @@ local function ensureAtBaseCampWaitBand()
     end
 
     log("Player is not near Base Camp; using Return to recover to base.")
-    returnToBaseAndWait()
-    return true, nil
+    return returnToBaseAndWait()
 end
 
 local function waitForTransitionCompletion(startCondition, timeoutSec, label)
@@ -930,19 +947,21 @@ local function shouldAbortForBattleState(snapshot)
     return shouldAbort
 end
 
--- Returns: true (arrived), false (timeout), nil (CE entered Battle)
+local CeMoveResult = { Arrived = 1, Timeout = 2, BattleAbort = 3 }
+
+-- Returns: CeMoveResult constant
 local function ceMoveToPosition(targetPosition, stopDistance, timeoutSec, ceId)
     if targetPosition == nil then
         log("ceMoveToPosition received nil target.")
-        return false
+        return CeMoveResult.Timeout
     end
     local playerPosition = getPlayerPosition()
     if distanceFlat(playerPosition, targetPosition) <= (stopDistance or ARRIVAL_DISTANCE) then
         logf("Already within %.2f of %s.", stopDistance or ARRIVAL_DISTANCE, formatVector3(targetPosition))
-        return true
+        return CeMoveResult.Arrived
     end
     if not pathfindTo(targetPosition) then
-        return false
+        return CeMoveResult.Timeout
     end
 
     local timeout = timeoutSec or CE_ATTEMPT_TIMEOUT
@@ -953,7 +972,7 @@ local function ceMoveToPosition(targetPosition, stopDistance, timeoutSec, ceId)
         if shouldAbortForBattleState(current) then
             stopPathing()
             logf("CE move aborted: %s entered Battle.", formatVector3(targetPosition))
-            return nil
+            return CeMoveResult.BattleAbort
         end
         if isDead() then
             stopPathing()
@@ -962,22 +981,22 @@ local function ceMoveToPosition(targetPosition, stopDistance, timeoutSec, ceId)
             local afterDeath = waitForSnapshotById(ceId)
             if shouldAbortForBattleState(afterDeath) then
                 logf("CE aborted after revive: entered Battle.")
-                return nil
+                return CeMoveResult.BattleAbort
             end
             if not pathfindTo(targetPosition) then
-                return false
+                return CeMoveResult.Timeout
             end
         end
         if distanceFlat(getPlayerPosition(), targetPosition) <= (stopDistance or ARRIVAL_DISTANCE) then
             stopPathing()
             logf("CE move reached %s.", formatVector3(targetPosition))
-            return true
+            return CeMoveResult.Arrived
         end
         sleep(POLL_INTERVAL)
     end
     stopPathing()
     logf("CE move timed out after %.2fs for %s.", timeout, formatVector3(targetPosition))
-    return false
+    return CeMoveResult.Timeout
 end
 
 local function moveIntoAethernetBand(aethernet)
@@ -1076,6 +1095,10 @@ local function useReturn()
         log("Player is dead; cannot use Return.")
         return false, "player is dead"
     end
+    if isInCombat() then
+        log("Player is in combat; cannot use Return.")
+        return false, "player in combat"
+    end
     if not executeGeneralAction(GENERAL_ACTION_RETURN) then
         return false, "failed to trigger Return"
     end
@@ -1088,7 +1111,9 @@ local function useReturn()
         if isAddonReady("SelectYesno") then
             log("SelectYesno detected during Return; confirming.")
             yield("/callback SelectYesno true 0")
-            castingStarted = waitForConditionStart(CharacterCondition.casting, 2.0, "Return")
+            castingStarted = waitUntil(function()
+                return getCondition(CharacterCondition.casting) or getCondition(CharacterCondition.betweenAreas)
+            end, 3.0, 0)
             break
         end
         if getCondition(CharacterCondition.casting) then
@@ -1113,14 +1138,20 @@ local function isPreBattleState(snapshot)
 end
 
 local function selectTargetCe(snapshots)
+    local candidates = {}
     for _, snapshot in ipairs(snapshots) do
         local ceMetadata = snapshot.metadata
         if ceMetadata ~= nil and ceMetadata.stagingPoint ~= nil and isPreBattleState(snapshot) then
-            logf("Selected CE candidate %s (%s) state=%s active=%s progress=%d left=%d.", snapshot.name, tostring(snapshot.id), snapshot.stateText, tostring(snapshot.isActive), snapshot.progress, snapshot.secondsLeft)
-            return snapshot
+            table.insert(candidates, snapshot)
         end
     end
-    return nil
+    if #candidates == 0 then return nil end
+    table.sort(candidates, function(a, b)
+        return (a.metadata.priority or 0) > (b.metadata.priority or 0)
+    end)
+    local best = candidates[1]
+    logf("Selected CE %s (%s) priority=%d state=%s active=%s progress=%d left=%d.", best.name, tostring(best.id), best.metadata.priority or 0, best.stateText, tostring(best.isActive), best.progress, best.secondsLeft)
+    return best
 end
 
 local function chooseRoute(snapshot)
@@ -1131,11 +1162,20 @@ local function chooseRoute(snapshot)
         return { kind = "direct", reason = "no_preferred_aethernet" }
     end
 
+    do
+        for _, ae in pairs(metadata.aethernets) do
+            if isWithinAethernetBand(playerPosition, ae) and ae.name == preferredAethernet.name then
+                logf("Player already at preferred aethernet %s; routing direct.", ae.name)
+                return { kind = "direct", reason = "already_at_preferred_aethernet", preferred = preferredAethernet }
+            end
+        end
+    end
+
     local speed = tonumber(metadata.mountedTravelSpeed) or 14.13
     local directTime = distanceFlat(playerPosition, ceMetadata.stagingPoint) / speed
 
-    local nearestAethernet, nearestDistance = getNearestConfiguredAethernet(playerPosition)
-    local nearestApproachDistance = math.max(0, (nearestDistance or 0) - (nearestAethernet and nearestAethernet.interactDistanceMax or metadata.aethernetInteractDistance or 4.5))
+    local nearestAethernet = getNearestConfiguredAethernet(playerPosition)
+    local nearestApproachDistance = aethernetApproachDistance(playerPosition, nearestAethernet)
     local shardTime = (nearestApproachDistance / speed) + AETHERNET_TRANSITION_PENALTY + (distanceFlat(preferredAethernet.destination, ceMetadata.stagingPoint) / speed)
     local returnTime = RETURN_PENALTY + ((preferredAethernet.name == "BaseCamp") and 0 or AETHERNET_TRANSITION_PENALTY) + (distanceFlat(preferredAethernet.destination, ceMetadata.stagingPoint) / speed)
 
@@ -1217,6 +1257,12 @@ local function moveIntoBuffZone()
     if inBand then
         logf("Already inside buff zone at %.2f yalms from center.", select(2, isWithinBuffZone(playerPosition)))
         return true
+    end
+
+    local distToBuff = distanceFlat(playerPosition, BUFF_ZONE.center)
+    if distToBuff > 50 then
+        logf("Buff zone is %.1f yalms away; using Return first.", distToBuff)
+        useReturn()
     end
 
     local approachPoint = getDirectionalBuffPoint(playerPosition)
@@ -1402,12 +1448,9 @@ local function applyBuffRotation()
         if entry.appliesAll then
             if applied then
                 log("Buff rotation: Freelancer Inquiring Mind covers all buffs, done.")
-            else
-                log("Buff rotation: Freelancer Inquiring Mind failed, falling through to individual buffs.")
-            end
-            if applied then
                 break
             end
+            log("Buff rotation: Freelancer Inquiring Mind failed, falling through to individual buffs.")
         end
 
         ::skip_retry::
@@ -1431,7 +1474,7 @@ end
 
 returnToBaseAndWait = function()
     log("Starting return-to-base flow.")
-    if USE_RETURN_AFTER_CE then
+    if USE_RETURN_AFTER then
         local ok, err = useReturn()
         if not ok then
             logf("Return failed: %s", tostring(err))
@@ -1528,18 +1571,18 @@ local function travelToCe(snapshot)
     for attempt = 1, WAIT_POINT_RETRIES do
         if shouldAbortForBattleState(waitForSnapshotById(snapshot.id)) then
             local _, returnErr = useReturn()
-            return false, returnErr or "CE entered Battle before arrival"
+            return false, (returnErr and ("battle-abort; return failed: " .. returnErr)) or "CE entered Battle before arrival"
         end
         waitPoint = getCeWaitPoint(snapshot.metadata)
         logf("CE wait-point attempt %d/%d: target %s.", attempt, WAIT_POINT_RETRIES, formatVector3(waitPoint))
         local result = ceMoveToPosition(waitPoint, WAIT_POINT_FALLBACK_DISTANCE, nil, snapshot.id)
-        if result == true then
+        if result == CeMoveResult.Arrived then
             moved = true
             break
         end
-        if result == nil then
+        if result == CeMoveResult.BattleAbort then
             local _, returnErr = useReturn()
-            return false, returnErr or "CE entered Battle before arrival"
+            return false, (returnErr and ("battle-abort; return failed: " .. returnErr)) or "CE entered Battle before arrival"
         end
     end
 
@@ -1547,16 +1590,16 @@ local function travelToCe(snapshot)
         logf("All wait-point attempts exhausted; falling back to staging point for %s.", snapshot.name)
         if shouldAbortForBattleState(waitForSnapshotById(snapshot.id)) then
             local _, returnErr = useReturn()
-            return false, returnErr or "CE entered Battle before arrival"
+            return false, (returnErr and ("battle-abort; return failed: " .. returnErr)) or "CE entered Battle before arrival"
         end
         local result = ceMoveToPosition(snapshot.metadata.stagingPoint, tonumber(snapshot.metadata.engageRadius) or 20, nil, snapshot.id)
-        if result == true then
+        if result == CeMoveResult.Arrived then
             moved = true
             logf("Fell back to staging point for %s.", snapshot.name)
         end
-        if result == nil then
+        if result == CeMoveResult.BattleAbort then
             local _, returnErr = useReturn()
-            return false, returnErr or "CE entered Battle before arrival"
+            return false, (returnErr and ("battle-abort; return failed: " .. returnErr)) or "CE entered Battle before arrival"
         end
     end
 
@@ -1642,6 +1685,34 @@ local function isInFate()
     return false
 end
 
+local function getFateSnapshot(fateId)
+    local fate = safeCall(function() return Fates.GetFateById(fateId) end)
+    if fate == nil then return nil end
+    return {
+        id = tonumber(safeCall(function() return fate.Id end)) or 0,
+        name = tostring(safeCall(function() return fate.Name end) or ""),
+        state = tonumber(safeCall(function() return fate.State end)) or 0,
+        inFate = safeCall(function() return fate.InFate end) == true,
+        progress = tonumber(safeCall(function() return fate.Progress end)) or 0,
+        radius = tonumber(safeCall(function() return fate.Radius end)) or 0,
+        location = safeCall(function() return fate.Location end),
+    }
+end
+
+local function isFateActive(fateId)
+    local activeFates = safeCall(function() return Fates.GetActiveFates() end)
+    if activeFates == nil then return false end
+    local count = tonumber(safeCall(function() return activeFates.Count end)) or 0
+    for i = 0, math.max(0, count - 1) do
+        local f = safeCall(function() return activeFates[i] end)
+        if f ~= nil then
+            local id = tonumber(safeCall(function() return f.Id end)) or 0
+            if id == fateId then return true end
+        end
+    end
+    return false
+end
+
 local function scanFates()
     local result = {}
     local activeFates = safeCall(function() return Fates.GetActiveFates() end)
@@ -1702,15 +1773,18 @@ local function chooseFateRoute(fate)
     local speed = metadata.mountedTravelSpeed or 14.13
     local directTime = distanceFlat(playerPosition, fate.location) / speed
 
-    local nearestToPlayer, distToPlayer = getNearestConfiguredAethernet(playerPosition)
-    local nearestToFate, _ = getNearestConfiguredAethernet(fate.location)
-    local approachDist = math.max(0, (distToPlayer or 0) - (nearestToPlayer and nearestToPlayer.interactDistanceMax or metadata.aethernetInteractDistance or 4.5))
-    local dest = nearestToFate and nearestToFate.destination or fate.location
-    local shardTime = (approachDist / speed) + AETHERNET_TRANSITION_PENALTY + (distanceFlat(dest, fate.location) / speed)
+    local nearestToPlayer = getNearestConfiguredAethernet(playerPosition)
+    local nearestToFate = getNearestConfiguredAethernet(fate.location)
 
-    local baseCamp = getAethernetByName("BaseCamp")
-    local baseDest = baseCamp and baseCamp.destination or fate.location
-    local returnTime = RETURN_PENALTY + (distanceFlat(baseDest, fate.location) / speed)
+    if nearestToFate == nil then
+        return { kind = "direct", reason = "no_near_aethernet" }
+    end
+
+    local approachDist = aethernetApproachDistance(playerPosition, nearestToPlayer)
+    local shardTime = (approachDist / speed) + AETHERNET_TRANSITION_PENALTY + (distanceFlat(nearestToFate.destination, fate.location) / speed)
+
+    local returnTeleportPenalty = (nearestToFate.name == "BaseCamp") and 0 or AETHERNET_TRANSITION_PENALTY
+    local returnTime = RETURN_PENALTY + returnTeleportPenalty + (distanceFlat(nearestToFate.destination, fate.location) / speed)
 
     logf("FATE route for %s: direct=%.2f shard=%.2f return=%.2f.", fate.name, directTime, shardTime, returnTime)
 
@@ -1718,43 +1792,49 @@ local function chooseFateRoute(fate)
         return { kind = "direct", reason = "faster_direct" }
     end
     if returnTime < shardTime then
-        return { kind = "return", reason = "faster_return" }
+        return { kind = "return", reason = "faster_return", preferred = nearestToFate }
     end
     return { kind = "aethernet", reason = "faster_shard", preferred = nearestToFate }
 end
 
 local function fateMoveToPosition(targetPosition, stopDistance, timeoutSec, fateId)
-    if targetPosition == nil then return false end
+    if targetPosition == nil then return CeMoveResult.Timeout end
     if distanceFlat(getPlayerPosition(), targetPosition) <= (stopDistance or ARRIVAL_DISTANCE) then
-        return true
+        return CeMoveResult.Arrived
     end
-    if not pathfindTo(targetPosition) then return false end
+    if not pathfindTo(targetPosition) then return CeMoveResult.Timeout end
 
     local timeout = timeoutSec or CE_ATTEMPT_TIMEOUT
     local deadline = os.clock() + timeout
     while os.clock() < deadline do
-        local fate = safeCall(function() return Fates.GetFateById(fateId) end)
-        if fate then
-            local state = tonumber(safeCall(function() return fate.State end)) or 0
-            if state == FateState.Ended or state == FateState.Failed then
-                stopPathing()
-                logf("FATE %d ended/failed; aborting move.", fateId)
-                return nil
-            end
+        if not isFateActive(fateId) then
+            stopPathing()
+            logf("FATE %d no longer in active list; aborting move.", fateId)
+            return CeMoveResult.BattleAbort
+        end
+        local snapshot = getFateSnapshot(fateId)
+        if snapshot == nil then
+            stopPathing()
+            logf("FATE %d vanished; aborting move.", fateId)
+            return CeMoveResult.BattleAbort
+        end
+        if (os.clock() - lastFateMoveLogAt) >= IDLE_LOG_INTERVAL then
+            logf("fateMoveToPosition still running for fateId=%d, remaining=%.1fs.", fateId, deadline - os.clock())
+            lastFateMoveLogAt = os.clock()
         end
         if isDead() then
             stopPathing()
             handleDeathState()
-            if not pathfindTo(targetPosition) then return false end
+            if not pathfindTo(targetPosition) then return CeMoveResult.Timeout end
         end
         if distanceFlat(getPlayerPosition(), targetPosition) <= (stopDistance or ARRIVAL_DISTANCE) then
             stopPathing()
-            return true
+            return CeMoveResult.Arrived
         end
         sleep(POLL_INTERVAL)
     end
     stopPathing()
-    return false
+    return CeMoveResult.Timeout
 end
 
 local function travelToFate(fate)
@@ -1764,13 +1844,16 @@ local function travelToFate(fate)
     if route.kind == "return" then
         local ok, err = useReturn()
         if not ok then return false, err end
+        if route.preferred and route.preferred.name ~= "BaseCamp" then
+            local aethOk, aethErr = useOccultAethernet(route.preferred)
+            if not aethOk then return false, aethErr end
+        end
     elseif route.kind == "aethernet" then
         local aethOk, aethErr = useOccultAethernet(route.preferred)
         if not aethOk then return false, aethErr end
     end
 
-    local stillExists = safeCall(function() return Fates.GetFateById(fate.id) end) ~= nil
-    if not stillExists then
+    if getFateSnapshot(fate.id) == nil then
         logf("FATE %s vanished before travel.", fate.name)
         return false, "FATE ended before travel"
     end
@@ -1778,12 +1861,15 @@ local function travelToFate(fate)
     if not ensureMounted() then return false, "failed to mount" end
 
     local stopDist = math.min(fate.radius, 15)
-    local result = fateMoveToPosition(fate.location, stopDist, CE_ATTEMPT_TIMEOUT, fate.id)
-    if result == nil then
+    local speed = metadata.mountedTravelSpeed or 14.13
+    local estimatedTime = distanceFlat(getPlayerPosition(), fate.location) / speed
+    local timeout = math.max(CE_ATTEMPT_TIMEOUT, estimatedTime * 1.5 + 10)
+    local result = fateMoveToPosition(fate.location, stopDist, timeout, fate.id)
+    if result == CeMoveResult.BattleAbort then
         logf("FATE %s ended while traveling.", fate.name)
         return false, "FATE ended during travel"
     end
-    if not result then
+    if result ~= CeMoveResult.Arrived then
         return false, "failed to reach FATE position"
     end
     return true, nil
@@ -1800,29 +1886,21 @@ end
 
 local function monitorFate(fate)
     local autorotationActive = false
-    local fateMonitorStart = os.clock()
     logf("Monitoring FATE '%s' (id=%d).", fate.name, fate.id)
 
     while true do
-        if (os.clock() - fateMonitorStart) >= 300 then
-            logf("FATE %s monitoring timeout (5 min).", fate.name)
+        if not isFateActive(fate.id) then
+            logf("FATE %s no longer in active list; ending monitor.", fate.name)
             break
         end
 
-        local fateObj = safeCall(function() return Fates.GetFateById(fate.id) end)
-        if fateObj == nil then
+        local snapshot = getFateSnapshot(fate.id)
+        if snapshot == nil then
             logf("FATE %s vanished; ending monitor.", fate.name)
             break
         end
 
-        local state = tonumber(safeCall(function() return fateObj.State end)) or 0
-        if state == FateState.Ended or state == FateState.Failed then
-            logf("FATE %s finished (state=%d).", fate.name, state)
-            break
-        end
-
-        local inFate = safeCall(function() return fateObj.InFate end) == true
-        if isInCombat() or inFate then
+        if isInCombat() or snapshot.inFate then
             if not autorotationActive then
                 autorotationActive = applyBossModForFate()
             end
@@ -1830,6 +1908,11 @@ local function monitorFate(fate)
             logf("Combat ended for FATE %s; clearing autorotation.", fate.name)
             clearBossModPreset()
             autorotationActive = false
+        end
+
+        if (os.clock() - lastFateMonitorLogAt) >= IDLE_LOG_INTERVAL then
+            logf("FATE monitor: id=%d active=%s inFate=%s inCombat=%s progress=%.1f", fate.id, tostring(isFateActive(fate.id)), tostring(snapshot.inFate), tostring(isInCombat()), snapshot.progress or 0)
+            lastFateMonitorLogAt = os.clock()
         end
 
         if isDead() then
@@ -1841,9 +1924,29 @@ local function monitorFate(fate)
         sleep(POLL_INTERVAL)
     end
 
-    waitForCombatToSettle()
     logf("Final combat clear for FATE %s. Clearing autorotation.", fate.name)
     clearBossModPreset()
+    return true
+end
+
+local function returnAfterFate(fate)
+    waitForCombatToSettle()
+
+    if not USE_RETURN_AFTER then
+        logf("FATE %s complete, return disabled; staying in place.", fate.name)
+        return true
+    end
+
+    local ok, err = useReturn()
+    if not ok then
+        logf("FATE %s complete, return failed: %s; staying in place.", fate.name, tostring(err))
+        return true
+    end
+
+    local waitPoint = getBaseCampWaitPoint()
+    if waitPoint ~= nil then
+        moveToPosition(waitPoint, WAIT_POINT_FALLBACK_DISTANCE)
+    end
     return true
 end
 
@@ -1881,7 +1984,9 @@ local function main()
     end
 
     while true do
-        handleDeathState()
+        if isDead() and not handleDeathState() then
+            stopScriptWithError("Failed to revive after death timeout")
+        end
 
         -- CE farming
         if ENABLE_CE_FARMING then
@@ -1902,36 +2007,30 @@ local function main()
                         stopScriptWithError("Stopping after CE because autorotation failed during Battle")
                     end
 
-                    -- Before committing to Return, check for nearby FATE
-                    local didFate = false
+                    local fateAttempted = false
                     if ENABLE_FATE_FARMING then
                         local fateTarget = selectTargetFate(scanFates())
                         if fateTarget then
-                            local route = chooseFateRoute(fateTarget)
-                            logf("Post-CE FATE '%s' via %s route.", fateTarget.name, route.kind)
-                            if route.kind ~= "direct" then
-                                if route.kind == "return" then
-                                    useReturn()
-                                elseif route.kind == "aethernet" then
-                                    useOccultAethernet(route.preferred)
-                                end
-                            end
+                            fateAttempted = true
                             local fateOk, fateErr = travelToFate(fateTarget)
                             if fateOk then
                                 monitorFate(fateTarget)
-                                didFate = true
                             else
                                 logf("Post-CE FATE travel failed: %s.", tostring(fateErr))
                             end
+                            returnAfterFate(fateTarget)
                         end
                     end
 
-                    local returnOk, returnErr = returnToBaseAndWait()
-                    if not returnOk then
-                        stopScriptWithError(returnErr or "failed to return to base")
+                    if not fateAttempted then
+                        local returnOk, returnErr = returnToBaseAndWait()
+                        if not returnOk then
+                            stopScriptWithError(returnErr or "failed to return to base")
+                        end
                     end
                     applyBuffRotation()
                 end
+                sleep(POLL_INTERVAL)
                 goto continue_loop
             end
         end
@@ -1946,8 +2045,9 @@ local function main()
                 else
                     logf("Travel to FATE failed: %s.", tostring(err))
                 end
-                returnToBaseAndWait()
+                returnAfterFate(fateTarget)
                 applyBuffRotation()
+                sleep(POLL_INTERVAL)
                 goto continue_loop
             end
         end
