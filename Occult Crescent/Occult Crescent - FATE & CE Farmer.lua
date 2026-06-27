@@ -19,6 +19,9 @@ configs:
           - "CE Only"
           - "FATE Only"
         default: "CE & FATE"
+    Prioritize CE:
+        default: true
+        description: Abandon FATE for CE if one becomes available during travel or monitoring.
     FATE Priority:
         description: How to select which FATE to target.
         is_choice: true
@@ -29,12 +32,12 @@ configs:
     Excluded FATEs:
         default: ""
         description: Comma-separated FATE names to skip.
-    Enable Buff Rotation:
-        default: true
-        description: Auto apply phantom job buffs.
     Use Return:
         default: true
         description: Use return to return to Base Camp.
+    Enable Buff Rotation:
+        default: true
+        description: Auto apply phantom job buffs.
 [[End Metadata]]
 --]=====]
 
@@ -221,6 +224,7 @@ local metadata = {
 local POLL_INTERVAL = 0.25
 local MINIMUM_ROUTE_SAVINGS = 0
 local USE_RETURN_AFTER = Config.Get("Use Return") == true
+local PRIORITIZE_CE = Config.Get("Prioritize CE") ~= false
 local BASE_DIRECT_THRESHOLD = 120
 local CE_WAIT_RING_MIN = 7
 local AUTOROTATION_PRESET_NAME = tostring(Config.Get("Autorotation Preset Name") or "")
@@ -249,6 +253,7 @@ local BUFF_SETTLE_SECONDS = 1.0
 local BUFF_TIMEOUT = 3.0
 local BUFF_FRESH_DURATION = 600.0
 local BUFF_VERIFY_RETRIES = 3
+local CE_CHECK_INTERVAL = 2.5
 
 local BUFF_ACTIONS = {
     { jobId = 0,  name = "Freelancer", actionId = 46606, minLevel = 15, buffName = "Inquiring Mind",      appliesAll = true,  checkStatusIds = { 4233, 4239, 4244, 4799 } },
@@ -269,6 +274,10 @@ local BUFF_ZONE = {
 local FateState = {
     None = 0, Preparing = 1, Waiting = 2, Spawning = 3,
     Running = 4, Ending = 5, Ended = 6, Failed = 7,
+}
+
+local FATE_AETHERNET_PREFERENCE = {
+    [1967] = "CrystallizedCaverns",  -- Brain Dead: hill climb from nearest aethernet is slower than flat route
 }
 
 local FARMING_MODE = tostring(Config.Get("Farming Mode") or "CE & FATE")
@@ -312,6 +321,7 @@ local lastCeRadiusLogAt = 0
 local lastCeBattleLogAt = 0
 local lastFateMoveLogAt = 0
 local lastFateMonitorLogAt = 0
+local lastCeCheckAt = 0
 local moveToPosition
 local isMounted
 local isMounting
@@ -861,11 +871,11 @@ local function waitForConditionStart(flag, timeoutSec, label)
     return started
 end
 
-local function waitForCombatToSettle()
+local function waitForCombatToSettle(timeoutSec)
     logf("Waiting for combat to remain clear for %.2fs.", POST_CE_COMBAT_SETTLE_SECONDS)
     local settled = waitUntil(function()
         return not isInCombat()
-    end, 15.0, POST_CE_COMBAT_SETTLE_SECONDS)
+    end, timeoutSec or 15.0, POST_CE_COMBAT_SETTLE_SECONDS)
     logf("Combat settle result=%s inCombat=%s.", tostring(settled), tostring(isInCombat()))
     return settled
 end
@@ -947,7 +957,7 @@ local function shouldAbortForBattleState(snapshot)
     return shouldAbort
 end
 
-local CeMoveResult = { Arrived = 1, Timeout = 2, BattleAbort = 3 }
+local CeMoveResult = { Arrived = 1, Timeout = 2, BattleAbort = 3, CeAvailable = 4 }
 
 -- Returns: CeMoveResult constant
 local function ceMoveToPosition(targetPosition, stopDistance, timeoutSec, ceId)
@@ -1561,6 +1571,31 @@ local function travelToCe(snapshot)
         logf("Travel flow for %s: direct mounted travel.", snapshot.name)
     end
 
+    logf("Waiting for combat to settle before mounting for CE %s.", snapshot.name)
+    while true do
+        if isDead() then
+            handleDeathState()
+        end
+
+        local ceSnapshot = waitForSnapshotById(snapshot.id)
+        if ceSnapshot == nil then
+            logf("CE %s vanished while waiting for combat to settle.", snapshot.name)
+            return false, "ce_expired"
+        end
+
+        if ceSnapshot.stateCode >= 4 or shouldAbortForBattleState(ceSnapshot) then
+            logf("CE %s entered Battle or later (stateCode=%d) while waiting for combat to settle.", snapshot.name, ceSnapshot.stateCode)
+            return false, "ce_expired"
+        end
+
+        if not isInCombat() then
+            logf("Combat settled for CE %s.", snapshot.name)
+            break
+        end
+
+        sleep(POLL_INTERVAL)
+    end
+
     if not ensureMounted() then
         return false, "failed to mount"
     end
@@ -1775,26 +1810,66 @@ local function chooseFateRoute(fate)
 
     local nearestToPlayer = getNearestConfiguredAethernet(playerPosition)
     local nearestToFate = getNearestConfiguredAethernet(fate.location)
+    if nearestToFate ~= nil and FATE_AETHERNET_PREFERENCE[fate.id] then
+        local preferred = getAethernetByName(FATE_AETHERNET_PREFERENCE[fate.id])
+        if preferred then
+            logf("FATE %s: overriding nearest aethernet (%s) with preferred (%s).", fate.name, nearestToFate.name, preferred.name)
+            nearestToFate = preferred
+        end
+    end
 
     if nearestToFate == nil then
         return { kind = "direct", reason = "no_near_aethernet" }
     end
 
     local approachDist = aethernetApproachDistance(playerPosition, nearestToPlayer)
-    local shardTime = (approachDist / speed) + AETHERNET_TRANSITION_PENALTY + (distanceFlat(nearestToFate.destination, fate.location) / speed)
+    local shardRideDist = distanceFlat(nearestToFate.destination, fate.location)
+    local shardTime = (approachDist / speed) + AETHERNET_TRANSITION_PENALTY + (shardRideDist / speed)
 
     local returnTeleportPenalty = (nearestToFate.name == "BaseCamp") and 0 or AETHERNET_TRANSITION_PENALTY
-    local returnTime = RETURN_PENALTY + returnTeleportPenalty + (distanceFlat(nearestToFate.destination, fate.location) / speed)
+    local returnRideDist = distanceFlat(nearestToFate.destination, fate.location)
+    local returnTime = RETURN_PENALTY + returnTeleportPenalty + (returnRideDist / speed)
 
-    logf("FATE route for %s: direct=%.2f shard=%.2f return=%.2f.", fate.name, directTime, shardTime, returnTime)
+    logf("FATE route for '%s': direct=%.1fs (%.0fy) shard=%.1fs (approach=%.0fy ride=%.0fy penalty=%.1f) return=%.1fs (penalty=%.1f+%.1f ride=%.0fy) nearest_player=%s nearest_fate=%s",
+        fate.name, directTime, distanceFlat(playerPosition, fate.location),
+        shardTime, approachDist, shardRideDist, AETHERNET_TRANSITION_PENALTY,
+        returnTime, RETURN_PENALTY, returnTeleportPenalty, returnRideDist,
+        nearestToPlayer and nearestToPlayer.name or "nil",
+        nearestToFate and nearestToFate.name or "nil")
 
     if directTime <= shardTime and directTime <= returnTime then
+        logf("FATE route: chose direct (fastest).")
         return { kind = "direct", reason = "faster_direct" }
     end
     if returnTime < shardTime then
+        logf("FATE route: chose return+teleport via %s (%.1fs vs shard %.1fs vs direct %.1fs).", nearestToFate.name, returnTime, shardTime, directTime)
         return { kind = "return", reason = "faster_return", preferred = nearestToFate }
     end
+    logf("FATE route: chose aethernet via %s (%.1fs vs return %.1fs vs direct %.1fs).", nearestToFate.name, shardTime, returnTime, directTime)
     return { kind = "aethernet", reason = "faster_shard", preferred = nearestToFate }
+end
+
+local function isCeAvailable()
+    local events = safeCall(function() return InstancedContent.OccultCrescent.Events end)
+    if events == nil then return false end
+    local count = tonumber(safeCall(function() return events.Count end)) or 0
+    for i = 0, math.max(0, count - 1) do
+        local event = safeCall(function() return events[i] end)
+        if event ~= nil then
+            local name = tostring(event.Name or "")
+            local ceId = ceNameToId[name]
+            local ceMetadata = ceId and metadata.ces[ceId] or nil
+            if ceMetadata ~= nil and ceMetadata.stagingPoint ~= nil then
+                local isActive = event.IsActive == true
+                local stateText = tostring(event.State or "")
+                local stateCode = tonumber(string.match(stateText, "(%d+)")) or 0
+                if isActive and stateCode > 0 and stateCode < 3 then
+                    return true
+                end
+            end
+        end
+    end
+    return false
 end
 
 local function fateMoveToPosition(targetPosition, stopDistance, timeoutSec, fateId)
@@ -1804,6 +1879,7 @@ local function fateMoveToPosition(targetPosition, stopDistance, timeoutSec, fate
     end
     if not pathfindTo(targetPosition) then return CeMoveResult.Timeout end
 
+    lastCeCheckAt = os.clock()
     local timeout = timeoutSec or CE_ATTEMPT_TIMEOUT
     local deadline = os.clock() + timeout
     while os.clock() < deadline do
@@ -1821,6 +1897,14 @@ local function fateMoveToPosition(targetPosition, stopDistance, timeoutSec, fate
         if (os.clock() - lastFateMoveLogAt) >= IDLE_LOG_INTERVAL then
             logf("fateMoveToPosition still running for fateId=%d, remaining=%.1fs.", fateId, deadline - os.clock())
             lastFateMoveLogAt = os.clock()
+        end
+        if PRIORITIZE_CE and ENABLE_CE_FARMING and (os.clock() - lastCeCheckAt) >= CE_CHECK_INTERVAL then
+            lastCeCheckAt = os.clock()
+            if isCeAvailable() then
+                stopPathing()
+                logf("CE available while traveling to FATE %d; aborting.", fateId)
+                return CeMoveResult.CeAvailable
+            end
         end
         if isDead() then
             stopPathing()
@@ -1865,6 +1949,9 @@ local function travelToFate(fate)
     local estimatedTime = distanceFlat(getPlayerPosition(), fate.location) / speed
     local timeout = math.max(CE_ATTEMPT_TIMEOUT, estimatedTime * 1.5 + 10)
     local result = fateMoveToPosition(fate.location, stopDist, timeout, fate.id)
+    if result == CeMoveResult.CeAvailable then
+        return false, "ce_available"
+    end
     if result == CeMoveResult.BattleAbort then
         logf("FATE %s ended while traveling.", fate.name)
         return false, "FATE ended during travel"
@@ -1886,6 +1973,7 @@ end
 
 local function monitorFate(fate)
     local autorotationActive = false
+    lastCeCheckAt = os.clock()
     logf("Monitoring FATE '%s' (id=%d).", fate.name, fate.id)
 
     while true do
@@ -1914,6 +2002,13 @@ local function monitorFate(fate)
             logf("FATE monitor: id=%d active=%s inFate=%s inCombat=%s progress=%.1f", fate.id, tostring(isFateActive(fate.id)), tostring(snapshot.inFate), tostring(isInCombat()), snapshot.progress or 0)
             lastFateMonitorLogAt = os.clock()
         end
+        if PRIORITIZE_CE and ENABLE_CE_FARMING and (os.clock() - lastCeCheckAt) >= CE_CHECK_INTERVAL then
+            lastCeCheckAt = os.clock()
+            if isCeAvailable() then
+                logf("CE available while monitoring FATE %s; ending monitor.", fate.name)
+                return false, "ce_available"
+            end
+        end
 
         if isDead() then
             logf("Player died during FATE %s.", fate.name)
@@ -1926,7 +2021,7 @@ local function monitorFate(fate)
 
     logf("Final combat clear for FATE %s. Clearing autorotation.", fate.name)
     clearBossModPreset()
-    return true
+    return true, nil
 end
 
 local function returnAfterFate(fate)
@@ -2008,18 +2103,32 @@ local function main()
                     end
 
                     local fateAttempted = false
+                    local cePreempted = false
                     if ENABLE_FATE_FARMING then
                         local fateTarget = selectTargetFate(scanFates())
                         if fateTarget then
                             fateAttempted = true
                             local fateOk, fateErr = travelToFate(fateTarget)
                             if fateOk then
-                                monitorFate(fateTarget)
+                                local monitorOk, monitorErr = monitorFate(fateTarget)
+                                if monitorErr == "ce_available" then
+                                    cePreempted = true
+                                end
+                            elseif fateErr == "ce_available" then
+                                cePreempted = true
                             else
                                 logf("Post-CE FATE travel failed: %s.", tostring(fateErr))
                             end
-                            returnAfterFate(fateTarget)
+                            if not cePreempted then
+                                returnAfterFate(fateTarget)
+                            end
                         end
+                    end
+
+                    if cePreempted then
+                        log("CE available after CE; abandoning FATE.")
+                        sleep(POLL_INTERVAL)
+                        goto continue_loop
                     end
 
                     if not fateAttempted then
@@ -2040,11 +2149,24 @@ local function main()
             local fateTarget = selectTargetFate(scanFates())
             if fateTarget then
                 local ok, err = travelToFate(fateTarget)
+                local cePreempted = false
                 if ok then
-                    monitorFate(fateTarget)
+                    local monitorOk, monitorErr = monitorFate(fateTarget)
+                    if monitorErr == "ce_available" then
+                        cePreempted = true
+                    end
+                elseif err == "ce_available" then
+                    cePreempted = true
                 else
                     logf("Travel to FATE failed: %s.", tostring(err))
                 end
+
+                if cePreempted then
+                    logf("CE available; abandoning FATE %s.", fateTarget.name)
+                    sleep(POLL_INTERVAL)
+                    goto continue_loop
+                end
+
                 returnAfterFate(fateTarget)
                 applyBuffRotation()
                 sleep(POLL_INTERVAL)
