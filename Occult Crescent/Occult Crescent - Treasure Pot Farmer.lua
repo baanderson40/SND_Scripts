@@ -174,7 +174,7 @@ local COFFER_GROUPS = {
         },
         northeast = {
             { label = "NE1", general = Vector3(582.79, 70.14, -558.88) },
-            { label = "NE2", general = Vector3(568.83, 51.50, -816.60) },
+            { label = "NE2", general = Vector3(568.83, 51.50, -816.60), precise = Vector3(571.584, 51.451, -813.164) },
         },
         east = {
             { label = "E1", general = Vector3(805.76, 96.10, -360.63) },
@@ -2568,7 +2568,7 @@ local function runPredictedCycle()
         return nil
     end
 
-    return waitAtSpawnForFate(nextName, SPAWN_LEAD_MINUTES * 60)
+    return waitAtSpawnForFate(nextName, INITIAL_SPAWN_WAIT_MINUTES * 60)
 end
 
 function OnChatMessage()
