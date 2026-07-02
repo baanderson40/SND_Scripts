@@ -15,7 +15,7 @@ configs:
           With Ninja mode disabled, skip mapped coffers above this value.
           With Ninja mode enabled, spots above this value use threshold-based Hide travel.
         min: 0
-        max: 100
+        max: 28
     Use Ninja For Dangerous Area:
         description: Equip Ninja for the full pass and use threshold-based Hide travel for spots above Maximum Aggro Level.
         is_choice: true
@@ -36,7 +36,7 @@ configs:
         min: 0
         max: 100
     Arrival Distance:
-        default: 6
+        default: 20
         description: Distance from a mapped point that counts as arrived.
         min: 3
         max: 40
@@ -78,11 +78,11 @@ local INTERACT_DISTANCE = 3.25
 local SETTLE_DELAY = 0
 local MOUNT_ENABLED = true
 
-local MAX_AGGRO_LEVEL = math.max(0, math.min(100, tonumber(Config.Get("Maximum Aggro Level")) or 19))
+local MAX_AGGRO_LEVEL = math.max(0, math.min(28, tonumber(Config.Get("Maximum Aggro Level")) or 19))
 local USE_NINJA_FOR_DANGEROUS_AREA = tostring(Config.Get("Use Ninja For Dangerous Area") or "Disabled") == "Enabled"
 local HIDE_THRESHOLD_DISTANCE = math.max(10, math.min(300, tonumber(Config.Get("Hide Threshold Distance")) or 120))
 local NINJA_GEARSET_NUMBER = math.max(0, math.min(100, tonumber(Config.Get("Ninja Gearset Number")) or 0))
-local ARRIVAL_DISTANCE = math.max(3, math.min(40, tonumber(Config.Get("Arrival Distance")) or 6))
+local ARRIVAL_DISTANCE = math.max(3, math.min(40, tonumber(Config.Get("Arrival Distance")) or 20))
 
 local CharacterCondition = {
     dead = 2,
