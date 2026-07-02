@@ -67,7 +67,7 @@ local metadata = {
             position = Vector3(306.93518, 105.18042, 305.65344),
             destination = Vector3(302.0557, 103.03691, 304.74838),
             interactDistanceMin = 3.15,
-            interactDistanceMax = 4.5,
+            interactDistanceMax = 4.25,
         },
         Stonemarsh = {
             name = "Stonemarsh",
@@ -76,7 +76,7 @@ local metadata = {
             position = Vector3(-384.11542, 99.19885, 281.42212),
             destination = Vector3(-384.38, 97.44333, 276.6886),
             interactDistanceMin = 3.15,
-            interactDistanceMax = 4.5,
+            interactDistanceMax = 4.25,
         },
         CrystallizedCaverns = {
             name = "CrystallizedCaverns",
@@ -85,7 +85,7 @@ local metadata = {
             position = Vector3(-358.14453, 101.97595, -120.95831),
             destination = Vector3(-353.8978, 99.99078, -120.3132),
             interactDistanceMin = 3.15,
-            interactDistanceMax = 4.5,
+            interactDistanceMax = 4.25,
         },
         TheWanderersHaven = {
             name = "TheWanderersHaven",
@@ -94,7 +94,7 @@ local metadata = {
             position = Vector3(-173.02203, 8.194031, -611.1391),
             destination = Vector3(-169.27321, 6.5, -609.5403),
             interactDistanceMin = 3.15,
-            interactDistanceMax = 4.5,
+            interactDistanceMax = 4.25,
         },
     },
     ces = {
@@ -244,6 +244,8 @@ local MOUNT_TIMEOUT = 8.0
 local MOVE_TIMEOUT_PADDING = 15.0
 local WAIT_POINT_RETRIES = 6
 local AETHERNET_APPROACH_RETRIES = 5
+local AETHERNET_APPROACH_STOP_DISTANCE = 0.5
+local AETHERNET_INNER_EDGE_BIAS = 0.1
 local DESTINATION_CONFIRM_DISTANCE = 30.0
 local POST_CE_COMBAT_SETTLE_SECONDS = 2.0
 local RAISE_TIMEOUT = 300.0
@@ -755,15 +757,16 @@ end
 
 local function getDirectionalApproachPoint(playerPosition, aethernet)
     local minDistance = tonumber(aethernet.interactDistanceMin or metadata.aethernetInteractDistanceMin) or 3.15
+    local targetDistance = minDistance + AETHERNET_INNER_EDGE_BIAS
     local nx, nz = normalizeFlat(aethernet.position, playerPosition)
     if nx == nil then
         logf("Could not derive directional approach for %s; falling back to random band point.", tostring(aethernet.name))
-        return randomPointInRing(aethernet.position, minDistance, tonumber(aethernet.interactDistanceMax or metadata.aethernetInteractDistance) or 4.5)
+        return randomPointInRing(aethernet.position, targetDistance, math.min(targetDistance + 0.15, tonumber(aethernet.interactDistanceMax or metadata.aethernetInteractDistance) or 4.5))
     end
     local point = Vector3(
-        aethernet.position.X + nx * minDistance,
+        aethernet.position.X + nx * targetDistance,
         aethernet.position.Y,
-        aethernet.position.Z + nz * minDistance
+        aethernet.position.Z + nz * targetDistance
     )
     logf("Directional approach point for %s is %s.", tostring(aethernet.name), formatVector3(point))
     return point
@@ -772,7 +775,9 @@ end
 local function getRandomAethernetBandPoint(aethernet)
     local minDistance = tonumber(aethernet.interactDistanceMin or metadata.aethernetInteractDistanceMin) or 3.15
     local maxDistance = tonumber(aethernet.interactDistanceMax or metadata.aethernetInteractDistance) or 4.5
-    return randomPointInRing(aethernet.position, minDistance, maxDistance)
+    local innerMin = math.min(minDistance + AETHERNET_INNER_EDGE_BIAS, maxDistance)
+    local innerMax = math.min(innerMin + 0.25, maxDistance)
+    return randomPointInRing(aethernet.position, innerMin, innerMax)
 end
 
 local function getBaseCampWaitPoint()
@@ -1029,7 +1034,7 @@ local function moveIntoAethernetBand(aethernet)
 
     for _, approachPoint in ipairs(attempts) do
         logf("Trying %s band approach point %s.", tostring(aethernet.name), formatVector3(approachPoint))
-        if approachPoint ~= nil and moveToPosition(approachPoint, WAIT_POINT_FALLBACK_DISTANCE) then
+        if approachPoint ~= nil and moveToPosition(approachPoint, AETHERNET_APPROACH_STOP_DISTANCE) then
             local nowInBand = isWithinAethernetBand(getPlayerPosition(), aethernet)
             if nowInBand then
                 logf("Entered %s interaction band successfully.", tostring(aethernet.name))
@@ -1485,6 +1490,11 @@ end
 returnToBaseAndWait = function()
     log("Starting return-to-base flow.")
     if USE_RETURN_AFTER then
+        if not waitForCombatToSettle() then
+            local err = "combat did not clear before return"
+            logf("Return delayed failed: %s", err)
+            return false, err
+        end
         local ok, err = useReturn()
         if not ok then
             logf("Return failed: %s", tostring(err))
@@ -1647,13 +1657,15 @@ end
 
 local function monitorCe(snapshot)
     local autorotationActive = false
+    local endedByDisappearance = false
     logf("Monitoring CE %s (%s).", snapshot.name, tostring(snapshot.id))
 
     while true do
         local current = waitForSnapshotById(snapshot.id)
         if current == nil then
             logf("CE %s disappeared from scan results.", snapshot.name)
-            return true
+            endedByDisappearance = true
+            break
         end
 
         if current.stateCode == 0 and not current.isActive then
@@ -1701,6 +1713,9 @@ local function monitorCe(snapshot)
     end
 
     waitForCombatToSettle()
+    if endedByDisappearance then
+        logf("CE %s ended by disappearance; post-combat cleanup complete.", snapshot.name)
+    end
     logf("Final combat clear reached for CE %s. Clearing autorotation.", snapshot.name)
     clearBossModPreset()
     return true
