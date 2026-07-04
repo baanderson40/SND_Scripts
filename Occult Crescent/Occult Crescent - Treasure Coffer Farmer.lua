@@ -1,8 +1,8 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
-description: >-
+version: 1.0.1
+description: |
   Visit mapped Occult Crescent treasure coffer positions, filter by configured
   aggro level, and loot visible Treasure Coffer entities.
 plugin_dependencies:
@@ -10,14 +10,16 @@ plugin_dependencies:
 configs:
     Maximum Aggro Level:
         default: 19
-        description: >-
+        description: |
           Normal travel threshold.
           With Ninja mode disabled, skip mapped coffers above this value.
           With Ninja mode enabled, spots above this value use threshold-based Hide travel.
         min: 0
         max: 28
     Use Ninja For Dangerous Area:
-        description: Equip Ninja for the full pass and use threshold-based Hide travel for spots above Maximum Aggro Level.
+        description: |
+          Equip Ninja for the full pass and use threshold-based Hide travel for spots above Maximum Aggro Level.
+          Logic based on Knowledge level 20. Other levels untested. 
         is_choice: true
         choices:
           - Disabled
@@ -25,7 +27,7 @@ configs:
         default: Disabled
     Hide Threshold Distance:
         default: 120
-        description: >-
+        description: |
           Distance from a dangerous mapped coffer position to dismount, apply Hide, and walk.
           Also used before mounting when leaving a dangerous coffer position.
         min: 10
@@ -36,7 +38,7 @@ configs:
         min: 0
         max: 100
     Arrival Distance:
-        default: 20
+        default: 30
         description: Distance from a mapped point that counts as arrived.
         min: 3
         max: 40
@@ -77,6 +79,9 @@ local SCAN_RADIUS = 60.0
 local INTERACT_DISTANCE = 3.25
 local SETTLE_DELAY = 0
 local MOUNT_ENABLED = true
+local DEFAULT_ROUTE_ONLY_AGGRO_LEVEL = 28
+local COMBAT_DIAGNOSTIC_RADIUS = 50.0
+local COMBAT_DIAGNOSTIC_LIMIT = 12
 
 local MAX_AGGRO_LEVEL = math.max(0, math.min(28, tonumber(Config.Get("Maximum Aggro Level")) or 19))
 local USE_NINJA_FOR_DANGEROUS_AREA = tostring(Config.Get("Use Ninja For Dangerous Area") or "Disabled") == "Enabled"
@@ -94,9 +99,17 @@ local CharacterCondition = {
 
 local ninjaGearsetEquipped = false
 local deathReturnTriggered = false
+local dangerousCombatAbortTriggered = false
 local ROUTE_CONTEXT = {
     previousEntry = nil,
     currentEntry = nil,
+}
+
+local STEALTH_TRACE = {
+    context = nil,
+    hidden = nil,
+    mounted = nil,
+    combat = nil,
 }
 
 local STATIC_ROUTE_ORDER = {
@@ -148,14 +161,39 @@ local STATIC_ROUTE_ORDER = {
     "Abandoned Ascent_6",
     {
         area = "Abandoned Ascent",
+        label = "Abandoned Ascent_7_UnhidePoint",
+        general = Vector3(-637.906, 180.037, 764.909),
+        aggroLevel = 28,
+        stopDistance = 3.0,
+        routeOnly = true,
+        forceHidden = true,
+        disableExitHideThreshold = true,
+        mountOnArrival = true,
+        note = "drop_hide_before_ramp",
+    },
+    {
+        area = "Abandoned Ascent",
         label = "Abandoned Ascent_7_RampCorner",
         general = Vector3(-701.109, 203.000, 781.534),
         aggroLevel = 28,
         stopDistance = 3.0,
         routeOnly = true,
+        forceUnhidden = true,
+        note = "spell_aggro_unhidden",
     },
     "Abandoned Ascent_7",
     "Abandoned Ascent_5",
+    {
+        area = "Abandoned Ascent",
+        label = "Abandoned Ascent_5_RehidePoint",
+        general = Vector3(-714.621, 171.000, 669.362),
+        aggroLevel = 28,
+        stopDistance = 3.0,
+        routeOnly = true,
+        forceUnhidden = true,
+        hideOnArrival = true,
+        note = "rehide_after_ascent_5",
+    },
     "Abandoned Ascent_4",
     "Abandoned Ascent_1",
 
@@ -244,7 +282,7 @@ local COFFER_SPOTS = {
     { area = "Crystallized Caverns", label = "Crystallized Caverns_3", general = Vector3(-713.802, 62.058, 192.615), aggroLevel = 13 },
     { area = "Crystallized Caverns", label = "Crystallized Caverns_4", general = Vector3(-756.832, 76.554, 97.368), aggroLevel = 13 },
     { area = "Crystallized Caverns", label = "Crystallized Caverns_5", general = Vector3(-767.453, 115.618, -235.004), aggroLevel = 24, hideThreshold = 400 },
-    { area = "Crystallized Caverns", label = "Crystallized Caverns_6", general = Vector3(-680.537, 104.845, -354.788), aggroLevel = 25, hideThreshold = 400 },
+    { area = "Crystallized Caverns", label = "Crystallized Caverns_6", general = Vector3(-680.537, 104.845, -354.788), aggroLevel = 25, hideThreshold = 425 },
     { area = "Crystallized Caverns", label = "Crystallized Caverns_7", general = Vector3(-798.245, 105.577, -310.567), aggroLevel = 25, hideThreshold = 400 },
     { area = "Crystallized Caverns", label = "Crystallized Caverns_8", general = Vector3(-856.962, 68.833, -93.156), aggroLevel = 24, hideThreshold = 400 },
     { area = "Crystallized Caverns", label = "Crystallized Caverns_9", general = Vector3(-729.915, 116.533, -79.057), aggroLevel = 24, hideThreshold = 400 },
@@ -258,7 +296,7 @@ local COFFER_SPOTS = {
     { area = "Shadowed City", label = "Shadowed City_7", general = Vector3(294.880, 56.077, 640.223), aggroLevel = 15 },
     { area = "Shadowed City", label = "Shadowed City_8", general = Vector3(140.978, 55.985, 770.992), aggroLevel = 15 },
     { area = "Shadowed City", label = "Shadowed City_9", general = Vector3(826.688, 121.996, 434.989), aggroLevel = 21 },
-    { area = "Shadowed City", label = "Shadowed City_10", general = Vector3(868.662, 110.000, 574.749), aggroLevel = 21 },
+    { area = "Shadowed City", label = "Shadowed City_10", general = Vector3(869.291, 109.972, 581.201), aggroLevel = 21 },
 
     { area = "Eldergrowth", label = "Eldergrowth_1", general = Vector3(256.153, 73.167, 492.363), aggroLevel = 14 },
     { area = "Eldergrowth", label = "Eldergrowth_2", general = Vector3(35.721, 65.110, 648.951), aggroLevel = 14 },
@@ -273,9 +311,9 @@ local COFFER_SPOTS = {
     { area = "Abandoned Ascent", label = "Abandoned Ascent_2", general = Vector3(-550.134, 106.981, 627.741), aggroLevel = 26, hideThreshold = 400 },
     { area = "Abandoned Ascent", label = "Abandoned Ascent_3", general = Vector3(-600.275, 138.994, 802.640), aggroLevel = 27 },
     { area = "Abandoned Ascent", label = "Abandoned Ascent_4", general = Vector3(-784.756, 138.994, 699.763), aggroLevel = 27 },
-    { area = "Abandoned Ascent", label = "Abandoned Ascent_5", general = Vector3(-676.417, 170.977, 640.375), aggroLevel = 28 },
+    { area = "Abandoned Ascent", label = "Abandoned Ascent_5", general = Vector3(-676.417, 170.977, 640.375), aggroLevel = 28, forceUnhidden = true, note = "spell_aggro_unhidden" },
     { area = "Abandoned Ascent", label = "Abandoned Ascent_6", general = Vector3(-716.152, 170.977, 794.430), aggroLevel = 28 },
-    { area = "Abandoned Ascent", label = "Abandoned Ascent_7", general = Vector3(-645.686, 202.991, 710.170), aggroLevel = 28 },
+    { area = "Abandoned Ascent", label = "Abandoned Ascent_7", general = Vector3(-645.686, 202.991, 710.170), aggroLevel = 28, forceUnhidden = true, note = "spell_aggro_unhidden" },
 }
 
 local function sleep(seconds)
@@ -387,6 +425,159 @@ local function distance3d(a, b)
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
+local function idText(value)
+    if value == nil then
+        return "nil"
+    end
+    return tostring(value)
+end
+
+local function getObjectTargetId(object)
+    return safeCall(function() return object.TargetObjectId end)
+        or safeCall(function() return object.TargetObject.GameObjectId end)
+        or safeCall(function() return object.TargetObject.EntityId end)
+end
+
+local function logCombatDiagnostics(context, currentPosition)
+    local player = safeCall(function() return Svc.Objects.LocalPlayer end)
+    local playerGameObjectId = safeCall(function() return player.GameObjectId end)
+    local playerEntityId = safeCall(function() return player.EntityId end)
+    local playerAddress = safeCall(function() return player.Address end)
+
+    logf(
+        "Combat diagnostics context=%s pos=%s hidden=%s mounted=%s combat=%s playerGameObjectId=%s playerEntityId=%s playerAddress=%s.",
+        tostring(context or "?"),
+        formatVector3(currentPosition or getPlayerPosition()),
+        tostring(isHidden()),
+        tostring(isMounted()),
+        tostring(isInCombat()),
+        idText(playerGameObjectId),
+        idText(playerEntityId),
+        idText(playerAddress)
+    )
+
+    local target = safeCall(function() return Svc.Targets.Target end)
+    if target ~= nil then
+        logf(
+            "Combat diagnostics currentTarget name=%s kind=%s dataId=%s gameObjectId=%s entityId=%s targetObjectId=%s pos=%s.",
+            tostring(getObjectName(target) or "?"),
+            tostring(safeCall(function() return target.ObjectKind end) or "?"),
+            idText(safeCall(function() return target.DataId end)),
+            idText(safeCall(function() return target.GameObjectId end)),
+            idText(safeCall(function() return target.EntityId end)),
+            idText(getObjectTargetId(target)),
+            formatVector3(safeCall(function() return target.Position end))
+        )
+    else
+        logf("Combat diagnostics currentTarget=nil.")
+    end
+
+    local origin = currentPosition or getPlayerPosition()
+    local nearby = {}
+    local objectCount = tonumber(safeCall(function() return Svc.Objects.Length end)) or 0
+    for i = 0, math.max(0, objectCount - 1) do
+        local object = safeCall(function() return Svc.Objects[i] end)
+        if object ~= nil then
+            local kind = tostring(safeCall(function() return object.ObjectKind end) or "?")
+            if string.find(string.lower(kind), "battlenpc", 1, true) ~= nil then
+                local position = safeCall(function() return object.Position end)
+                local distance = distance3d(origin, position)
+                if position ~= nil and distance <= COMBAT_DIAGNOSTIC_RADIUS then
+                    local targetObjectId = getObjectTargetId(object)
+                    local targetText = idText(targetObjectId)
+                    local targetsPlayer =
+                        (playerGameObjectId ~= nil and targetText == idText(playerGameObjectId))
+                        or (playerEntityId ~= nil and targetText == idText(playerEntityId))
+                        or (playerAddress ~= nil and targetText == idText(playerAddress))
+
+                    table.insert(nearby, {
+                        object = object,
+                        distance = distance,
+                        position = position,
+                        kind = kind,
+                        targetObjectId = targetObjectId,
+                        targetsPlayer = targetsPlayer,
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(nearby, function(a, b)
+        if a.targetsPlayer ~= b.targetsPlayer then
+            return a.targetsPlayer
+        end
+        return a.distance < b.distance
+    end)
+
+    if #nearby == 0 then
+        logf("Combat diagnostics found no BattleNpc objects within %.1fy.", COMBAT_DIAGNOSTIC_RADIUS)
+        return
+    end
+
+    for i = 1, math.min(#nearby, COMBAT_DIAGNOSTIC_LIMIT) do
+        local candidate = nearby[i]
+        local object = candidate.object
+        logf(
+            "Combat actor %d/%d name=%s kind=%s dist=%.1f targetsPlayer=%s targetObjectId=%s dataId=%s gameObjectId=%s entityId=%s hp=%s/%s pos=%s.",
+            i,
+            #nearby,
+            tostring(getObjectName(object) or "?"),
+            tostring(candidate.kind),
+            candidate.distance,
+            tostring(candidate.targetsPlayer),
+            idText(candidate.targetObjectId),
+            idText(safeCall(function() return object.DataId end)),
+            idText(safeCall(function() return object.GameObjectId end)),
+            idText(safeCall(function() return object.EntityId end)),
+            idText(safeCall(function() return object.CurrentHp end)),
+            idText(safeCall(function() return object.MaxHp end)),
+            formatVector3(candidate.position)
+        )
+    end
+end
+
+local function resetStealthTrace(context)
+    STEALTH_TRACE.context = tostring(context or "?")
+    STEALTH_TRACE.hidden = nil
+    STEALTH_TRACE.mounted = nil
+    STEALTH_TRACE.combat = nil
+end
+
+local function traceStealthState(context, currentPosition, targetPosition)
+    local hidden = isHidden()
+    local mounted = isMounted()
+    local combat = isInCombat()
+    local contextText = tostring(context or STEALTH_TRACE.context or "?")
+
+    if STEALTH_TRACE.context ~= contextText
+        or STEALTH_TRACE.hidden ~= hidden
+        or STEALTH_TRACE.mounted ~= mounted
+        or STEALTH_TRACE.combat ~= combat then
+
+        local remaining = targetPosition ~= nil and distanceFlat(currentPosition, targetPosition) or -1
+        logf(
+            "Stealth state context=%s hidden=%s mounted=%s combat=%s pos=%s remaining=%.1fy.",
+            contextText,
+            tostring(hidden),
+            tostring(mounted),
+            tostring(combat),
+            formatVector3(currentPosition),
+            remaining
+        )
+
+        local combatStarted = combat and STEALTH_TRACE.combat == false
+        STEALTH_TRACE.context = contextText
+        STEALTH_TRACE.hidden = hidden
+        STEALTH_TRACE.mounted = mounted
+        STEALTH_TRACE.combat = combat
+
+        if combatStarted then
+            logCombatDiagnostics(contextText, currentPosition)
+        end
+    end
+end
+
 local function isNearBaseCamp(distance)
     return distanceFlat(getPlayerPosition(), BASE_CAMP_POSITION) <= (tonumber(distance) or BASE_START_DISTANCE)
 end
@@ -417,9 +608,30 @@ end
 
 local collectVisibleCoffers
 local returnToBase
+local getObjectName
+
+local function getEntryAggroLevel(entry)
+    local configured = tonumber(entry and entry.aggroLevel)
+    if configured ~= nil then
+        return configured
+    end
+    if entry ~= nil and entry.routeOnly then
+        return DEFAULT_ROUTE_ONLY_AGGRO_LEVEL
+    end
+    return 0
+end
 
 local function isDangerousSpot(entry)
-    return USE_NINJA_FOR_DANGEROUS_AREA and entry ~= nil and (tonumber(entry.aggroLevel) or 0) > MAX_AGGRO_LEVEL
+    if not USE_NINJA_FOR_DANGEROUS_AREA or entry == nil then
+        return false
+    end
+    if entry.forceUnhidden == true then
+        return false
+    end
+    if entry.forceHidden == true then
+        return true
+    end
+    return getEntryAggroLevel(entry) > MAX_AGGRO_LEVEL
 end
 
 local function getHideThreshold(entry)
@@ -431,24 +643,61 @@ local function getArrivalDistance(entry)
 end
 
 local function isWithinHideThreshold(entry, position)
-    return isDangerousSpot(entry) and distanceFlat(position, entry.general) <= getHideThreshold(entry)
+    if entry ~= nil and entry.disableExitHideThreshold == true then
+        return false
+    end
+    return isDangerousSpot(entry)
+        and distanceFlat(position, entry.general) <= getHideThreshold(entry)
 end
 
 local function ensureMounted()
-    if not MOUNT_ENABLED or isMounted() then
+    if not MOUNT_ENABLED then
+        logf("Mount request skipped because mounting is disabled.")
         return true
     end
+    if isMounted() then
+        logf("Mount request skipped because player is already mounted.")
+        return true
+    end
+
+    logf(
+        "Mount request starting pos=%s hidden=%s combat=%s timeout=%.1fs.",
+        formatVector3(getPlayerPosition()),
+        tostring(isHidden()),
+        tostring(isInCombat()),
+        MOUNT_TIMEOUT
+    )
+
     if not (Actions and Actions.ExecuteGeneralAction) then
+        logf("Mount request failed because ExecuteGeneralAction is unavailable.")
         return false
     end
+
     local deadline = os.clock() + MOUNT_TIMEOUT
+    local attempts = 0
     while os.clock() < deadline do
+        attempts = attempts + 1
         pcall(function() Actions.ExecuteGeneralAction(GENERAL_ACTION_MOUNT) end)
         sleep(1.0)
         if isMounted() then
+            logf(
+                "Mount request succeeded after %d attempt(s) pos=%s hidden=%s combat=%s.",
+                attempts,
+                formatVector3(getPlayerPosition()),
+                tostring(isHidden()),
+                tostring(isInCombat())
+            )
             return true
         end
     end
+
+    logf(
+        "Mount request failed after %d attempt(s) pos=%s hidden=%s combat=%s.",
+        attempts,
+        formatVector3(getPlayerPosition()),
+        tostring(isHidden()),
+        tostring(isInCombat())
+    )
     return false
 end
 
@@ -456,18 +705,47 @@ local function ensureDismounted(timeoutSeconds)
     if not isMounted() then
         return true
     end
+
+    logf(
+        "Dismount request starting pos=%s hidden=%s combat=%s.",
+        formatVector3(getPlayerPosition()),
+        tostring(isHidden()),
+        tostring(isInCombat())
+    )
+
     if not (Actions and Actions.ExecuteGeneralAction) then
+        logf("Dismount request failed because ExecuteGeneralAction is unavailable.")
         return false
     end
+
     local deadline = os.clock() + (timeoutSeconds or MOUNT_TIMEOUT)
+    local attempts = 0
     while os.clock() < deadline do
+        attempts = attempts + 1
         pcall(function() Actions.ExecuteGeneralAction(GENERAL_ACTION_DISMOUNT) end)
         sleep(0.5)
         if not isMounted() then
+            logf(
+                "Dismount request succeeded after %d attempt(s) pos=%s hidden=%s combat=%s.",
+                attempts,
+                formatVector3(getPlayerPosition()),
+                tostring(isHidden()),
+                tostring(isInCombat())
+            )
             return true
         end
     end
-    return not isMounted()
+
+    local dismounted = not isMounted()
+    logf(
+        "Dismount request finished success=%s after %d attempt(s) pos=%s hidden=%s combat=%s.",
+        tostring(dismounted),
+        attempts,
+        formatVector3(getPlayerPosition()),
+        tostring(isHidden()),
+        tostring(isInCombat())
+    )
+    return dismounted
 end
 
 local function equipGearsetNumber(gearsetNumber)
@@ -528,29 +806,103 @@ local function tryHideOnce()
         return false
     end
     if not (Actions and Actions.ExecuteAction) then
+        logf("Hide action unavailable.")
         return false
     end
+
+    logf(
+        "Hide action requested actionId=%d pos=%s mounted=%s combat=%s.",
+        HIDE_ACTION_ID,
+        formatVector3(getPlayerPosition()),
+        tostring(isMounted()),
+        tostring(isInCombat())
+    )
+
     pcall(function() Actions.ExecuteAction(HIDE_ACTION_ID) end)
-    return waitUntil(function()
+    local applied = waitUntil(function()
         return isHidden()
     end, 1.5, 0.1)
+
+    logf(
+        "Hide action result applied=%s pos=%s mounted=%s combat=%s.",
+        tostring(applied),
+        formatVector3(getPlayerPosition()),
+        tostring(isMounted()),
+        tostring(isInCombat())
+    )
+    return applied
 end
 
 local function ensureHiddenOrAbort(entry)
+    if isMounted() then
+        logf("Mounted while preparing hidden travel for %s; dismounting before Hide validation.", getSpotDescriptor(entry))
+        if not ensureDismounted(5.0) then
+            if isInCombat() then
+                stopPathing()
+                dangerousCombatAbortTriggered = true
+                logCombatDiagnostics("dismount-failed:" .. getSpotDescriptor(entry), getPlayerPosition())
+                logf(
+                    "Could not dismount for hidden travel to %s because combat started; aborting pass without attempting Return.",
+                    getSpotDescriptor(entry)
+                )
+                return false
+            end
+            logf("Could not dismount for hidden travel to %s; returning to base and stopping script.", getSpotDescriptor(entry))
+            returnToBase()
+            error(string.format("Could not dismount for hidden travel to %s", getSpotDescriptor(entry)))
+        end
+    end
+
+    if isInCombat() then
+        stopPathing()
+        dangerousCombatAbortTriggered = true
+        logCombatDiagnostics("hide-blocked:" .. getSpotDescriptor(entry), getPlayerPosition())
+        logf(
+            "Combat started before Hide could be validated for %s; aborting pass without attempting Hide or Return.",
+            getSpotDescriptor(entry)
+        )
+        return false
+    end
+
     if isHidden() then
         logf("Hide status %d already active for %s.", HIDDEN_STATUS_ID, getSpotDescriptor(entry))
         return true
     end
+
     logf("Hide status %d missing for %s; preparing Hide travel.", HIDDEN_STATUS_ID, getSpotDescriptor(entry))
     if tryHideOnce() then
         logf("Hide status %d applied for %s.", HIDDEN_STATUS_ID, getSpotDescriptor(entry))
         return true
     end
+
+    if isInCombat() then
+        stopPathing()
+        dangerousCombatAbortTriggered = true
+        logCombatDiagnostics("hide-first-attempt:" .. getSpotDescriptor(entry), getPlayerPosition())
+        logf(
+            "Combat started during the first Hide attempt for %s; aborting pass without retrying Hide or attempting Return.",
+            getSpotDescriptor(entry)
+        )
+        return false
+    end
+
     logf("Hide failed for %s; retrying once.", getSpotDescriptor(entry))
     if tryHideOnce() then
         logf("Hide status %d applied for %s on retry.", HIDDEN_STATUS_ID, getSpotDescriptor(entry))
         return true
     end
+
+    if isInCombat() then
+        stopPathing()
+        dangerousCombatAbortTriggered = true
+        logCombatDiagnostics("hide-second-attempt:" .. getSpotDescriptor(entry), getPlayerPosition())
+        logf(
+            "Combat started during the second Hide attempt for %s; aborting pass without attempting Return.",
+            getSpotDescriptor(entry)
+        )
+        return false
+    end
+
     logf("Hide failed twice for %s; returning to base and stopping script.", getSpotDescriptor(entry))
     returnToBase()
     error(string.format("Hide failed twice for %s", getSpotDescriptor(entry)))
@@ -753,6 +1105,11 @@ local function isVnavActive()
 end
 
 local function moveToPosition(targetPosition, stopDistance, allowMount, onStep)
+    if deathReturnTriggered then
+        stopPathing()
+        return false, getPlayerPosition()
+    end
+
     local startPosition = getPlayerPosition()
     if distanceFlat(startPosition, targetPosition) <= stopDistance then
         return true, getPlayerPosition()
@@ -818,21 +1175,56 @@ local function moveToPositionWithRetry(targetPosition, stopDistance, label, allo
     if moved then
         return true, endPosition
     end
+    if deathReturnTriggered then
+        stopPathing()
+        return false, endPosition
+    end
     local remaining = distanceFlat(endPosition, targetPosition)
     logf("Move failed for %s at %s; remaining %.1fy. Retrying once.", tostring(label or "point"), formatVector3(targetPosition), remaining)
     sleep(0.5)
+    if deathReturnTriggered then
+        stopPathing()
+        return false, getPlayerPosition()
+    end
     return moveToPosition(targetPosition, stopDistance, actualAllowMount, onStep)
 end
 
 local function moveToPositionHiddenWithRetry(targetPosition, stopDistance, label, hiddenEntry, onStep)
     for attempt = 1, 2 do
-        if isInCombat() then
-            logf("In combat near dangerous spot %s while moving to %s; skipping Hide and continuing mounted.", getSpotDescriptor(hiddenEntry), tostring(label or "point"))
-            return moveToPositionWithRetry(targetPosition, stopDistance, label, { allowMount = true, onStep = onStep })
+        if deathReturnTriggered then
+            stopPathing()
+            return false, getPlayerPosition()
         end
-        ensureHiddenOrAbort(hiddenEntry)
+        local traceContext = string.format(
+            "hidden-position:%s:%s:attempt-%d",
+            getSpotDescriptor(hiddenEntry),
+            tostring(label or "point"),
+            attempt
+        )
+        resetStealthTrace(traceContext)
+        traceStealthState(traceContext, getPlayerPosition(), targetPosition)
+
+        if isInCombat() then
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logCombatDiagnostics(traceContext, getPlayerPosition())
+            logf(
+                "Combat detected near dangerous spot %s while moving to %s; aborting hidden movement. Mounted fallback is disabled inside the hide threshold.",
+                getSpotDescriptor(hiddenEntry),
+                tostring(label or "point")
+            )
+            return false, getPlayerPosition()
+        end
+
+        if not ensureHiddenOrAbort(hiddenEntry) then
+            return false, getPlayerPosition()
+        end
+        traceStealthState(traceContext, getPlayerPosition(), targetPosition)
+
         local interruptedReason = nil
         local moved, endPosition = moveToPosition(targetPosition, stopDistance, false, function(currentPosition, finalTarget)
+            traceStealthState(traceContext, currentPosition, finalTarget)
+
             if isMounted() then
                 interruptedReason = "mounted"
                 stopPathing()
@@ -852,32 +1244,70 @@ local function moveToPositionHiddenWithRetry(targetPosition, stopDistance, label
                 pcall(onStep, currentPosition, finalTarget)
             end
         end)
+
         if moved then
             return true, endPosition
         end
-        if interruptedReason == "combat" then
-            logf("In combat near dangerous spot %s while moving to %s; skipping Hide and continuing mounted.", getSpotDescriptor(hiddenEntry), tostring(label or "point"))
-            return moveToPositionWithRetry(targetPosition, stopDistance, label, { allowMount = true, onStep = onStep })
+
+        if deathReturnTriggered then
+            stopPathing()
+            return false, endPosition
         end
+
+        if interruptedReason == "combat" then
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logf(
+                "Combat interrupted hidden movement near %s while moving to %s; aborting route instead of continuing mounted.",
+                getSpotDescriptor(hiddenEntry),
+                tostring(label or "point")
+            )
+            return false, endPosition
+        end
+
         if interruptedReason == nil or attempt >= 2 then
             return false, endPosition
         end
-        logf("Hidden movement interrupted for %s while moving to %s (%s); reapplying Hide and retrying.", getSpotDescriptor(hiddenEntry), tostring(label or "point"), interruptedReason)
+
+        logf(
+            "Hidden movement interrupted for %s while moving to %s (%s); enforcing dismount, reapplying Hide, and retrying.",
+            getSpotDescriptor(hiddenEntry),
+            tostring(label or "point"),
+            interruptedReason
+        )
         sleep(0.25)
     end
     return false, getPlayerPosition()
 end
 
 local function moveToSpotWithApproachScan(entry, allowMount, stopDistance, stopPredicate, hiddenEntry)
+    if deathReturnTriggered then
+        stopPathing()
+        return false, getPlayerPosition(), nil
+    end
+
     local targetPosition = entry.general
     local targetStopDistance = tonumber(stopDistance) or ARRIVAL_DISTANCE
     local allowApproachScan = not (entry and entry.routeOnly)
     local startPosition = getPlayerPosition()
+    local traceContext = nil
+
+    if hiddenEntry ~= nil then
+        traceContext = string.format(
+            "hidden-route:%s->%s",
+            getSpotDescriptor(hiddenEntry),
+            getSpotDescriptor(entry)
+        )
+        resetStealthTrace(traceContext)
+        traceStealthState(traceContext, startPosition, targetPosition)
+    end
     if distanceFlat(startPosition, targetPosition) <= targetStopDistance then
         return true, getPlayerPosition(), nil
     end
     if hiddenEntry ~= nil then
-        ensureHiddenOrAbort(hiddenEntry)
+        if not ensureHiddenOrAbort(hiddenEntry) then
+            return false, getPlayerPosition(), nil, "combat"
+        end
     end
     if allowMount ~= false then
         ensureMounted()
@@ -912,6 +1342,8 @@ local function moveToSpotWithApproachScan(entry, allowMount, stopDistance, stopP
         local remainingDistance = distanceFlat(currentPosition, targetPosition)
 
         if hiddenEntry ~= nil then
+            traceStealthState(traceContext, currentPosition, targetPosition)
+
             if isMounted() then
                 stopPathing()
                 return false, currentPosition, nil, "mounted"
@@ -966,22 +1398,54 @@ end
 
 local function moveToSpotWithApproachScanHidden(entry, stopDistance, hiddenEntry, stopPredicate)
     for attempt = 1, 2 do
-        if isInCombat() then
-            logf("In combat near dangerous spot %s while traveling to %s; skipping Hide and continuing mounted.", getSpotDescriptor(hiddenEntry), getSpotDescriptor(entry))
-            return moveToSpotWithApproachScan(entry, true, stopDistance, stopPredicate)
+        if deathReturnTriggered then
+            stopPathing()
+            return false, getPlayerPosition(), nil
         end
-        local moved, endPosition, earlyMatch, interruptedReason = moveToSpotWithApproachScan(entry, false, stopDistance, stopPredicate, hiddenEntry)
+        if isInCombat() then
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logf(
+                "Combat detected near dangerous spot %s while traveling to %s; aborting route. Mounted fallback is disabled inside the hide threshold.",
+                getSpotDescriptor(hiddenEntry),
+                getSpotDescriptor(entry)
+            )
+            return false, getPlayerPosition(), nil
+        end
+
+        local moved, endPosition, earlyMatch, interruptedReason =
+            moveToSpotWithApproachScan(entry, false, stopDistance, stopPredicate, hiddenEntry)
+
+        if deathReturnTriggered then
+            stopPathing()
+            return false, endPosition, nil
+        end
+
         if moved or earlyMatch ~= nil then
             return moved, endPosition, earlyMatch
         end
+
         if interruptedReason == "combat" then
-            logf("In combat near dangerous spot %s while traveling to %s; skipping Hide and continuing mounted.", getSpotDescriptor(hiddenEntry), getSpotDescriptor(entry))
-            return moveToSpotWithApproachScan(entry, true, stopDistance, stopPredicate)
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logf(
+                "Combat interrupted hidden travel near %s while traveling to %s; aborting route instead of continuing mounted.",
+                getSpotDescriptor(hiddenEntry),
+                getSpotDescriptor(entry)
+            )
+            return false, endPosition, nil
         end
+
         if interruptedReason == nil or attempt >= 2 then
             return moved, endPosition, earlyMatch
         end
-        logf("Hidden movement interrupted for %s while traveling to %s (%s); reapplying Hide and retrying.", getSpotDescriptor(hiddenEntry), getSpotDescriptor(entry), interruptedReason)
+
+        logf(
+            "Hidden movement interrupted for %s while traveling to %s (%s); enforcing dismount, reapplying Hide, and retrying.",
+            getSpotDescriptor(hiddenEntry),
+            getSpotDescriptor(entry),
+            interruptedReason
+        )
         sleep(0.25)
     end
     return false, getPlayerPosition(), nil
@@ -1003,72 +1467,135 @@ local function ensureHiddenForCurrentPosition(previousEntry, currentEntry)
         return true
     end
     if isInCombat() then
-        logf("In combat near dangerous spot %s; skipping Hide and continuing mounted.", getSpotDescriptor(getHideThresholdContext(previousEntry, currentEntry, position)))
+        stopPathing()
+        dangerousCombatAbortTriggered = true
+        logf(
+            "Combat detected near dangerous spot %s; aborting route. Mounted fallback is disabled inside the hide threshold.",
+            getSpotDescriptor(getHideThresholdContext(previousEntry, currentEntry, position))
+        )
         return false
     end
     return ensureHiddenOrAbort(getHideThresholdContext(previousEntry, currentEntry, position))
 end
 
 local function moveToSpotRespectingHideThreshold(previousEntry, entry)
+    if deathReturnTriggered then
+        stopPathing()
+        return false, getPlayerPosition(), nil
+    end
+
     prepareForTravel(previousEntry, entry)
     local arrivalDistance = getArrivalDistance(entry)
-
     local position = getPlayerPosition()
+
+    -- Stay hidden only while leaving a previously dangerous location.
     if isWithinHideThreshold(previousEntry, position) then
+        if isInCombat() then
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logCombatDiagnostics(
+                "combat-leaving-dangerous:" .. getSpotDescriptor(previousEntry),
+                position
+            )
+            logf(
+                "Combat detected while still inside the hide threshold of previous dangerous spot %s; aborting pass.",
+                getSpotDescriptor(previousEntry)
+            )
+            return false, position, nil
+        end
+
         logf(
             "Inside hide threshold %.1fy of previous dangerous spot %s; staying hidden until clear.",
             getHideThreshold(previousEntry),
             getSpotDescriptor(previousEntry)
         )
-        local moved, endPosition, earlyMatch = moveToSpotWithApproachScanHidden(entry, arrivalDistance, previousEntry, function(currentPosition)
-            return not isWithinHideThreshold(previousEntry, currentPosition)
-        end)
-        if earlyMatch ~= nil or not moved or distanceFlat(endPosition, entry.general) <= arrivalDistance then
+
+        local moved, endPosition, earlyMatch =
+            moveToSpotWithApproachScanHidden(
+                entry,
+                arrivalDistance,
+                previousEntry,
+                function(currentPosition)
+                    return not isWithinHideThreshold(previousEntry, currentPosition)
+                end
+            )
+
+        if earlyMatch ~= nil
+            or not moved
+            or distanceFlat(endPosition, entry.general) <= arrivalDistance then
             return moved, endPosition, earlyMatch
         end
     end
 
     position = getPlayerPosition()
+
+    if entry.forceUnhidden == true then
+        logf(
+            "Destination %s uses explicit unhidden travel despite aggroLevel=%d; continuing normal mounted pathing.",
+            getSpotDescriptor(entry),
+            getEntryAggroLevel(entry)
+        )
+    end
+
+    -- A destination above maxAggro must be hidden before any movement begins,
+    -- unless it is explicitly marked forceUnhidden.
     if isDangerousSpot(entry) then
-        if not isWithinHideThreshold(entry, position) then
-            logf(
-                "Approaching dangerous spot %s mounted until hide threshold %.1fy.",
-                getSpotDescriptor(entry),
-                getHideThreshold(entry)
-            )
-            local moved, endPosition, earlyMatch = moveToSpotWithApproachScan(entry, true, getHideThreshold(entry))
-            if not moved then
-                return moved, endPosition, earlyMatch
-            end
-            if earlyMatch ~= nil then
-                if isInCombat() then
-                    logf("In combat near dangerous spot %s when coffer became visible; skipping Hide and continuing mounted.", getSpotDescriptor(entry))
-                    return moved, endPosition, earlyMatch
-                end
-                ensureHiddenOrAbort(entry)
-                return moved, endPosition, earlyMatch
-            end
-        end
-
         if isInCombat() then
-            logf("In combat near dangerous spot %s at hide threshold; skipping Hide and continuing mounted.", getSpotDescriptor(entry))
-            return moveToSpotWithApproachScan(entry, true, arrivalDistance)
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logCombatDiagnostics(
+                "combat-before-dangerous:" .. getSpotDescriptor(entry),
+                position
+            )
+            logf(
+                "Combat is active before dangerous destination %s (aggroLevel=%d > max=%d); Hide cannot be applied, aborting pass.",
+                getSpotDescriptor(entry),
+                getEntryAggroLevel(entry),
+                MAX_AGGRO_LEVEL
+            )
+            return false, position, nil
         end
-        return moveToSpotWithApproachScanHidden(entry, arrivalDistance, entry)
+
+        logf(
+            "Destination %s is above max aggro level (%d > %d); applying Hide before movement.",
+            getSpotDescriptor(entry),
+            getEntryAggroLevel(entry),
+            MAX_AGGRO_LEVEL
+        )
+
+        if not ensureHiddenOrAbort(entry) then
+            return false, getPlayerPosition(), nil
+        end
+
+        return moveToSpotWithApproachScanHidden(
+            entry,
+            arrivalDistance,
+            entry
+        )
     end
 
-    position = getPlayerPosition()
-    if isWithinHideThreshold(previousEntry, position) or isWithinHideThreshold(entry, position) then
-        local hiddenEntry = getHideThresholdContext(previousEntry, entry, position)
-        if ensureHiddenForCurrentPosition(previousEntry, entry) == false then
-            return moveToSpotWithApproachScan(entry, true, arrivalDistance)
-        end
-        return moveToSpotWithApproachScanHidden(entry, arrivalDistance, hiddenEntry)
+    -- Destinations at or below maxAggro use normal movement. Combat does not
+    -- interrupt or alter the route. If already mounted, remain mounted.
+    local allowMountAttempt = not isInCombat() or isMounted()
+
+    if isInCombat() then
+        logf(
+            "Combat active while traveling to allowed destination %s (aggroLevel=%d <= max=%d); continuing normal pathing mounted=%s.",
+            getSpotDescriptor(entry),
+            getEntryAggroLevel(entry),
+            MAX_AGGRO_LEVEL,
+            tostring(isMounted())
+        )
     end
-    return moveToSpotWithApproachScan(entry, true, arrivalDistance)
+
+    return moveToSpotWithApproachScan(
+        entry,
+        allowMountAttempt,
+        arrivalDistance
+    )
 end
 
-local function getObjectName(object)
+getObjectName = function(object)
     return safeCall(function() return object.Name.TextValue end)
         or safeCall(function() return object.Name:GetText() end)
         or tostring(safeCall(function() return object.Name end) or "")
@@ -1209,15 +1736,38 @@ local function interactWithCoffer(match, entry, previousEntry)
         local mustStayHidden = isDangerousSpot(entry)
             or isWithinHideThreshold(previousEntry, currentPosition)
             or isWithinHideThreshold(entry, currentPosition)
-        if mustStayHidden and not isInCombat() then
-            ensureHiddenOrAbort(getHideThresholdContext(previousEntry, entry, currentPosition))
+        if mustStayHidden and isInCombat() then
+            stopPathing()
+            dangerousCombatAbortTriggered = true
+            logf(
+                "Combat detected before approaching a coffer inside the hide threshold for %s; aborting route instead of continuing mounted.",
+                getSpotDescriptor(getHideThresholdContext(previousEntry, entry, currentPosition))
+            )
+            return false
+        end
+
+        if mustStayHidden then
+            if not ensureHiddenOrAbort(getHideThresholdContext(previousEntry, entry, currentPosition)) then
+                return false
+            end
         end
 
         local moved = nil
-        if mustStayHidden and not isInCombat() then
-            moved = moveToPositionHiddenWithRetry(currentMatch.position, INTERACT_DISTANCE, "visible coffer", getHideThresholdContext(previousEntry, entry, currentPosition), jumpCallback)
+        if mustStayHidden then
+            moved = moveToPositionHiddenWithRetry(
+                currentMatch.position,
+                INTERACT_DISTANCE,
+                "visible coffer",
+                getHideThresholdContext(previousEntry, entry, currentPosition),
+                jumpCallback
+            )
         else
-            moved = moveToPositionWithRetry(currentMatch.position, INTERACT_DISTANCE, "visible coffer", { allowMount = true, onStep = jumpCallback })
+            moved = moveToPositionWithRetry(
+                currentMatch.position,
+                INTERACT_DISTANCE,
+                "visible coffer",
+                { allowMount = true, onStep = jumpCallback }
+            )
         end
         if not moved then
             logf("Could not reach coffer at %s.", formatVector3(currentMatch.position))
@@ -1262,19 +1812,19 @@ end
 local function getEligibleSpots(maxAggroLevel)
     local eligible = {}
     for _, entry in ipairs(COFFER_SPOTS) do
-        local aggroLevel = tonumber(entry.aggroLevel)
+        local aggroLevel = getEntryAggroLevel(entry)
         if USE_NINJA_FOR_DANGEROUS_AREA then
             table.insert(eligible, entry)
-        elseif aggroLevel ~= nil and aggroLevel <= maxAggroLevel then
+        elseif aggroLevel <= maxAggroLevel then
             table.insert(eligible, entry)
         else
-            logf("Skipping %s aggroLevel=%s above max=%d.", getSpotDescriptor(entry), tostring(aggroLevel or "?"), maxAggroLevel)
+            logf("Skipping %s aggroLevel=%s above max=%d.", getSpotDescriptor(entry), tostring(aggroLevel), maxAggroLevel)
         end
     end
     return eligible
 end
 
-local function buildStaticRoute(eligible)
+local function buildStaticRoute(eligible, maxAggroLevel)
     local byLabel = {}
     for _, entry in ipairs(eligible) do
         byLabel[entry.label] = entry
@@ -1283,7 +1833,17 @@ local function buildStaticRoute(eligible)
     local ordered = {}
     for _, routeEntry in ipairs(STATIC_ROUTE_ORDER) do
         if type(routeEntry) == "table" then
-            table.insert(ordered, routeEntry)
+            local aggroLevel = getEntryAggroLevel(routeEntry)
+            if USE_NINJA_FOR_DANGEROUS_AREA or aggroLevel <= maxAggroLevel then
+                table.insert(ordered, routeEntry)
+            else
+                logf(
+                    "Skipping route waypoint %s aggroLevel=%d above max=%d.",
+                    getSpotDescriptor(routeEntry),
+                    aggroLevel,
+                    maxAggroLevel
+                )
+            end
         else
             local entry = byLabel[routeEntry]
             if entry ~= nil then
@@ -1292,6 +1852,7 @@ local function buildStaticRoute(eligible)
             end
         end
     end
+
     for _, entry in pairs(byLabel) do
         table.insert(ordered, entry)
     end
@@ -1310,7 +1871,7 @@ local function logRoute(route, maxAggroLevel)
     local preview = {}
     local limit = math.min(#route, 12)
     for i = 1, limit do
-        preview[#preview + 1] = string.format("%s(%d)", getSpotDescriptor(route[i]), tonumber(route[i].aggroLevel) or 0)
+        preview[#preview + 1] = string.format("%s(%d)", getSpotDescriptor(route[i]), getEntryAggroLevel(route[i]))
     end
     if #preview > 0 then
         logf("Route preview: %s%s.", table.concat(preview, " -> "), #route > limit and " -> ..." or "")
@@ -1318,23 +1879,154 @@ local function logRoute(route, maxAggroLevel)
 end
 
 local function scanAndLootAtSpot(previousEntry, entry)
-    logf("Traveling to %s at %s (aggroLevel=%d).", getSpotDescriptor(entry), formatVector3(entry.general), tonumber(entry.aggroLevel) or 0)
+    local arrivalDistance = getArrivalDistance(entry)
+    logf(
+        "Traveling to %s at %s (aggroLevel=%d, arrivalDistance=%.1f).",
+        getSpotDescriptor(entry),
+        formatVector3(entry.general),
+        getEntryAggroLevel(entry),
+        arrivalDistance
+    )
+
     local moved, endPosition, earlyMatch = moveToSpotRespectingHideThreshold(previousEntry, entry)
-    if not moved and earlyMatch == nil then
-        logf("Move to %s did not complete; retrying once.", getSpotDescriptor(entry))
-        sleep(0.5)
-        moved, endPosition, earlyMatch = moveToSpotRespectingHideThreshold(previousEntry, entry)
+
+    if deathReturnTriggered then
+        stopPathing()
+        logf(
+            "Death return completed while traveling to %s; ending route at base without retrying.",
+            getSpotDescriptor(entry)
+        )
+        return false
     end
+
     local remaining = distanceFlat(endPosition, entry.general)
-    logf("Arrived=%s current=%s remaining=%.1fy.", tostring(moved), formatVector3(endPosition), remaining)
+
+    if entry.routeOnly and moved and earlyMatch == nil and remaining > arrivalDistance then
+        logf(
+            "Movement reported success for route waypoint %s, but remaining %.1fy exceeds required %.1fy.",
+            getSpotDescriptor(entry),
+            remaining,
+            arrivalDistance
+        )
+        moved = false
+    end
 
     if not moved and earlyMatch == nil then
-        logf("Skipping %s after failed movement attempt; remaining %.1fy.", getSpotDescriptor(entry), remaining)
+        logf(
+            "Move to %s did not complete; remaining %.1fy exceeds required %.1fy. Retrying once.",
+            getSpotDescriptor(entry),
+            remaining,
+            arrivalDistance
+        )
+        sleep(0.5)
+
+        if deathReturnTriggered then
+            stopPathing()
+            return false
+        end
+
+        moved, endPosition, earlyMatch = moveToSpotRespectingHideThreshold(previousEntry, entry)
+
+        if deathReturnTriggered then
+            stopPathing()
+            logf(
+                "Death return completed during retry toward %s; ending route at base.",
+                getSpotDescriptor(entry)
+            )
+            return false
+        end
+
+        remaining = distanceFlat(endPosition, entry.general)
+
+        if entry.routeOnly and moved and earlyMatch == nil and remaining > arrivalDistance then
+            logf(
+                "Retry reported success for route waypoint %s, but remaining %.1fy exceeds required %.1fy.",
+                getSpotDescriptor(entry),
+                remaining,
+                arrivalDistance
+            )
+            moved = false
+        end
+    end
+
+    logf(
+        "Arrived=%s current=%s remaining=%.1fy required=%.1fy.",
+        tostring(moved),
+        formatVector3(endPosition),
+        remaining,
+        arrivalDistance
+    )
+
+    if not moved and earlyMatch == nil then
+        logf(
+            "Skipping %s after failed movement attempt; remaining %.1fy exceeds required %.1fy.",
+            getSpotDescriptor(entry),
+            remaining,
+            arrivalDistance
+        )
         return
     end
 
     if entry.routeOnly then
-        logf("Reached route waypoint %s.", getSpotDescriptor(entry))
+        logf(
+            "Reached route waypoint %s within %.1fy.",
+            getSpotDescriptor(entry),
+            arrivalDistance
+        )
+
+        if entry.mountOnArrival == true then
+            logf(
+                "Waypoint %s requires unhidden mounted travel next; mounting now to remove Hide.",
+                getSpotDescriptor(entry)
+            )
+            if not ensureMounted() then
+                error(string.format(
+                    "Failed to mount at required unhide waypoint %s",
+                    getSpotDescriptor(entry)
+                ))
+            end
+            logf(
+                "Unhide waypoint complete for %s hidden=%s mounted=%s combat=%s.",
+                getSpotDescriptor(entry),
+                tostring(isHidden()),
+                tostring(isMounted()),
+                tostring(isInCombat())
+            )
+        end
+
+        if entry.hideOnArrival == true then
+            logf(
+                "Waypoint %s is the safe re-hide point; applying Hide before continuing.",
+                getSpotDescriptor(entry)
+            )
+
+            if isInCombat() then
+                stopPathing()
+                dangerousCombatAbortTriggered = true
+                logCombatDiagnostics(
+                    "combat-at-rehide-point:" .. getSpotDescriptor(entry),
+                    getPlayerPosition()
+                )
+                logf(
+                    "Combat is still active at safe re-hide point %s; aborting instead of entering the sight-aggro section unhidden.",
+                    getSpotDescriptor(entry)
+                )
+                return
+            end
+
+            if not ensureHiddenOrAbort(entry) then
+                return
+            end
+
+            logf(
+                "Re-hide waypoint complete for %s hidden=%s mounted=%s combat=%s.",
+                getSpotDescriptor(entry),
+                tostring(isHidden()),
+                tostring(isMounted()),
+                tostring(isInCombat())
+            )
+        end
+
         return
     end
 
@@ -1393,7 +2085,7 @@ local function runPass()
         logf("No mapped coffers are eligible at max aggro level=%d.", MAX_AGGRO_LEVEL)
         return false
     end
-    local route = buildStaticRoute(eligible)
+    local route = buildStaticRoute(eligible, MAX_AGGRO_LEVEL)
     logRoute(route, MAX_AGGRO_LEVEL)
 
     local previousEntry = nil
@@ -1408,10 +2100,33 @@ local function runPass()
             return false
         end
         if isInCombat() then
-            logf("Player in combat near %s; continuing route.", getSpotDescriptor(entry))
+            if isDangerousSpot(entry) then
+                stopPathing()
+                dangerousCombatAbortTriggered = true
+                logCombatDiagnostics(
+                    "route-combat-before-dangerous:" .. getSpotDescriptor(entry),
+                    getPlayerPosition()
+                )
+                logf(
+                    "Player is in combat before dangerous destination %s (aggroLevel=%d > max=%d); aborting because Hide must be active before movement.",
+                    getSpotDescriptor(entry),
+                    getEntryAggroLevel(entry),
+                    MAX_AGGRO_LEVEL
+                )
+                return false
+            end
+
+            logf(
+                "Player is in combat before allowed destination %s (aggroLevel=%d <= max=%d); continuing normal route pathing.",
+                getSpotDescriptor(entry),
+                getEntryAggroLevel(entry),
+                MAX_AGGRO_LEVEL
+            )
         end
-        scanAndLootAtSpot(previousEntry, entry)
-        if deathReturnTriggered then
+
+        local spotCompleted = scanAndLootAtSpot(previousEntry, entry)
+
+        if deathReturnTriggered or dangerousCombatAbortTriggered or spotCompleted == false then
             return false
         end
         previousEntry = entry
@@ -1428,9 +2143,20 @@ local function main()
         ensureNinjaGearset()
     end
     ensureBaseStart()
-    runPass()
+    local passCompleted = runPass()
     if deathReturnTriggered then
-        logf("Treasure coffer farmer stopped after death return.")
+        stopPathing()
+        logf(
+            "Treasure coffer farmer stopped at base after death return; no route retry was attempted."
+        )
+        return false
+    end
+    if dangerousCombatAbortTriggered then
+        logf("Treasure coffer farmer stopped after combat inside a hide-threshold area; no mounted continuation or Return was attempted.")
+        return false
+    end
+    if not passCompleted then
+        logf("Treasure coffer farmer pass stopped before completion.")
         return false
     end
     returnToBase()
