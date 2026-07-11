@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 2.0.3
+version: 2.0.4
 description: |
   Toolkit Helper adds support utilities around Fate Tool Kit automation:
   - AutoRetainer monitoring and Limsa bell handling
@@ -2670,28 +2670,11 @@ end
 
 function AcceptTeleportOfferLocation(destinationAetheryte)
     local notification = Addons.GetAddon("_NotificationTelepo")
-    if notification ~= nil and notification.Ready then
-        local location = GetNodeText("_NotificationTelepo", 3, 4)
-        yield("/callback _Notification true 0 16 "..location)
-        yield("/wait 1")
-    end
-
     local yesno = Addons.GetAddon("SelectYesno")
-    if yesno ~= nil and yesno.Ready then
-        local teleportOfferMessage = GetNodeText("SelectYesno", 1, 2)
-        if type(teleportOfferMessage) == "string" then
-            local teleportOfferLocation = teleportOfferMessage:match("Accept Teleport to (.+)%?")
-            if teleportOfferLocation ~= nil then
-                if string.lower(teleportOfferLocation) == string.lower(destinationAetheryte) then
-                    yield("/callback SelectYesno true 0")
-                    return
-                else
-                    Dalamud.Log("[Toolkit Helper] Offer for "..teleportOfferLocation.." and destination "..destinationAetheryte.." differ. Declining teleport.")
-                end
-            end
-            yield("/callback SelectYesno true 2")
-            return
-        end
+    if notification ~= nil and notification.Ready and yesno ~= nil and yesno.Ready then
+        Dalamud.Log("[Toolkit Helper] Accepting party teleport offer"..(destinationAetheryte and (" for "..tostring(destinationAetheryte)) or ""))
+        yield("/callback SelectYesno true 0")
+        return
     end
 end
 
