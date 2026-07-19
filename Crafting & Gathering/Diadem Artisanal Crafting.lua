@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.3
+version: 0.1.4
 description: |
   Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -1066,7 +1066,6 @@ local function isGatherActivityObserved()
     end
 
     return moving
-        or Svc.Condition[CHARACTER_CONDITION.mounted] == true
         or Svc.Condition[6] == true
         or Svc.Condition[CHARACTER_CONDITION.occupiedMateriaExtractionAndRepair] == true
         or Svc.Condition[42] == true
