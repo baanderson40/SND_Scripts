@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.0
+version: 1.0.1
 description: Continuously scans for a configured entity by name and echoes when it returns.
 configs:
   Entity Name:
@@ -85,6 +85,67 @@ local function safeGetPosition(entity)
     return x, y, z
 end
 
+local function safeGetLocalPlayerPosition()
+    if Entity and Entity.Player and Entity.Player.Position then
+        return safeGetPosition(Entity.Player)
+    end
+
+    if Player and Player.Position then
+        local x = tonumber(Player.Position.X)
+        local y = tonumber(Player.Position.Y)
+        local z = tonumber(Player.Position.Z)
+
+        if x ~= nil and y ~= nil and z ~= nil then
+            return x, y, z
+        end
+    end
+
+    local ok, position = pcall(function()
+        return Svc and Svc.Objects and Svc.Objects.LocalPlayer and Svc.Objects.LocalPlayer.Position
+    end)
+
+    if ok and position then
+        local x = tonumber(position.X)
+        local y = tonumber(position.Y)
+        local z = tonumber(position.Z)
+
+        if x ~= nil and y ~= nil and z ~= nil then
+            return x, y, z
+        end
+    end
+
+    local ok2, position2 = pcall(function()
+        return Svc and Svc.ClientState and Svc.ClientState.LocalPlayer and Svc.ClientState.LocalPlayer.Position
+    end)
+
+    if ok2 and position2 then
+        local x = tonumber(position2.X)
+        local y = tonumber(position2.Y)
+        local z = tonumber(position2.Z)
+
+        if x ~= nil and y ~= nil and z ~= nil then
+            return x, y, z
+        end
+    end
+
+    return nil
+end
+
+local function calculateFlatDistance(fromX, fromZ, toX, toZ)
+    fromX = tonumber(fromX)
+    fromZ = tonumber(fromZ)
+    toX = tonumber(toX)
+    toZ = tonumber(toZ)
+
+    if not fromX or not fromZ or not toX or not toZ then
+        return nil
+    end
+
+    local dx = toX - fromX
+    local dz = toZ - fromZ
+    return math.sqrt((dx * dx) + (dz * dz))
+end
+
 local function safeGetTerritoryId()
     local ok, territoryId = pcall(function()
         return Svc and Svc.ClientState and Svc.ClientState.TerritoryType
@@ -138,13 +199,23 @@ while true do
         if wasMissing then
             local x, y, z = safeGetPosition(entity)
             if x and y and z then
+                local playerX, _, playerZ = safeGetLocalPlayerPosition()
+                local flatDistance = playerX and playerZ and calculateFlatDistance(playerX, playerZ, x, z)
                 local territoryId = safeGetTerritoryId()
                 local flagPlaced = territoryId and safeSetFlagMapMarker(territoryId, x, z)
 
                 if flagPlaced then
-                    log(string.format("'%s' returned at %.2f, %.2f, %.2f. Flag placed in territory %d.", entityName, x, y, z, territoryId))
+                    if flatDistance then
+                        log(string.format("'%s' returned at %.2f, %.2f, %.2f. Flat distance: %.2f. Flag placed in territory %d.", entityName, x, y, z, flatDistance, territoryId))
+                    else
+                        log(string.format("'%s' returned at %.2f, %.2f, %.2f. Flat distance unavailable. Flag placed in territory %d.", entityName, x, y, z, territoryId))
+                    end
                 else
-                    log(string.format("'%s' returned at %.2f, %.2f, %.2f. Flag placement unavailable.", entityName, x, y, z))
+                    if flatDistance then
+                        log(string.format("'%s' returned at %.2f, %.2f, %.2f. Flat distance: %.2f. Flag placement unavailable.", entityName, x, y, z, flatDistance))
+                    else
+                        log(string.format("'%s' returned at %.2f, %.2f, %.2f. Flat distance unavailable. Flag placement unavailable.", entityName, x, y, z))
+                    end
                 end
             else
                 log(string.format("'%s' returned, but position is unavailable.", entityName))

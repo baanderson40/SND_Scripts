@@ -37,7 +37,7 @@ Collection of various SND scripts
   - Sell TT Cards
   - Triple Triad Farm
 
-- Occult Cresent
+- Occult Crescent
    - South Horn - Silver.lua
 
 - PVP

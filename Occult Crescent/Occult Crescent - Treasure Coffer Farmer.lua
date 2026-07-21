@@ -1,8 +1,8 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 1.0.1
-description: |
+version: 1.0.0
+description: >-
   Visit mapped Occult Crescent treasure coffer positions, filter by configured
   aggro level, and loot visible Treasure Coffer entities.
 plugin_dependencies:
@@ -10,16 +10,14 @@ plugin_dependencies:
 configs:
     Maximum Aggro Level:
         default: 19
-        description: |
+        description: >-
           Normal travel threshold.
           With Ninja mode disabled, skip mapped coffers above this value.
           With Ninja mode enabled, spots above this value use threshold-based Hide travel.
         min: 0
         max: 28
     Use Ninja For Dangerous Area:
-        description: |
-          Equip Ninja for the full pass and use threshold-based Hide travel for spots above Maximum Aggro Level.
-          Logic based on Knowledge level 20. Other levels untested. 
+        description: Equip Ninja for the full pass and use threshold-based Hide travel for spots above Maximum Aggro Level.
         is_choice: true
         choices:
           - Disabled
@@ -27,7 +25,7 @@ configs:
         default: Disabled
     Hide Threshold Distance:
         default: 120
-        description: |
+        description: >-
           Distance from a dangerous mapped coffer position to dismount, apply Hide, and walk.
           Also used before mounting when leaving a dangerous coffer position.
         min: 10
@@ -38,10 +36,19 @@ configs:
         min: 0
         max: 100
     Arrival Distance:
-        default: 30
+        default: 20
         description: Distance from a mapped point that counts as arrived.
         min: 3
         max: 40
+    Skip High-Level Caverns During Ashkin Time:
+        description: >-
+          Skip Crystallized Caverns coffers with aggroLevel 20 or higher from
+          22:30 through 03:59 Eorzea Time, when Ashkin spawns are active.
+        is_choice: true
+        choices:
+          - Disabled
+          - Enabled
+        default: Enabled
 [[End Metadata]]
 --]=====]
 
@@ -65,7 +72,6 @@ local POLL_INTERVAL = 0.25
 local INTERACT_WAIT_TIMEOUT = 8.0
 local APPROACH_SCAN_TRIGGER_DISTANCE = 40.0
 local APPROACH_SCAN_POLL_INTERVAL = 0.2
-local POST_INTERACT_QUICK_TIMEOUT = 2.0
 local INTERACT_RETRY_DELAY = 1.25
 local MAX_INTERACT_ATTEMPTS = 2
 local JUMP_ASSIST_TRIGGER_DISTANCE = 10.0
@@ -77,7 +83,6 @@ local BASE_CAMP_POSITION = Vector3(830.7468, 72.98389, -695.97925)
 local BASE_START_DISTANCE = 50.0
 local SCAN_RADIUS = 60.0
 local INTERACT_DISTANCE = 3.25
-local SETTLE_DELAY = 0
 local MOUNT_ENABLED = true
 local DEFAULT_ROUTE_ONLY_AGGRO_LEVEL = 28
 local COMBAT_DIAGNOSTIC_RADIUS = 50.0
@@ -88,6 +93,8 @@ local USE_NINJA_FOR_DANGEROUS_AREA = tostring(Config.Get("Use Ninja For Dangerou
 local HIDE_THRESHOLD_DISTANCE = math.max(10, math.min(300, tonumber(Config.Get("Hide Threshold Distance")) or 120))
 local NINJA_GEARSET_NUMBER = math.max(0, math.min(100, tonumber(Config.Get("Ninja Gearset Number")) or 0))
 local ARRIVAL_DISTANCE = math.max(3, math.min(40, tonumber(Config.Get("Arrival Distance")) or 20))
+local SKIP_HIGH_CAVERNS_DURING_ASHKIN =
+    tostring(Config.Get("Skip High-Level Caverns During Ashkin Time") or "Enabled") == "Enabled"
 
 local CharacterCondition = {
     dead = 2,
@@ -169,7 +176,9 @@ local STATIC_ROUTE_ORDER = {
         forceHidden = true,
         disableExitHideThreshold = true,
         mountOnArrival = true,
-        note = "drop_hide_before_ramp",
+        specialBranch = "ascent7",
+        recheckAscentSafetyOnArrival = true,
+        note = "drop_hide_before_ascent_7",
     },
     {
         area = "Abandoned Ascent",
@@ -179,14 +188,28 @@ local STATIC_ROUTE_ORDER = {
         stopDistance = 3.0,
         routeOnly = true,
         forceUnhidden = true,
+        specialBranch = "ascent7",
         note = "spell_aggro_unhidden",
     },
     "Abandoned Ascent_7",
+    {
+        area = "Abandoned Ascent",
+        label = "Abandoned Ascent_5_UnhidePoint",
+        general = Vector3(-687.237, 171.000, 665.097),
+        aggroLevel = 28,
+        stopDistance = 3.0,
+        routeOnly = true,
+        forceHidden = true,
+        disableExitHideThreshold = true,
+        mountOnArrival = true,
+        specialBranch = "ascent5_only",
+        note = "drop_hide_before_ascent_5",
+    },
     "Abandoned Ascent_5",
     {
         area = "Abandoned Ascent",
         label = "Abandoned Ascent_5_RehidePoint",
-        general = Vector3(-714.621, 171.000, 669.362),
+        general = Vector3(-687.237, 171.000, 665.097),
         aggroLevel = 28,
         stopDistance = 3.0,
         routeOnly = true,
@@ -275,7 +298,7 @@ local COFFER_SPOTS = {
     { area = "Heathcliff", label = "Heathcliff_7", general = Vector3(55.283, 111.314, -289.082), aggroLevel = 9 },
     { area = "Heathcliff", label = "Heathcliff_8", general = Vector3(-158.648, 98.619, -132.738), aggroLevel = 11 },
     { area = "Heathcliff", label = "Heathcliff_9", general = Vector3(-487.114, 98.527, -205.463), aggroLevel = 11 },
-    { area = "Heathcliff", label = "Heathcliff_10", general = Vector3(-682.795, 135.607, -195.270), aggroLevel = 13 },
+    { area = "Heathcliff", label = "Heathcliff_10", general = Vector3(-682.795, 135.607, -195.270), aggroLevel = 13, rainSensitive = true },
 
     { area = "Crystallized Caverns", label = "Crystallized Caverns_1", general = Vector3(-444.114, 90.684, 26.230), aggroLevel = 12 },
     { area = "Crystallized Caverns", label = "Crystallized Caverns_2", general = Vector3(-394.888, 106.737, 175.433), aggroLevel = 12 },
@@ -313,7 +336,7 @@ local COFFER_SPOTS = {
     { area = "Abandoned Ascent", label = "Abandoned Ascent_4", general = Vector3(-784.756, 138.994, 699.763), aggroLevel = 27 },
     { area = "Abandoned Ascent", label = "Abandoned Ascent_5", general = Vector3(-676.417, 170.977, 640.375), aggroLevel = 28, forceUnhidden = true, note = "spell_aggro_unhidden" },
     { area = "Abandoned Ascent", label = "Abandoned Ascent_6", general = Vector3(-716.152, 170.977, 794.430), aggroLevel = 28 },
-    { area = "Abandoned Ascent", label = "Abandoned Ascent_7", general = Vector3(-645.686, 202.991, 710.170), aggroLevel = 28, forceUnhidden = true, note = "spell_aggro_unhidden" },
+    { area = "Abandoned Ascent", label = "Abandoned Ascent_7", general = Vector3(-645.686, 202.991, 710.170), aggroLevel = 28, forceUnhidden = true, specialBranch = "ascent7", note = "spell_aggro_unhidden" },
 }
 
 local function sleep(seconds)
@@ -330,6 +353,287 @@ end
 
 local function logf(fmt, ...)
     Dalamud.Log(string.format("%s %s", PREFIX, string.format(fmt, ...)))
+end
+
+-- Forward declarations for helpers referenced before their implementations.
+local getSpotDescriptor
+local getObjectName
+local stopPathing
+local collectVisibleCoffers
+local returnToBase
+local getEntryAggroLevel
+
+SPECIAL_SPAWN_RULES = SPECIAL_SPAWN_RULES or {}
+SPECIAL_SPAWN_RULES.cavernsDecision = nil
+SPECIAL_SPAWN_RULES.ascentDecision = nil
+SPECIAL_SPAWN_RULES.ascentLocked = false
+SPECIAL_SPAWN_RULES.rainWeatherIds = {
+    [7] = true,
+    [62] = true,
+    [64] = true,
+}
+
+function SPECIAL_SPAWN_RULES.reset()
+    SPECIAL_SPAWN_RULES.cavernsDecision = nil
+    SPECIAL_SPAWN_RULES.ascentDecision = nil
+    SPECIAL_SPAWN_RULES.ascentLocked = false
+end
+
+function SPECIAL_SPAWN_RULES.readEorzeaTime()
+    local raw = tonumber(safeCall(function()
+        return Instances.Framework.EorzeaTime
+    end))
+
+    if raw == nil then
+        return nil, "Instances.Framework.EorzeaTime unavailable"
+    end
+
+    local secondsToday = raw % 86400
+    local hour = math.floor(secondsToday / 3600)
+    local minute = math.floor((secondsToday % 3600) / 60)
+    local second = math.floor(secondsToday % 60)
+
+    return {
+        raw = raw,
+        secondsToday = secondsToday,
+        hour = hour,
+        minute = minute,
+        second = second,
+    }, nil
+end
+
+function SPECIAL_SPAWN_RULES.readWeatherId()
+    local weather = safeCall(function()
+        return Instances.EnvManager.ActiveWeather
+    end)
+
+    if weather == nil then
+        return nil, "Instances.EnvManager.ActiveWeather unavailable"
+    end
+
+    local weatherId = tonumber(safeCall(function() return tonumber(weather) end))
+        or tonumber(safeCall(function() return weather.RowId end))
+        or tonumber(safeCall(function() return weather.Id end))
+        or tonumber(safeCall(function() return weather.Row end))
+
+    if weatherId == nil then
+        return nil, "ActiveWeather did not expose a numeric weather ID"
+    end
+
+    return weatherId, nil
+end
+
+function SPECIAL_SPAWN_RULES.isAshkinTime(et)
+    if et == nil then
+        return true
+    end
+    return et.secondsToday >= (22 * 3600 + 30 * 60)
+        or et.secondsToday < (4 * 3600)
+end
+
+function SPECIAL_SPAWN_RULES.isRainWeather(weatherId)
+    if weatherId == nil then
+        return true
+    end
+    return SPECIAL_SPAWN_RULES.rainWeatherIds[weatherId] == true
+end
+
+function SPECIAL_SPAWN_RULES.readConditions()
+    local et, timeError = SPECIAL_SPAWN_RULES.readEorzeaTime()
+    local weatherId, weatherError = SPECIAL_SPAWN_RULES.readWeatherId()
+
+    return {
+        et = et,
+        weatherId = weatherId,
+        ashkin = SPECIAL_SPAWN_RULES.isAshkinTime(et),
+        rain = SPECIAL_SPAWN_RULES.isRainWeather(weatherId),
+        timeError = timeError,
+        weatherError = weatherError,
+    }
+end
+
+function SPECIAL_SPAWN_RULES.formatTime(et)
+    if et == nil then
+        return "unavailable"
+    end
+    return string.format("%02d:%02d:%02d", et.hour, et.minute, et.second)
+end
+
+function SPECIAL_SPAWN_RULES.copyEntry(entry)
+    local copy = {}
+    for key, value in pairs(entry or {}) do
+        copy[key] = value
+    end
+    return copy
+end
+
+function SPECIAL_SPAWN_RULES.isHighLevelCavernsEntry(entry)
+    return entry ~= nil
+        and entry.area == "Crystallized Caverns"
+        and getEntryAggroLevel(entry) >= 20
+end
+
+function SPECIAL_SPAWN_RULES.shouldSkipHighCaverns(entry)
+    if not SKIP_HIGH_CAVERNS_DURING_ASHKIN
+        or not SPECIAL_SPAWN_RULES.isHighLevelCavernsEntry(entry) then
+
+        return false
+    end
+
+    if SPECIAL_SPAWN_RULES.cavernsDecision == nil then
+        local et, timeError = SPECIAL_SPAWN_RULES.readEorzeaTime()
+        local ashkin = SPECIAL_SPAWN_RULES.isAshkinTime(et)
+
+        SPECIAL_SPAWN_RULES.cavernsDecision = ashkin and "skip" or "run"
+
+        if et == nil then
+            logf(
+                "Unable to read Eorzea time at the high-level Caverns gate (%s); fail-safe skipping Caverns entries with aggroLevel >= 20.",
+                tostring(timeError or "unknown error")
+            )
+        elseif ashkin then
+            logf(
+                "Eorzea time at the high-level Caverns gate is %s ET (raw=%s); Ashkin window 22:30-04:00 is active, skipping Caverns entries with aggroLevel >= 20.",
+                SPECIAL_SPAWN_RULES.formatTime(et),
+                tostring(et.raw)
+            )
+        else
+            logf(
+                "Eorzea time at the high-level Caverns gate is %s ET (raw=%s); Ashkin window is inactive, running the high-level Caverns block.",
+                SPECIAL_SPAWN_RULES.formatTime(et),
+                tostring(et.raw)
+            )
+        end
+    end
+
+    return SPECIAL_SPAWN_RULES.cavernsDecision == "skip"
+end
+
+function SPECIAL_SPAWN_RULES.chooseAscentBranch()
+    if SPECIAL_SPAWN_RULES.ascentDecision ~= nil then
+        return SPECIAL_SPAWN_RULES.ascentDecision
+    end
+
+    local conditions = SPECIAL_SPAWN_RULES.readConditions()
+    local safe = USE_NINJA_FOR_DANGEROUS_AREA
+        and not conditions.ashkin
+        and not conditions.rain
+        and conditions.et ~= nil
+        and conditions.weatherId ~= nil
+
+    SPECIAL_SPAWN_RULES.ascentDecision = safe and "ascent7" or "ascent5_only"
+
+    logf(
+        "Ascent 7 conditions: ET=%s weatherId=%s ashkin=%s rain=%s ninja=%s timeError=%s weatherError=%s. Using %s branch.",
+        SPECIAL_SPAWN_RULES.formatTime(conditions.et),
+        tostring(conditions.weatherId or "unavailable"),
+        tostring(conditions.ashkin),
+        tostring(conditions.rain),
+        tostring(USE_NINJA_FOR_DANGEROUS_AREA),
+        tostring(conditions.timeError or "none"),
+        tostring(conditions.weatherError or "none"),
+        SPECIAL_SPAWN_RULES.ascentDecision == "ascent7" and "Ascent 7" or "Ascent 5-only"
+    )
+
+    return SPECIAL_SPAWN_RULES.ascentDecision
+end
+
+function SPECIAL_SPAWN_RULES.recheckAscent7BeforeUnhide(entry)
+    if entry == nil or entry.recheckAscentSafetyOnArrival ~= true then
+        return true
+    end
+
+    if SPECIAL_SPAWN_RULES.ascentDecision ~= "ascent7" then
+        return false
+    end
+
+    local conditions = SPECIAL_SPAWN_RULES.readConditions()
+    local stillSafe = USE_NINJA_FOR_DANGEROUS_AREA
+        and not conditions.ashkin
+        and not conditions.rain
+        and conditions.et ~= nil
+        and conditions.weatherId ~= nil
+
+    if stillSafe then
+        SPECIAL_SPAWN_RULES.ascentLocked = true
+        logf(
+            "Ascent 7 safety recheck passed at %s: ET=%s weatherId=%s; locking Ascent 7 branch before removing Hide.",
+            getSpotDescriptor(entry),
+            SPECIAL_SPAWN_RULES.formatTime(conditions.et),
+            tostring(conditions.weatherId)
+        )
+        return true
+    end
+
+    SPECIAL_SPAWN_RULES.ascentDecision = "ascent5_only"
+    SPECIAL_SPAWN_RULES.ascentLocked = false
+    logf(
+        "Ascent 7 safety changed at %s: ET=%s weatherId=%s ashkin=%s rain=%s timeError=%s weatherError=%s; retaining Hide and switching to the Ascent 5-only branch.",
+        getSpotDescriptor(entry),
+        SPECIAL_SPAWN_RULES.formatTime(conditions.et),
+        tostring(conditions.weatherId or "unavailable"),
+        tostring(conditions.ashkin),
+        tostring(conditions.rain),
+        tostring(conditions.timeError or "none"),
+        tostring(conditions.weatherError or "none")
+    )
+    return false
+end
+
+function SPECIAL_SPAWN_RULES.evaluate(entry)
+    if entry == nil then
+        return entry, false
+    end
+
+    if SPECIAL_SPAWN_RULES.shouldSkipHighCaverns(entry) then
+        logf(
+            "Skipping %s because the Ashkin spawn window is active.",
+            getSpotDescriptor(entry)
+        )
+        return entry, true
+    end
+
+    if entry.rainSensitive == true then
+        local weatherId, weatherError = SPECIAL_SPAWN_RULES.readWeatherId()
+        local rain = SPECIAL_SPAWN_RULES.isRainWeather(weatherId)
+
+        if rain and not USE_NINJA_FOR_DANGEROUS_AREA then
+            logf(
+                "Weather ID %s is treated as rain for %s, but Ninja mode is disabled; skipping. weatherError=%s.",
+                tostring(weatherId or "unavailable"),
+                getSpotDescriptor(entry),
+                tostring(weatherError or "none")
+            )
+            return entry, true
+        end
+
+        if rain then
+            local effectiveEntry = SPECIAL_SPAWN_RULES.copyEntry(entry)
+            effectiveEntry.forceHidden = true
+            effectiveEntry.note = "rain_sensitive_hidden"
+            logf(
+                "Weather ID %s is treated as rain; %s is rain-sensitive and will use Hide.",
+                tostring(weatherId or "unavailable"),
+                getSpotDescriptor(entry)
+            )
+            return effectiveEntry, false
+        end
+    end
+
+    if entry.specialBranch ~= nil then
+        local selectedBranch = SPECIAL_SPAWN_RULES.chooseAscentBranch()
+        if entry.specialBranch ~= selectedBranch then
+            logf(
+                "Skipping %s because branch %s is inactive; selected branch=%s.",
+                getSpotDescriptor(entry),
+                tostring(entry.specialBranch),
+                tostring(selectedBranch)
+            )
+            return entry, true
+        end
+    end
+
+    return entry, false
 end
 
 local function waitUntil(predicate, timeoutSeconds, pollSeconds)
@@ -591,6 +895,176 @@ local function getFreeInventorySlots()
     end))
 end
 
+
+-- Global namespace avoids adding more chunk-level locals in NLua.
+-- Only the four normal player inventory bags are scanned.
+COFFER_INVENTORY = COFFER_INVENTORY or {}
+COFFER_INVENTORY.containerNames = COFFER_INVENTORY.containerNames or {
+    "Inventory1",
+    "Inventory2",
+    "Inventory3",
+    "Inventory4",
+}
+
+function COFFER_INVENTORY.snapshot()
+    local snapshot = {
+        totals = {},
+        nonEmptySlots = 0,
+        slotsRead = 0,
+        containersRead = 0,
+    }
+
+    if Inventory == nil then
+        return snapshot, false, "inventory_module_unavailable"
+    end
+
+    for _, containerName in ipairs(COFFER_INVENTORY.containerNames) do
+        local container = nil
+        if Inventory.GetInventoryContainer ~= nil then
+            container = safeCall(function()
+                return Inventory.GetInventoryContainer(containerName)
+            end)
+        end
+        if container == nil then
+            container = safeCall(function()
+                return Inventory[containerName]
+            end)
+        end
+        if container == nil then
+            return snapshot, false, "container_unavailable:" .. tostring(containerName)
+        end
+
+        local slotCount = tonumber(safeCall(function()
+            return container.Count
+        end))
+        if slotCount == nil or slotCount < 0 then
+            return snapshot, false, "container_count_unavailable:" .. tostring(containerName)
+        end
+
+        snapshot.containersRead = snapshot.containersRead + 1
+        for slot = 0, slotCount - 1 do
+            local item = nil
+            if Inventory.GetInventoryItemBySlot ~= nil then
+                item = safeCall(function()
+                    return Inventory.GetInventoryItemBySlot(containerName, slot)
+                end)
+            end
+            if item == nil then
+                item = safeCall(function()
+                    return container[slot]
+                end)
+            end
+            if item == nil then
+                return snapshot, false, string.format(
+                    "slot_unavailable:%s:%d",
+                    tostring(containerName),
+                    slot
+                )
+            end
+
+            snapshot.slotsRead = snapshot.slotsRead + 1
+            local itemId = tonumber(safeCall(function() return item.ItemId end))
+            local isEmpty = safeCall(function() return item.IsEmpty end)
+            if isEmpty == nil then
+                isEmpty = itemId == nil or itemId == 0
+            end
+
+            if not isEmpty then
+                local baseItemId =
+                    tonumber(safeCall(function() return item.BaseItemId end))
+                    or itemId
+                local quantity =
+                    tonumber(safeCall(function() return item.Count end))
+                local isHighQuality =
+                    safeCall(function() return item.IsHighQuality end) == true
+
+                if itemId == nil
+                    or itemId == 0
+                    or baseItemId == nil
+                    or quantity == nil
+                    or quantity < 0 then
+
+                    return snapshot, false, string.format(
+                        "slot_data_invalid:%s:%d",
+                        tostring(containerName),
+                        slot
+                    )
+                end
+
+                local key =
+                    tostring(baseItemId)
+                    .. ":"
+                    .. (isHighQuality and "hq" or "normal")
+
+                local aggregate = snapshot.totals[key]
+                if aggregate == nil then
+                    aggregate = {
+                        itemId = itemId,
+                        baseItemId = baseItemId,
+                        isHighQuality = isHighQuality,
+                        count = 0,
+                    }
+                    snapshot.totals[key] = aggregate
+                end
+
+                aggregate.count = aggregate.count + quantity
+                snapshot.nonEmptySlots = snapshot.nonEmptySlots + 1
+            end
+        end
+    end
+
+    return snapshot, true, nil
+end
+
+function COFFER_INVENTORY.findPositiveDeltas(beforeSnapshot, afterSnapshot)
+    local deltas = {}
+    local beforeTotals = beforeSnapshot and beforeSnapshot.totals or {}
+    local afterTotals = afterSnapshot and afterSnapshot.totals or {}
+
+    for key, afterEntry in pairs(afterTotals) do
+        local beforeEntry = beforeTotals[key]
+        local beforeCount = beforeEntry and tonumber(beforeEntry.count) or 0
+        local afterCount = tonumber(afterEntry.count) or 0
+
+        if afterCount > beforeCount then
+            deltas[#deltas + 1] = {
+                itemId = afterEntry.itemId,
+                baseItemId = afterEntry.baseItemId,
+                isHighQuality = afterEntry.isHighQuality == true,
+                beforeCount = beforeCount,
+                afterCount = afterCount,
+                added = afterCount - beforeCount,
+            }
+        end
+    end
+
+    table.sort(deltas, function(a, b)
+        if a.baseItemId == b.baseItemId then
+            return (a.isHighQuality and 1 or 0)
+                < (b.isHighQuality and 1 or 0)
+        end
+        return (a.baseItemId or 0) < (b.baseItemId or 0)
+    end)
+
+    return deltas
+end
+
+function COFFER_INVENTORY.formatDeltas(deltas)
+    local parts = {}
+    for _, delta in ipairs(deltas or {}) do
+        parts[#parts + 1] = string.format(
+            "ItemId=%s BaseItemId=%s HQ=%s count %d -> %d (+%d)",
+            tostring(delta.itemId or "?"),
+            tostring(delta.baseItemId or "?"),
+            tostring(delta.isHighQuality == true),
+            tonumber(delta.beforeCount) or 0,
+            tonumber(delta.afterCount) or 0,
+            tonumber(delta.added) or 0
+        )
+    end
+    return table.concat(parts, "; ")
+end
+
 local function getSpotKey(entry)
     if entry == nil then
         return "?"
@@ -598,7 +1072,7 @@ local function getSpotKey(entry)
     return string.format("%s|%s", tostring(entry.area or "?"), tostring(entry.label or "?"))
 end
 
-local function getSpotDescriptor(entry)
+getSpotDescriptor = function(entry)
     local key = getSpotKey(entry)
     if entry ~= nil and entry.note ~= nil and tostring(entry.note) ~= "" then
         return string.format("%s [%s]", key, tostring(entry.note))
@@ -606,11 +1080,7 @@ local function getSpotDescriptor(entry)
     return key
 end
 
-local collectVisibleCoffers
-local returnToBase
-local getObjectName
-
-local function getEntryAggroLevel(entry)
+getEntryAggroLevel = function(entry)
     local configured = tonumber(entry and entry.aggroLevel)
     if configured ~= nil then
         return configured
@@ -1051,7 +1521,7 @@ local function logDeathPathDiagnostics()
     end
 end
 
-local function stopPathing()
+stopPathing = function()
     if IPC and IPC.vnavmesh and IPC.vnavmesh.Stop then
         pcall(function() IPC.vnavmesh.Stop() end)
     end
@@ -1461,23 +1931,6 @@ local function getHideThresholdContext(previousEntry, currentEntry, position)
     return currentEntry or previousEntry
 end
 
-local function ensureHiddenForCurrentPosition(previousEntry, currentEntry)
-    local position = getPlayerPosition()
-    if not isWithinHideThreshold(previousEntry, position) and not isWithinHideThreshold(currentEntry, position) then
-        return true
-    end
-    if isInCombat() then
-        stopPathing()
-        dangerousCombatAbortTriggered = true
-        logf(
-            "Combat detected near dangerous spot %s; aborting route. Mounted fallback is disabled inside the hide threshold.",
-            getSpotDescriptor(getHideThresholdContext(previousEntry, currentEntry, position))
-        )
-        return false
-    end
-    return ensureHiddenOrAbort(getHideThresholdContext(previousEntry, currentEntry, position))
-end
-
 local function moveToSpotRespectingHideThreshold(previousEntry, entry)
     if deathReturnTriggered then
         stopPathing()
@@ -1660,19 +2113,6 @@ local function targetEntity(entity)
     return false
 end
 
-local function isSameCofferVisible(match, radius)
-    if match == nil then
-        return false
-    end
-    local visible = collectVisibleCoffers(radius or 15)
-    for _, entry in ipairs(visible) do
-        if match.gameObjectId ~= nil and entry.gameObjectId == match.gameObjectId then
-            return true
-        end
-    end
-    return false
-end
-
 local function refreshVisibleCoffer(match, radius)
     if match == nil then
         return nil
@@ -1711,13 +2151,42 @@ end
 
 local function interactWithCoffer(match, entry, previousEntry)
     local currentMatch = match
+
     for attempt = 1, MAX_INTERACT_ATTEMPTS do
+        if deathReturnTriggered then
+            stopPathing()
+            return false
+        end
+
         if attempt > 1 then
-            currentMatch = refreshVisibleCoffer(currentMatch, 15)
-            if currentMatch == nil then
+            local reacquired = nil
+            local missingBeforeRetry = 0
+
+            for _ = 1, 3 do
+                reacquired = refreshVisibleCoffer(currentMatch, 15)
+                if reacquired ~= nil then
+                    currentMatch = reacquired
+                    break
+                end
+                missingBeforeRetry = missingBeforeRetry + 1
+                sleep(0.4)
+            end
+
+            if reacquired == nil and missingBeforeRetry >= 3 then
+                logf(
+                    "Coffer gameObjectId=%s remained absent for %d consecutive scans before retry; coffer open confirmed.",
+                    tostring(currentMatch and currentMatch.gameObjectId or "?"),
+                    missingBeforeRetry
+                )
                 return true
             end
-            logf("Retrying coffer interaction attempt %d/%d for gameObjectId=%s.", attempt, MAX_INTERACT_ATTEMPTS, tostring(currentMatch.gameObjectId or "?"))
+
+            logf(
+                "Retrying coffer interaction attempt %d/%d for gameObjectId=%s.",
+                attempt,
+                MAX_INTERACT_ATTEMPTS,
+                tostring(currentMatch.gameObjectId or "?")
+            )
             sleep(INTERACT_RETRY_DELAY)
         end
 
@@ -1736,18 +2205,27 @@ local function interactWithCoffer(match, entry, previousEntry)
         local mustStayHidden = isDangerousSpot(entry)
             or isWithinHideThreshold(previousEntry, currentPosition)
             or isWithinHideThreshold(entry, currentPosition)
+
         if mustStayHidden and isInCombat() then
             stopPathing()
             dangerousCombatAbortTriggered = true
             logf(
                 "Combat detected before approaching a coffer inside the hide threshold for %s; aborting route instead of continuing mounted.",
-                getSpotDescriptor(getHideThresholdContext(previousEntry, entry, currentPosition))
+                getSpotDescriptor(
+                    getHideThresholdContext(
+                        previousEntry,
+                        entry,
+                        currentPosition
+                    )
+                )
             )
             return false
         end
 
         if mustStayHidden then
-            if not ensureHiddenOrAbort(getHideThresholdContext(previousEntry, entry, currentPosition)) then
+            if not ensureHiddenOrAbort(
+                getHideThresholdContext(previousEntry, entry, currentPosition)
+            ) then
                 return false
             end
         end
@@ -1758,7 +2236,11 @@ local function interactWithCoffer(match, entry, previousEntry)
                 currentMatch.position,
                 INTERACT_DISTANCE,
                 "visible coffer",
-                getHideThresholdContext(previousEntry, entry, currentPosition),
+                getHideThresholdContext(
+                    previousEntry,
+                    entry,
+                    currentPosition
+                ),
                 jumpCallback
             )
         else
@@ -1766,44 +2248,191 @@ local function interactWithCoffer(match, entry, previousEntry)
                 currentMatch.position,
                 INTERACT_DISTANCE,
                 "visible coffer",
-                { allowMount = true, onStep = jumpCallback }
+                {
+                    allowMount = true,
+                    onStep = jumpCallback,
+                }
             )
         end
-        if not moved then
-            logf("Could not reach coffer at %s.", formatVector3(currentMatch.position))
+
+        if deathReturnTriggered then
+            stopPathing()
             return false
         end
+
+        if not moved then
+            logf(
+                "Could not reach coffer at %s.",
+                formatVector3(currentMatch.position)
+            )
+            return false
+        end
+
         if not targetEntity(currentMatch.entity) then
-            logf("Failed to target coffer gameObjectId=%s.", tostring(currentMatch.gameObjectId or "?"))
+            logf(
+                "Failed to target coffer gameObjectId=%s.",
+                tostring(currentMatch.gameObjectId or "?")
+            )
             return false
         end
 
         local freeSlotsBefore = getFreeInventorySlots()
+        local inventoryBefore,
+            inventoryBeforeValid,
+            inventoryBeforeError = COFFER_INVENTORY.snapshot()
+        local inventoryFallbackLogged = false
+
+        if not inventoryBeforeValid then
+            logf(
+                "Inventory snapshot incomplete before coffer interaction attempt %d (%s); using exact-coffer disappearance confirmation.",
+                attempt,
+                tostring(inventoryBeforeError or "unknown_error")
+            )
+            inventoryFallbackLogged = true
+        end
+
+        logf(
+            "Coffer interaction attempt %d inventory baseline: freeSlots=%s nonEmptySlots=%s slotsRead=%s containersRead=%s.",
+            attempt,
+            tostring(freeSlotsBefore or "?"),
+            tostring(
+                inventoryBeforeValid
+                    and inventoryBefore.nonEmptySlots
+                    or "?"
+            ),
+            tostring(
+                inventoryBeforeValid
+                    and inventoryBefore.slotsRead
+                    or "?"
+            ),
+            tostring(
+                inventoryBeforeValid
+                    and inventoryBefore.containersRead
+                    or "?"
+            )
+        )
+
         sleep(0.1)
         yield("/interact")
-        local quickHandled = waitUntil(function()
-            local freeSlotsNow = getFreeInventorySlots()
-            if freeSlotsBefore ~= nil and freeSlotsNow ~= nil and freeSlotsNow ~= freeSlotsBefore then
-                return true
+
+        local missingAfterInteract = 0
+        local confirmationStartedAt = os.clock()
+
+        -- Inventory polling phase: catches both new slots and increases to
+        -- existing stacks. Exact-coffer disappearance is checked in parallel.
+        for _ = 1, 8 do
+            sleep(0.4)
+
+            if deathReturnTriggered then
+                stopPathing()
+                return false
             end
-            return not isSameCofferVisible(currentMatch, 15)
-        end, POST_INTERACT_QUICK_TIMEOUT, 0.25)
-        if quickHandled then
-            return true
+
+            if inventoryBeforeValid then
+                local inventoryNow,
+                    inventoryNowValid,
+                    inventoryNowError = COFFER_INVENTORY.snapshot()
+
+                if inventoryNowValid then
+                    local inventoryDeltas =
+                        COFFER_INVENTORY.findPositiveDeltas(
+                            inventoryBefore,
+                            inventoryNow
+                        )
+
+                    if #inventoryDeltas > 0 then
+                        logf(
+                            "Coffer interaction attempt %d added inventory items: %s; coffer open confirmed.",
+                            attempt,
+                            COFFER_INVENTORY.formatDeltas(
+                                inventoryDeltas
+                            )
+                        )
+                        return true
+                    end
+                elseif not inventoryFallbackLogged then
+                    logf(
+                        "Inventory snapshot incomplete after coffer interaction attempt %d (%s); using exact-coffer disappearance confirmation.",
+                        attempt,
+                        tostring(inventoryNowError or "unknown_error")
+                    )
+                    inventoryFallbackLogged = true
+                end
+            end
+
+            local sameCoffer = refreshVisibleCoffer(currentMatch, 15)
+            if sameCoffer == nil then
+                missingAfterInteract = missingAfterInteract + 1
+
+                if missingAfterInteract >= 3 then
+                    logf(
+                        "Coffer gameObjectId=%s disappeared for %d consecutive scans after interaction attempt %d; coffer open confirmed.",
+                        tostring(currentMatch.gameObjectId or "?"),
+                        missingAfterInteract,
+                        attempt
+                    )
+                    return true
+                end
+            else
+                currentMatch = sameCoffer
+                missingAfterInteract = 0
+            end
         end
 
-        local cleared = waitUntil(function()
-            local freeSlotsNow = getFreeInventorySlots()
-            if freeSlotsBefore ~= nil and freeSlotsNow ~= nil and freeSlotsNow ~= freeSlotsBefore then
-                return true
+        -- Use the remainder of the configured interaction timeout for
+        -- disappearance-only confirmation. Inventory has already received
+        -- eight complete normal-bag scans.
+        local elapsed = os.clock() - confirmationStartedAt
+        local confirmationDeadline =
+            os.clock() + math.max(0, INTERACT_WAIT_TIMEOUT - elapsed)
+
+        while os.clock() < confirmationDeadline do
+            sleep(0.4)
+
+            if deathReturnTriggered then
+                stopPathing()
+                return false
             end
-            return not isSameCofferVisible(currentMatch, 15)
-        end, INTERACT_WAIT_TIMEOUT, 0.5)
-        if cleared then
-            return true
+
+            local sameCoffer = refreshVisibleCoffer(currentMatch, 15)
+            if sameCoffer == nil then
+                missingAfterInteract = missingAfterInteract + 1
+
+                if missingAfterInteract >= 3 then
+                    logf(
+                        "Coffer gameObjectId=%s disappeared for %d consecutive scans after interaction attempt %d; coffer open confirmed.",
+                        tostring(currentMatch.gameObjectId or "?"),
+                        missingAfterInteract,
+                        attempt
+                    )
+                    return true
+                end
+            else
+                currentMatch = sameCoffer
+                missingAfterInteract = 0
+            end
         end
 
-        logf("Coffer gameObjectId=%s still visible after interaction timeout.", tostring(currentMatch.gameObjectId or "?"))
+        local freeSlotsAfter = getFreeInventorySlots()
+        if freeSlotsBefore ~= nil and freeSlotsAfter ~= nil then
+            logf(
+                "Coffer interaction attempt %d inventory telemetry: free slots %d -> %d; no positive normal-bag item-count delta detected.",
+                attempt,
+                freeSlotsBefore,
+                freeSlotsAfter
+            )
+        else
+            logf(
+                "Coffer interaction attempt %d inventory telemetry unavailable; no positive normal-bag item-count delta detected.",
+                attempt
+            )
+        end
+
+        logf(
+            "Coffer gameObjectId=%s remains present and no positive inventory delta was detected after interaction attempt %d.",
+            tostring(currentMatch.gameObjectId or "?"),
+            attempt
+        )
     end
 
     return false
@@ -1813,12 +2442,24 @@ local function getEligibleSpots(maxAggroLevel)
     local eligible = {}
     for _, entry in ipairs(COFFER_SPOTS) do
         local aggroLevel = getEntryAggroLevel(entry)
-        if USE_NINJA_FOR_DANGEROUS_AREA then
+
+        if entry.routeExcluded == true then
+            logf(
+                "Excluding %s from route: %s.",
+                getSpotDescriptor(entry),
+                tostring(entry.note or "route excluded")
+            )
+        elseif USE_NINJA_FOR_DANGEROUS_AREA then
             table.insert(eligible, entry)
         elseif aggroLevel <= maxAggroLevel then
             table.insert(eligible, entry)
         else
-            logf("Skipping %s aggroLevel=%s above max=%d.", getSpotDescriptor(entry), tostring(aggroLevel), maxAggroLevel)
+            logf(
+                "Skipping %s aggroLevel=%s above max=%d.",
+                getSpotDescriptor(entry),
+                tostring(aggroLevel),
+                maxAggroLevel
+            )
         end
     end
     return eligible
@@ -1964,7 +2605,7 @@ local function scanAndLootAtSpot(previousEntry, entry)
             remaining,
             arrivalDistance
         )
-        return
+        return true, true
     end
 
     if entry.routeOnly then
@@ -1975,6 +2616,10 @@ local function scanAndLootAtSpot(previousEntry, entry)
         )
 
         if entry.mountOnArrival == true then
+            if not SPECIAL_SPAWN_RULES.recheckAscent7BeforeUnhide(entry) then
+                return true, true
+            end
+
             logf(
                 "Waypoint %s requires unhidden mounted travel next; mounting now to remove Hide.",
                 getSpotDescriptor(entry)
@@ -2027,7 +2672,7 @@ local function scanAndLootAtSpot(previousEntry, entry)
             )
         end
 
-        return
+        return true, false
     end
 
     local visible = nil
@@ -2038,14 +2683,14 @@ local function scanAndLootAtSpot(previousEntry, entry)
     end
     if #visible == 0 then
         logf("No visible Treasure Coffer found near %s within %.1fy.", getSpotDescriptor(entry), SCAN_RADIUS)
-        return
+        return true, false
     end
 
     local match = visible[1]
     if match == nil then
-        return
+        return true, false
     end
-    interactWithCoffer(match, entry, previousEntry)
+    return interactWithCoffer(match, entry, previousEntry), false
 end
 
 local function validateRuntime()
@@ -2080,6 +2725,8 @@ local function ensureBaseStart()
 end
 
 local function runPass()
+    SPECIAL_SPAWN_RULES.reset()
+
     local eligible = getEligibleSpots(MAX_AGGRO_LEVEL)
     if #eligible == 0 then
         logf("No mapped coffers are eligible at max aggro level=%d.", MAX_AGGRO_LEVEL)
@@ -2089,47 +2736,59 @@ local function runPass()
     logRoute(route, MAX_AGGRO_LEVEL)
 
     local previousEntry = nil
-    for _, entry in ipairs(route) do
-        ROUTE_CONTEXT.previousEntry = previousEntry
-        ROUTE_CONTEXT.currentEntry = entry
-        if getTerritoryType() ~= SOUTH_HORN_TERRITORY_ID then
-            error("Left South Horn during route.")
-        end
-        if isDead() then
-            handleDeathReturn()
-            return false
-        end
-        if isInCombat() then
-            if isDangerousSpot(entry) then
-                stopPathing()
-                dangerousCombatAbortTriggered = true
-                logCombatDiagnostics(
-                    "route-combat-before-dangerous:" .. getSpotDescriptor(entry),
-                    getPlayerPosition()
-                )
+    for _, routeEntry in ipairs(route) do
+        local entry, policySkipped = SPECIAL_SPAWN_RULES.evaluate(routeEntry)
+
+        if not policySkipped then
+            ROUTE_CONTEXT.previousEntry = previousEntry
+            ROUTE_CONTEXT.currentEntry = entry
+
+            if getTerritoryType() ~= SOUTH_HORN_TERRITORY_ID then
+                error("Left South Horn during route.")
+            end
+            if isDead() then
+                handleDeathReturn()
+                return false
+            end
+            if isInCombat() then
+                if isDangerousSpot(entry) then
+                    stopPathing()
+                    dangerousCombatAbortTriggered = true
+                    logCombatDiagnostics(
+                        "route-combat-before-dangerous:" .. getSpotDescriptor(entry),
+                        getPlayerPosition()
+                    )
+                    logf(
+                        "Player is in combat before dangerous destination %s (aggroLevel=%d > max=%d); aborting because Hide must be active before movement.",
+                        getSpotDescriptor(entry),
+                        getEntryAggroLevel(entry),
+                        MAX_AGGRO_LEVEL
+                    )
+                    return false
+                end
+
                 logf(
-                    "Player is in combat before dangerous destination %s (aggroLevel=%d > max=%d); aborting because Hide must be active before movement.",
+                    "Player is in combat before allowed destination %s (aggroLevel=%d <= max=%d); continuing normal route pathing.",
                     getSpotDescriptor(entry),
                     getEntryAggroLevel(entry),
                     MAX_AGGRO_LEVEL
                 )
+            end
+
+            local spotCompleted, spotSkipped =
+                scanAndLootAtSpot(previousEntry, entry)
+
+            if deathReturnTriggered
+                or dangerousCombatAbortTriggered
+                or spotCompleted == false then
+
                 return false
             end
 
-            logf(
-                "Player is in combat before allowed destination %s (aggroLevel=%d <= max=%d); continuing normal route pathing.",
-                getSpotDescriptor(entry),
-                getEntryAggroLevel(entry),
-                MAX_AGGRO_LEVEL
-            )
+            if not spotSkipped then
+                previousEntry = entry
+            end
         end
-
-        local spotCompleted = scanAndLootAtSpot(previousEntry, entry)
-
-        if deathReturnTriggered or dangerousCombatAbortTriggered or spotCompleted == false then
-            return false
-        end
-        previousEntry = entry
     end
     ROUTE_CONTEXT.previousEntry = previousEntry
     ROUTE_CONTEXT.currentEntry = nil
@@ -2137,7 +2796,15 @@ local function runPass()
 end
 
 local function main()
-    logf("Starting farmer maxAggro=%d hideThreshold=%.1f scanRadius=%.1f arrivalDistance=%.1f interactDistance=%.1f.", MAX_AGGRO_LEVEL, HIDE_THRESHOLD_DISTANCE, SCAN_RADIUS, ARRIVAL_DISTANCE, INTERACT_DISTANCE)
+    logf(
+        "Starting farmer maxAggro=%d hideThreshold=%.1f scanRadius=%.1f arrivalDistance=%.1f interactDistance=%.1f skipHighCavernsDuringAshkin=%s AshkinWindow=22:30-04:00 rainWeatherIds=7,62,64.",
+        MAX_AGGRO_LEVEL,
+        HIDE_THRESHOLD_DISTANCE,
+        SCAN_RADIUS,
+        ARRIVAL_DISTANCE,
+        INTERACT_DISTANCE,
+        tostring(SKIP_HIGH_CAVERNS_DURING_ASHKIN)
+    )
     validateRuntime()
     if USE_NINJA_FOR_DANGEROUS_AREA then
         ensureNinjaGearset()
