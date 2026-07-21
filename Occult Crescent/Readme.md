@@ -6,7 +6,7 @@ Occult Crescent scripts converted to a full Dalamud Plugin.
 
 ### [Another Occult Crescent Helper](https://github.com/baanderson40/Another_Occult_Crescent_Helper)
 
-## Repository URL:
+### Repository URL:
 
 `https://raw.githubusercontent.com/baanderson40/dalamud_plugins/master/repo.json`
 
