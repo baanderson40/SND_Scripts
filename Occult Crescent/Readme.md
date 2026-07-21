@@ -1,7 +1,18 @@
 ### Support via [baanderson40's ko-fi](https://ko-fi.com/baanderson40)
+
 ---
 
-# Occult Crescent scripts
+Occult Crescent scripts converted to a full Dalamud Plugin.
+
+### [Another Occult Crescent Helper](https://github.com/baanderson40/Another_Occult_Crescent_Helper)
+
+## Repository URL:
+
+`https://raw.githubusercontent.com/baanderson40/dalamud_plugins/master/repo.json`
+
+---
+
+## Occult Crescent scripts
 
 OC centered SND lua scripts. 
 
