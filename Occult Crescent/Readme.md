@@ -17,8 +17,18 @@ Occult Crescent scripts converted to a full Dalamud Plugin.
 OC centered SND lua scripts. 
 
 ## Scripts
-- South Horn - Silver
-  - Re-enter the Occult Crescent when you're booted, and spend your silver coins! Orignally created by Aniane. Modified to include extra features.
+
+- Occult Crescent - FATE & CE Farmer.lua
+
+  - Farm South Horn Critical Encounters and FATEs, hand off combat to BossMod autorotation, apply phantom job buffs, and return to Base Camp between activities.
+
+- Occult Crescent - Treasure Coffer Farmer.lua
+
+  - Visit mapped Occult Crescent treasure coffer positions, avoid dangerous areas based on the configured aggro level, and loot visible Treasure Coffer entities. Optional Ninja mode supports Hide-based travel through dangerous areas.
+
+- Occult Crescent - Pots Treasure Farmer.lua
+
+  - Farm the Persistent Pot FATE cycle, wait at the next predicted spawn, and solve the post-FATE treasure hunt using mapped coffer groups and local hint refinement.
 
 ## Installation
 - Copy script's Github URL and paste into SND GitHub URL option to import and update.
