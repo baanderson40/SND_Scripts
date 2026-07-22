@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.4
+version: 0.1.5
 description: |
   Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -69,8 +69,10 @@ local CRAFT_POSITION_RADIUS = 15.0
 local POTKIN_TARGET_COMMAND = '/target "Potkin"'
 local DIADEM_STALL_EXEMPT_POSITION = Vector3(-656.904, 285.346, -156.401)
 local DIADEM_STALL_EXEMPT_RADIUS = 30.0
+local DIADEM_NORMAL_CONDITION_TIMEOUT = 30
 
 local CHARACTER_CONDITION = {
+    normalConditions = 1,
     mounted = 4,
     crafting = 5,
     occupiedMateriaExtractionAndRepair = 39,
@@ -1072,15 +1074,25 @@ local function isGatherActivityObserved()
         or Svc.Condition[43] == true
 end
 
+local function isNormalConditionActive()
+    return Svc and Svc.Condition
+        and Svc.Condition[CHARACTER_CONDITION.normalConditions] == true
+end
+
 local function waitForMaterialsOrGatherStall(materials)
     log("Waiting for required Diadem materials.", true)
     local monitorEnabled = Config and Config.Get and Config.Get("Monitor Gather Stalls") == true
     local stallTimeout = getGatherStallTimeout()
     local lastActivityTime = os.clock()
+    local normalConditionStart = nil
     local lastSnapshot = ""
 
     if monitorEnabled then
-        log(string.format("Gather activity monitor enabled (timeout: %ds).", stallTimeout))
+        log(string.format(
+            "Gather monitors enabled (activity timeout: %ds; normal-condition timeout: %ds).",
+            stallTimeout,
+            DIADEM_NORMAL_CONDITION_TIMEOUT
+        ))
     end
 
     while true do
@@ -1099,12 +1111,33 @@ local function waitForMaterialsOrGatherStall(materials)
             lastActivityTime = os.clock()
         end
 
+        if monitorEnabled and isNormalConditionActive() then
+            normalConditionStart = normalConditionStart or os.clock()
+        else
+            normalConditionStart = nil
+        end
+
+        local inStallExemptZone = isInDiademStallExemptZone()
+
         if monitorEnabled
             and currentTerritory() == DIADEM_TERRITORY_ID
             and (os.clock() - lastActivityTime) >= stallTimeout
-            and not isInDiademStallExemptZone()
+            and not inStallExemptZone
         then
             log(string.format("Gather stall detected after %ds with no gather activity; leaving Diadem so GBR can re-enter.", stallTimeout))
+            return "stalled"
+        end
+
+        if monitorEnabled
+            and currentTerritory() == DIADEM_TERRITORY_ID
+            and normalConditionStart ~= nil
+            and (os.clock() - normalConditionStart) >= DIADEM_NORMAL_CONDITION_TIMEOUT
+            and not inStallExemptZone
+        then
+            log(string.format(
+                "Gather stall detected after %ds continuously in normal condition; leaving Diadem so GBR can re-enter.",
+                DIADEM_NORMAL_CONDITION_TIMEOUT
+            ))
             return "stalled"
         end
 
