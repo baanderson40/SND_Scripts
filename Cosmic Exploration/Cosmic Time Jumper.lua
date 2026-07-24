@@ -91,7 +91,7 @@ local NPC_NAME = "Cruisingway"
 local NPC_STOP_DISTANCE = 3.0
 local NORMAL_CONDITION = 1
 local ET_DAY_SECONDS = 86400
-local REAL_SECONDS_PER_ET_SECOND = 70 / ET_DAY_SECONDS
+local REAL_SECONDS_PER_ET_SECOND = (70 * 60) / ET_DAY_SECONDS
 
 local TERRITORIES = {
     ["Sinus Ardorum"] = {
@@ -163,7 +163,7 @@ local function currentTerritory()
 end
 
 local function readEorzeaSeconds()
-    local ok, value = pcall(function() return tonumber(Instances.Framework.EorzeaTime) end)
+    local ok, value = pcall(function() return tonumber(Instances.EnvManager.DayTimeSeconds) end)
     if not ok or not value then return nil end
     return value % ET_DAY_SECONDS
 end
@@ -450,6 +450,69 @@ function OnStop()
     stopIce()
 end
 
+local function waitForSlotOrAdvance(targetSlot, previousSlot)
+    local lastHeartbeat = os.clock()
+    while not stopped do
+        local now = readEorzeaSeconds()
+        if not now then
+            sleep(1)
+        else
+            local activeSlot = currentSlot(now)
+            if activeSlot == targetSlot then
+                report("Slot " .. tostring(targetSlot) .. " (" .. SLOT_LABELS[targetSlot] .. ") is now active at ET " .. formatEorzeaTime(now))
+                return true, activeSlot
+            end
+            if activeSlot ~= previousSlot then
+                report("Slot advanced past planned slot " .. tostring(targetSlot) .. "; actual slot is " .. tostring(activeSlot))
+                return false, activeSlot
+            end
+            if os.clock() - lastHeartbeat >= 30 then
+                log("Waiting for slot " .. tostring(targetSlot) .. " (" .. SLOT_LABELS[targetSlot] .. "); ET=" .. formatEorzeaTime(now))
+                lastHeartbeat = os.clock()
+            end
+            sleep(1)
+        end
+    end
+    return false, nil
+end
+
+local function waitForDepartureOrSlotChange(currentSlotNumber, nextSlot, departureSeconds)
+    local lastHeartbeat = os.clock()
+    while not stopped do
+        local now = readEorzeaSeconds()
+        if not now then
+            sleep(1)
+        else
+            local activeSlot = currentSlot(now)
+            if activeSlot ~= currentSlotNumber then
+                return false, activeSlot
+            end
+
+            local remaining = secondsUntilEt(departureSeconds, now)
+            if remaining < 0.2 or remaining > (ET_DAY_SECONDS * REAL_SECONDS_PER_ET_SECOND / 2) then
+                report(string.format("Early departure reached for slot %d (%s) at ET %s; next target=%s",
+                    nextSlot, SLOT_LABELS[nextSlot], formatEorzeaTime(now), slotTarget(nextSlot)))
+                return true, activeSlot
+            end
+
+            if os.clock() - lastHeartbeat >= 30 then
+                log(string.format("Waiting for early departure for slot %d (%s); ET=%s; %.1fs real remaining",
+                    nextSlot, SLOT_LABELS[nextSlot], formatEorzeaTime(now), remaining))
+                lastHeartbeat = os.clock()
+            end
+            sleep(math.min(5, math.max(0.25, remaining / 2)))
+        end
+    end
+    return false, nil
+end
+
+local function findTerritoryById(territoryId)
+    for _, territory in pairs(TERRITORIES) do
+        if territory.territoryId == territoryId then return territory end
+    end
+    return nil
+end
+
 local function main()
     stopIce()
     local now = readEorzeaSeconds()
@@ -458,71 +521,92 @@ local function main()
         return
     end
 
-    local slot = currentSlot(now)
-    local firstCycle = true
+    local activeSlot = currentSlot(now)
     report(string.format("Starting: ET=%s slot %d (%s) target=%s current=%s (%s)",
-        formatEorzeaTime(now), slot, SLOT_LABELS[slot], slotTarget(slot),
+        formatEorzeaTime(now), activeSlot, SLOT_LABELS[activeSlot], slotTarget(activeSlot),
         tostring(currentTerritory()), territoryName(currentTerritory())))
 
     while not stopped do
         local loopNow = readEorzeaSeconds()
-        local targetName = slotTarget(slot)
+        if not loopNow then
+            sleep(1)
+            goto continue_loop
+        end
+
+        activeSlot = currentSlot(loopNow)
+        local targetName = slotTarget(activeSlot)
         local target = TERRITORIES[targetName]
         report(string.format("Slot %d (%s): ET=%s target=%s current=%s (%s)",
-            slot, SLOT_LABELS[slot], formatEorzeaTime(loopNow), targetName,
+            activeSlot, SLOT_LABELS[activeSlot], formatEorzeaTime(loopNow), targetName,
             tostring(currentTerritory()), territoryName(currentTerritory())))
 
         if target then
             if currentTerritory() ~= target.territoryId then
-                local current = nil
-                for _, territory in pairs(TERRITORIES) do
-                    if territory.territoryId == currentTerritory() then current = territory break end
-                end
+                local current = findTerritoryById(currentTerritory())
                 if not current then
                     report("Current territory is not a known Cosmic territory; stopping")
                     return
                 end
                 if not changeTerritoryWithRetries(current, target) then
                     sleep(5)
+                    goto continue_loop
                 end
             end
 
-            if currentTerritory() == target.territoryId then
-                if firstCycle then
-                    startIce()
-                else
-                    waitForSlotStart(slot)
-                    startIce()
-                end
-                monitorNormalCondition()
-                stopIce()
+            local afterTravel = readEorzeaSeconds()
+            if not afterTravel or currentSlot(afterTravel) ~= activeSlot then
+                goto continue_loop
             end
+
+            startIce()
+            monitorNormalCondition()
+            stopIce()
         else
             stopIce()
-            report("Slot " .. tostring(slot) .. " is None; staying in place")
+            report("Slot " .. tostring(activeSlot) .. " is None; staying in place")
         end
 
-        firstCycle = false
-        local nextSlot = (slot % 12) + 1
-        local earlyMinutes = tonumber(Config.Get("Early Departure Minutes")) or 5
-        local departure = slotStart(nextSlot) - (earlyMinutes * 60 / REAL_SECONDS_PER_ET_SECOND)
-        local currentSeconds = readEorzeaSeconds()
-        local nextStart = slotStart(nextSlot)
-        local departureReached = false
-        if currentSeconds then
-            local untilDeparture = secondsUntilEt(departure % ET_DAY_SECONDS, currentSeconds)
-            local untilNextStart = secondsUntilEt(nextStart, currentSeconds)
-            departureReached = untilDeparture > untilNextStart
-            log(string.format("Next slot %d (%s): target=%s; departure ET=%s; next start ET=%s; departureReached=%s",
-                nextSlot, SLOT_LABELS[nextSlot], slotTarget(nextSlot),
-                formatEorzeaTime(departure % ET_DAY_SECONDS), formatEorzeaTime(nextStart),
-                tostring(departureReached)))
+        local afterCycle = readEorzeaSeconds()
+        if not afterCycle then goto continue_loop end
+        local slotAfterCycle = currentSlot(afterCycle)
+        if slotAfterCycle ~= activeSlot then
+            local skipped = (slotAfterCycle - activeSlot) % 12
+            report(string.format("ET advanced during cycle: skipped %d slot(s); active slot is now %d (%s)",
+                skipped, slotAfterCycle, SLOT_LABELS[slotAfterCycle]))
+            goto continue_loop
         end
-        if not departureReached and not waitForEt(departure % ET_DAY_SECONDS,
-            "early departure for slot " .. tostring(nextSlot) .. " (" .. SLOT_LABELS[nextSlot] .. ")") then
-            return
+
+        local nextSlot = (activeSlot % 12) + 1
+        local nextTarget = slotTarget(nextSlot)
+        if nextTarget ~= "None" and TERRITORIES[nextTarget] then
+            local earlyMinutes = tonumber(Config.Get("Early Departure Minutes")) or 5
+            local departure = slotStart(nextSlot) - (earlyMinutes * 60 / REAL_SECONDS_PER_ET_SECOND)
+            local departureReady, departureSlot = waitForDepartureOrSlotChange(activeSlot, nextSlot, departure % ET_DAY_SECONDS)
+            if not departureReady then
+                activeSlot = departureSlot or activeSlot
+                goto continue_loop
+            end
+
+            local current = findTerritoryById(currentTerritory())
+            local destination = TERRITORIES[nextTarget]
+            if current and current.territoryId ~= destination.territoryId then
+                if not changeTerritoryWithRetries(current, destination) then
+                    sleep(5)
+                    goto continue_loop
+                end
+            end
+
+            local arrivedEarlySlot, arrivedSlot = waitForSlotOrAdvance(nextSlot, activeSlot)
+            if not arrivedEarlySlot then
+                activeSlot = arrivedSlot or activeSlot
+                goto continue_loop
+            end
+        else
+            local _, changedSlot = waitForDepartureOrSlotChange(activeSlot, nextSlot, slotStart(nextSlot))
+            activeSlot = changedSlot or currentSlot(readEorzeaSeconds() or 0)
         end
-        slot = nextSlot
+
+        ::continue_loop::
     end
 end
 
