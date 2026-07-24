@@ -119,6 +119,12 @@ local SLOT_CONFIGS = {
     "18:00-20:00 Planet", "20:00-22:00 Planet", "22:00-24:00 Planet",
 }
 
+local SLOT_LABELS = {
+    "00:00-02:00", "02:00-04:00", "04:00-06:00", "06:00-08:00",
+    "08:00-10:00", "10:00-12:00", "12:00-14:00", "14:00-16:00",
+    "16:00-18:00", "18:00-20:00", "20:00-22:00", "22:00-24:00",
+}
+
 local stopped = false
 
 local function log(message)
@@ -162,6 +168,21 @@ local function readEorzeaSeconds()
     return value % ET_DAY_SECONDS
 end
 
+local function formatEorzeaTime(seconds)
+    seconds = tonumber(seconds) or 0
+    local hour = math.floor(seconds / 3600) % 24
+    local minute = math.floor((seconds % 3600) / 60)
+    local second = math.floor(seconds % 60)
+    return string.format("%02d:%02d:%02d", hour, minute, second)
+end
+
+local function territoryName(territoryId)
+    for _, territory in pairs(TERRITORIES) do
+        if territory.territoryId == territoryId then return territory.name end
+    end
+    return "unknown"
+end
+
 local function currentSlot(seconds)
     return math.floor(seconds / 7200) + 1
 end
@@ -180,7 +201,15 @@ local function secondsUntilEt(targetSeconds, nowSeconds)
     return delta * REAL_SECONDS_PER_ET_SECOND
 end
 
-local function waitForEt(targetSeconds)
+local function waitForEt(targetSeconds, reason)
+    local lastHeartbeat = os.clock()
+    local nowAtStart = readEorzeaSeconds()
+    log(string.format("Waiting for %s at ET %s; current ET=%s; real wait=%.1fs",
+        tostring(reason or "target time"),
+        formatEorzeaTime(targetSeconds),
+        formatEorzeaTime(nowAtStart),
+        nowAtStart and secondsUntilEt(targetSeconds, nowAtStart) or -1))
+
     while not stopped do
         local now = readEorzeaSeconds()
         if not now then
@@ -188,7 +217,13 @@ local function waitForEt(targetSeconds)
         else
             local remaining = secondsUntilEt(targetSeconds, now)
             if remaining < 0.2 or remaining > (ET_DAY_SECONDS * REAL_SECONDS_PER_ET_SECOND / 2) then
+                log(string.format("Reached %s at ET %s", tostring(reason or "target time"), formatEorzeaTime(now)))
                 return true
+            end
+            if os.clock() - lastHeartbeat >= 30 then
+                log(string.format("Still waiting for %s; ET=%s; %.1fs real remaining",
+                    tostring(reason or "target time"), formatEorzeaTime(now), remaining))
+                lastHeartbeat = os.clock()
             end
             sleep(math.min(5, math.max(0.25, remaining / 2)))
         end
@@ -203,7 +238,7 @@ local function waitForSlotStart(slot)
     if math.abs(now - start) < 1 or (now >= start and now < start + 7200) then
         return true
     end
-    return waitForEt(start)
+    return waitForEt(start, "slot " .. tostring(slot) .. " (" .. SLOT_LABELS[slot] .. ") start")
 end
 
 local function stopVnav()
@@ -362,6 +397,8 @@ end
 
 local function changeTerritoryWithRetries(fromTerritory, destination)
     for attempt = 1, MAX_ATTEMPTS do
+        report("Territory change attempt " .. tostring(attempt) .. "/" .. tostring(MAX_ATTEMPTS)
+            .. ": " .. fromTerritory.name .. " -> " .. destination.name)
         if changeTerritory(fromTerritory, destination) then return true end
         if attempt < MAX_ATTEMPTS then sleep(2) end
     end
@@ -382,6 +419,8 @@ end
 local function monitorNormalCondition()
     local required = (tonumber(Config.Get("Normal Condition Minutes")) or 1) * 60
     local normalSince = nil
+    local lastHeartbeat = os.clock()
+    report("ICE normal-condition monitor started; required=" .. tostring(required) .. "s")
     while not stopped do
         local normal = Svc and Svc.Condition and Svc.Condition[NORMAL_CONDITION] == true
         local moving = Player and Player.IsMoving == true
@@ -389,7 +428,16 @@ local function monitorNormalCondition()
             normalSince = normalSince or os.clock()
             if os.clock() - normalSince >= required then return true end
         else
+            if normalSince ~= nil then
+                log("Normal-condition timer reset: normal=" .. tostring(normal) .. " moving=" .. tostring(moving))
+            end
             normalSince = nil
+        end
+        if os.clock() - lastHeartbeat >= 30 then
+            local elapsed = normalSince and (os.clock() - normalSince) or 0
+            log(string.format("ICE monitor heartbeat: normal=%s moving=%s timer=%.1fs/%.1fs",
+                tostring(normal), tostring(moving), elapsed, required))
+            lastHeartbeat = os.clock()
         end
         sleep(POLL_SECONDS)
     end
@@ -412,11 +460,17 @@ local function main()
 
     local slot = currentSlot(now)
     local firstCycle = true
-    report("Starting in Eorzea slot " .. tostring(slot) .. " (" .. tostring(slotTarget(slot)) .. ")")
+    report(string.format("Starting: ET=%s slot %d (%s) target=%s current=%s (%s)",
+        formatEorzeaTime(now), slot, SLOT_LABELS[slot], slotTarget(slot),
+        tostring(currentTerritory()), territoryName(currentTerritory())))
 
     while not stopped do
+        local loopNow = readEorzeaSeconds()
         local targetName = slotTarget(slot)
         local target = TERRITORIES[targetName]
+        report(string.format("Slot %d (%s): ET=%s target=%s current=%s (%s)",
+            slot, SLOT_LABELS[slot], formatEorzeaTime(loopNow), targetName,
+            tostring(currentTerritory()), territoryName(currentTerritory())))
 
         if target then
             if currentTerritory() ~= target.territoryId then
@@ -459,8 +513,15 @@ local function main()
             local untilDeparture = secondsUntilEt(departure % ET_DAY_SECONDS, currentSeconds)
             local untilNextStart = secondsUntilEt(nextStart, currentSeconds)
             departureReached = untilDeparture > untilNextStart
+            log(string.format("Next slot %d (%s): target=%s; departure ET=%s; next start ET=%s; departureReached=%s",
+                nextSlot, SLOT_LABELS[nextSlot], slotTarget(nextSlot),
+                formatEorzeaTime(departure % ET_DAY_SECONDS), formatEorzeaTime(nextStart),
+                tostring(departureReached)))
         end
-        if not departureReached and not waitForEt(departure % ET_DAY_SECONDS) then return end
+        if not departureReached and not waitForEt(departure % ET_DAY_SECONDS,
+            "early departure for slot " .. tostring(nextSlot) .. " (" .. SLOT_LABELS[nextSlot] .. ")") then
+            return
+        end
         slot = nextSlot
     end
 end
