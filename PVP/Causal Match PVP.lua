@@ -10,12 +10,12 @@ configs:
   garoTitles:
     default: false
     description: Set Garo Titles
-  Hello on entry:
+  Enable beginning match chat:
     default: true
     description: Send /quickchat Hello during the portrait phase.
-  Good Match on results:
+  Enable ended match chat:
     default: true
-    description: Send /quickchat "Good Match" when the results addon appears.
+    description: Randomly send /quickchat Good Match, /quickchat Nice Job, or nothing near match end.
   Match Limit:
     default: 0
     min: 0
@@ -225,8 +225,8 @@ end
 local RUN_LOOP = true
 
 local SET_GARO_TITLES = Config.Get("garoTitles")
-local SEND_HELLO_ON_ENTRY = Config.Get("Hello on entry") ~= false
-local SEND_GOOD_MATCH_ON_RESULTS = Config.Get("Good Match on results") ~= false
+local ENABLE_BEGINNING_MATCH_CHAT = Config.Get("Enable beginning match chat") ~= false
+local ENABLE_ENDED_MATCH_CHAT = Config.Get("Enable ended match chat") ~= false
 local MATCH_LIMIT = toNumberSafe(Config.Get("Match Limit"), 0, 0, 999)
 local GEARSET_SLOT = toNumberSafe(Config.Get("Gearset Slot"), 0, 0, 100)
 local LIFESTREAM_COMMAND = trimString(Config.Get("Lifestream Command"))
@@ -295,6 +295,24 @@ local function randInt(min, max) return math.random(min, max) end
 
 local function ClearEnemySignTarget()
     yield("/enemysign clear <me>")
+end
+
+local function SendRandomEndQuickChat()
+    if goodMatchSent then return false end
+
+    local roll = randInt(1, 5)
+    if roll <= 2 then
+        yield('/quickchat "Good Match"')
+        Log("quickchat Good Match sent after header closed")
+    elseif roll <= 4 then
+        yield('/quickchat "Nice Job"')
+        Log("quickchat Nice Job sent after header closed")
+    else
+        Log("no quickchat sent after header closed")
+    end
+
+    goodMatchSent = true
+    return true
 end
 
 local function playerAvailable()
@@ -663,13 +681,6 @@ while RUN_LOOP do
                 Log("completed match %d", completedMatches)
             end
 
-            if SEND_GOOD_MATCH_ON_RESULTS and not goodMatchSent then
-                yield('/quickchat "Good Match"')
-                goodMatchSent = true
-                Log("quickchat Good Match sent on results screen")
-                Sleep(0.5)
-            end
-
             Log("match ended (MKSRecord visible) -> leaving duty")
             yield("/vnav stop")
 
@@ -765,7 +776,7 @@ while RUN_LOOP do
                 announcedPortrait = true
             end
 
-            if SEND_HELLO_ON_ENTRY
+            if ENABLE_BEGINNING_MATCH_CHAT
                 and (not portraitHelloSent)
                 and portraitHelloThreshold ~= nil
                 and tLeft <= portraitHelloThreshold
@@ -806,6 +817,13 @@ while RUN_LOOP do
         checkDeathAndReapplyRotation()
         if not isDead() then
             ClearEnemySignTarget()
+        end
+
+        if ENABLE_ENDED_MATCH_CHAT and (not goodMatchSent) and (not isDead()) and (not IsAddonReady("PvPMKSHeader")) and (not IsAddonVisible("MKSRecord")) then
+            Log("end chat window detected (header closed)")
+            if SendRandomEndQuickChat() then
+                Sleep(0.5)
+            end
         end
 
         if isNormal() and not isDead() and not hasEnabledRotationThisLife then
