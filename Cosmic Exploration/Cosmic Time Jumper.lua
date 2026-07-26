@@ -257,6 +257,86 @@ local function flatDistance(positionA, positionB)
     return math.sqrt((dx * dx) + (dz * dz))
 end
 
+local function isAddonReady(name)
+    local addon = getAddon(name)
+    return addon ~= nil and addon.Ready == true
+end
+
+local function isPlayerAvailable()
+    return Player ~= nil and Player.Available == true
+end
+
+local function isLifestreamBusy()
+    if IPC and IPC.Lifestream and IPC.Lifestream.IsBusy then
+        local ok, busy = pcall(IPC.Lifestream.IsBusy)
+        return ok and busy == true
+    end
+    return false
+end
+
+local function describeTransitionState()
+    local states = {}
+    if Svc and Svc.Condition then
+        if Svc.Condition[27] then table.insert(states, "casting") end
+        if Svc.Condition[45] then table.insert(states, "betweenAreas") end
+        if Svc.Condition[51] then table.insert(states, "betweenAreasForDuty") end
+    end
+    if isLifestreamBusy() then table.insert(states, "lifestreamBusy") end
+    return #states > 0 and table.concat(states, ",") or "idle"
+end
+
+local function isTransitionActive()
+    return Svc and Svc.Condition and (
+        Svc.Condition[27] == true
+        or Svc.Condition[45] == true
+        or Svc.Condition[51] == true
+        or isLifestreamBusy()
+    ) or false
+end
+
+local function isTransitionComplete()
+    return not isAddonReady("FadeMiddle")
+        and not isLifestreamBusy()
+        and not (Svc and Svc.Condition and Svc.Condition[27] == true)
+        and not (Svc and Svc.Condition and Svc.Condition[45] == true)
+        and not (Svc and Svc.Condition and Svc.Condition[51] == true)
+        and isPlayerAvailable()
+end
+
+local function waitForZoneCompletion(targetTerritoryId, timeoutSeconds, sourceLabel)
+    local deadline = os.clock() + (tonumber(timeoutSeconds) or 60)
+    local stableStart = nil
+    local sawActivity = false
+    sourceLabel = tostring(sourceLabel or "zone transition")
+
+    while not stopped and os.clock() < deadline do
+        local current = currentTerritory()
+        if isTransitionActive() then
+            if not sawActivity then
+                log(sourceLabel .. " activity detected: " .. describeTransitionState())
+            end
+            sawActivity = true
+            stableStart = nil
+        end
+
+        local territoryReady = targetTerritoryId == nil or current == targetTerritoryId
+        if territoryReady and isTransitionComplete() then
+            stableStart = stableStart or os.clock()
+            if os.clock() - stableStart >= 1.0 then
+                log(sourceLabel .. " completion confirmed; state=" .. describeTransitionState())
+                return true
+            end
+        else
+            stableStart = nil
+        end
+        sleep(POLL_SECONDS)
+    end
+
+    log(sourceLabel .. " timed out; state=" .. describeTransitionState()
+        .. " territory=" .. tostring(currentTerritory()))
+    return false
+end
+
 local function stellarReturnIfFar(territory)
     local player = Entity and Entity.Player
     if not (player and player.Position) then
@@ -265,7 +345,7 @@ local function stellarReturnIfFar(territory)
     end
 
     local distance = flatDistance(player.Position, territory.npcPosition)
-    if distance <= 75 then return true end
+    if distance <= 100 then return true end
 
     report(string.format("%.1f yalms from %s NPC; using Stellar Return", distance, territory.name))
     stopVnav()
@@ -278,22 +358,16 @@ local function stellarReturnIfFar(territory)
         return false
     end
 
-    local sawTransition = waitUntil(function()
-        return Svc and Svc.Condition
-            and (Svc.Condition[45] == true or Svc.Condition[27] == true)
-    end, 10)
-    if not sawTransition then
-        log("Stellar Return transition did not begin")
-        return false
-    end
+    sleep(4)
+    if not waitForZoneCompletion(currentTerritory(), 60, "Stellar Return") then return false end
 
-    local settled = waitUntil(function()
-        return Svc and Svc.Condition
-            and Svc.Condition[45] ~= true
-            and Svc.Condition[27] ~= true
-    end, 60)
-    if not settled then
-        log("Stellar Return transition did not settle")
+    local nearNpc = waitUntil(function()
+        local currentPlayer = Entity and Entity.Player
+        return currentPlayer and currentPlayer.Position
+            and flatDistance(currentPlayer.Position, territory.npcPosition) <= 100
+    end, 30)
+    if not nearNpc then
+        log("Stellar Return completed but player is still outside the 100-yalm NPC radius")
         return false
     end
 
