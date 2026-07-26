@@ -173,6 +173,11 @@ local function waitUntil(predicate, timeoutSeconds, pollSeconds)
     return false
 end
 
+local function isAddonReady(name)
+    local addon = getAddon(name)
+    return addon ~= nil and addon.Ready == true
+end
+
 local function currentTerritory()
     local ok, value = pcall(function() return Svc.ClientState.TerritoryType end)
     return ok and tonumber(value) or nil
@@ -350,8 +355,12 @@ local function isTransitionActive()
 end
 
 local function isTransitionComplete()
-    local fadeMiddle = getAddon("FadeMiddle")
-    return fadeMiddle == nil or fadeMiddle.Exists ~= true
+    return not isAddonReady("FadeMiddle")
+        and not isLifestreamBusy()
+        and not (Svc and Svc.Condition and Svc.Condition[27] == true)
+        and not (Svc and Svc.Condition and Svc.Condition[45] == true)
+        and not (Svc and Svc.Condition and Svc.Condition[51] == true)
+        and isPlayerAvailable()
 end
 
 local function waitForZoneCompletion(targetTerritoryId, timeoutSeconds, sourceLabel)
@@ -368,14 +377,7 @@ local function waitForZoneCompletion(targetTerritoryId, timeoutSeconds, sourceLa
         end
 
         local territoryReady = targetTerritoryId == nil or current == targetTerritoryId
-        local conditionsReady = isTransitionComplete()
-            and not isLifestreamBusy()
-            and not (Svc and Svc.Condition and Svc.Condition[27] == true)
-            and not (Svc and Svc.Condition and Svc.Condition[45] == true)
-            and not (Svc and Svc.Condition and Svc.Condition[51] == true)
-            and isPlayerAvailable()
-
-        if territoryReady and conditionsReady then
+        if territoryReady and isTransitionComplete() then
             stableStart = stableStart or os.clock()
             if os.clock() - stableStart >= STABLE_SECONDS then
                 log(sourceLabel .. " completion confirmed; state=" .. describeTransitionState())
@@ -387,9 +389,13 @@ local function waitForZoneCompletion(targetTerritoryId, timeoutSeconds, sourceLa
         sleep(POLL_SECONDS)
     end
 
+    local fadeMiddle = getAddon("FadeMiddle")
     log(sourceLabel .. " timed out; activity=" .. tostring(sawActivity)
         .. " state=" .. describeTransitionState()
-        .. " territory=" .. tostring(currentTerritory()))
+        .. " territory=" .. tostring(currentTerritory())
+        .. " playerAvailable=" .. tostring(isPlayerAvailable())
+        .. " fadeReady=" .. tostring(fadeMiddle and fadeMiddle.Ready == true)
+        .. " fadeExists=" .. tostring(fadeMiddle and fadeMiddle.Exists == true))
     return false
 end
 
@@ -544,11 +550,20 @@ local function changeTerritory(fromTerritory, destination)
     return true
 end
 
-local function changeTerritoryWithRetries(fromTerritory, destination)
+local function changeTerritoryWithRetries(destination)
     for attempt = 1, MAX_ATTEMPTS do
+        local current = currentTerritoryById(currentTerritory())
+        if not current then
+            report("Current territory is not a known Cosmic territory; cannot change to " .. destination.name)
+            return false
+        end
+        if current.territoryId == destination.territoryId then
+            return true
+        end
+
         report("Territory change attempt " .. tostring(attempt) .. "/" .. tostring(MAX_ATTEMPTS)
-            .. ": " .. fromTerritory.name .. " -> " .. destination.name)
-        if changeTerritory(fromTerritory, destination) then return true end
+            .. ": " .. current.name .. " -> " .. destination.name)
+        if changeTerritory(current, destination) then return true end
         if attempt < MAX_ATTEMPTS then sleep(2) end
     end
 
@@ -727,7 +742,7 @@ local function main()
         end
 
         if current.territoryId ~= target.territory.territoryId then
-            if not changeTerritoryWithRetries(current, target.territory) then
+            if not changeTerritoryWithRetries(target.territory) then
                 sleep(5)
                 goto continue_loop
             end
