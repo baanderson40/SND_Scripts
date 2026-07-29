@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.6
+version: 0.1.7
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -30,9 +30,9 @@ configs:
     default: 1
   Arcanite type:
     description: The type of arcanite to purchase with tomes in simple mode.
-    default: "Waning Arcanite"
+    default: "Ecliptic Arcanite"
     is_choice: true
-    choices: ["Waning Arcanite", "Waxing Arcanite", "Arcanite"]
+    choices: ["Waning Arcanite", "Waxing Arcanite", "Arcanite", "Ecliptic Arcanite"]
   Advanced Purchase Mode:
     description: |
       Enable target-based arcanite purchasing.
@@ -50,6 +50,11 @@ configs:
     max: 99
   Target Waning Arcanite Count:
     description: Desired Waning Arcanite count in advanced purchase mode. Set to 0 to disable this item.
+    default: 3
+    min: 0
+    max: 99
+  Target Ecliptic Arcanite Count:
+    description: Desired Ecliptic Arcanite count in advanced purchase mode. Set to 0 to disable this item.
     default: 3
     min: 0
     max: 99
@@ -589,6 +594,7 @@ local ArcaniteTypes  = {
     {name = "Arcanite",        purchaseId = 0, itemId = 47750, configTarget = "Target Arcanite Count"},
     {name = "Waxing Arcanite", purchaseId = 1, itemId = 46850, configTarget = "Target Waxing Arcanite Count"},
     {name = "Waning Arcanite", purchaseId = 2, itemId = 50058, configTarget = "Target Waning Arcanite Count"},
+    {name = "Ecliptic Arcanite", purchaseId = 3, itemId = 50977, configTarget = "Target Ecliptic Arcanite Count"},
 }
 
 local DungList = {
@@ -614,7 +620,7 @@ end
 
 local mathematicsLimit    = 1500
 local maxPurchases        = 1
-local arcanitePick        = "Waning Arcanite"
+local arcanitePick        = "Ecliptic Arcanite"
 local dungeonPick         = "The Clyteum"
 local pauseAutoRetainer   = true
 local closeRetainer       = true
@@ -640,7 +646,7 @@ local function SyncSettings(force)
 
     local newMathematicsLimit = toNumberSafe(Config.Get("Mathematics Tome Limit"), 1500, 0)
     local newMaxPurchases     = toNumberSafe(Config.Get("Max Purchase Cycles"), 1, 0)
-    local newArcanitePick     = tostring(Config.Get("Arcanite type") or "Waning Arcanite")
+    local newArcanitePick     = tostring(Config.Get("Arcanite type") or "Ecliptic Arcanite")
     local newDungeonPick      = tostring(Config.Get("Dungeon") or "The Clyteum")
     local newPauseBell        = (Config.Get("Pause for AutoRetainer") ~= false)
     local newCloseRetainer    = (Config.Get("Close Retainer List") ~= false)
