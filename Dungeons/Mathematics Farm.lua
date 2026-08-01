@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.7
+version: 0.1.8
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -706,7 +706,6 @@ local PHANTOM_VILLAGE_ID   = 1278
 local MATHEMATICS_ITEM_ID  = 48
 local SUMMONING_BELL_ROW_IDS = {
     2000072, 2000401, 2000403, 2000439, 2000441, 2000661,
-    2000127, 2000138, 2000656, 2001028, 2001498, 2001513,
 }
 
 -- Tome Exchange NPC (localized name from ENpcResident)
@@ -886,6 +885,9 @@ local function StartAutoDuty()
         gotoState(STATE.FAIL)
         return false
     end
+    Log("StartAutoDuty: setting DutyModeEnum to Trust")
+    yield("/ad cfg dutyModeEnum Trust")
+    sleep(0.5)
     IPC.AutoDuty.Run(DungeonToDo, RunsToGo(), false)
     sleep(TIME.POLL)
     return true
