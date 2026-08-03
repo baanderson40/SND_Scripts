@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.8
+version: 0.1.9
 description: |
   Run Mathematics tome dungeons repeatedly and auto-purchase Phantom relic arcanite items.
   Open AutoDuty and pick your trust party to run dungeons with then close it.
@@ -20,6 +20,11 @@ configs:
     default: "The Clyteum"
     is_choice: true
     choices: ["Mistwake", "The Meso Terminal", "The Underkeep", "Yuweyawata Field Station", "Alexandria", "The Clyteum"]
+  AutoDuty Mode:
+    description: The AutoDuty mode to use when starting a dungeon.
+    default: "Trust"
+    is_choice: true
+    choices: ["Support", "Trust"]
   Mathematics Tome Limit:
     description: The number of Mathematics tomes to gather before spending them.
     default: 1500
@@ -622,6 +627,7 @@ local mathematicsLimit    = 1500
 local maxPurchases        = 1
 local arcanitePick        = "Ecliptic Arcanite"
 local dungeonPick         = "The Clyteum"
+local autoDutyMode        = "Trust"
 local pauseAutoRetainer   = true
 local closeRetainer       = true
 local multiMode           = true
@@ -648,6 +654,8 @@ local function SyncSettings(force)
     local newMaxPurchases     = toNumberSafe(Config.Get("Max Purchase Cycles"), 1, 0)
     local newArcanitePick     = tostring(Config.Get("Arcanite type") or "Ecliptic Arcanite")
     local newDungeonPick      = tostring(Config.Get("Dungeon") or "The Clyteum")
+    local configuredDutyMode  = tostring(Config.Get("AutoDuty Mode") or "Trust")
+    local newAutoDutyMode     = (configuredDutyMode == "Support" or configuredDutyMode == "Trust") and configuredDutyMode or "Trust"
     local newPauseBell        = (Config.Get("Pause for AutoRetainer") ~= false)
     local newCloseRetainer    = (Config.Get("Close Retainer List") ~= false)
     local newMultiMode        = (Config.Get("Enable AutoRetainer MultiMode") ~= false)
@@ -664,6 +672,7 @@ local function SyncSettings(force)
     if force or maxPurchases ~= newMaxPurchases then maxPurchases = newMaxPurchases end
     if force or arcanitePick ~= newArcanitePick then arcanitePick = newArcanitePick end
     if force or dungeonPick ~= newDungeonPick then dungeonPick = newDungeonPick end
+    if force or autoDutyMode ~= newAutoDutyMode then autoDutyMode = newAutoDutyMode end
     if force or pauseAutoRetainer ~= newPauseBell then pauseAutoRetainer = newPauseBell end
     if force or closeRetainer ~= newCloseRetainer then closeRetainer = newCloseRetainer end
     if force or multiMode ~= newMultiMode then multiMode = newMultiMode end
@@ -816,6 +825,7 @@ local function LogStartupSettings()
     Log("  Purchase mode: %s", advancedPurchaseMode and "Advanced" or "Simple")
     Log("  Gearset Slot: %s", equipGearsetSlot >= 0 and tostring(equipGearsetSlot + 1) or "Disabled")
     Log("  Dungeon: %s", dungeonPick)
+    Log("  AutoDuty Mode: %s", autoDutyMode)
     Log("  Mathematics Tome Limit: %d", mathematicsLimit)
     Log("  Max Purchase Cycles: %s", advancedPurchaseMode and "Ignored in advanced mode" or tostring(maxPurchases))
     Log("  Arcanite type: %s", advancedPurchaseMode and (arcanitePick .. " (ignored in advanced mode)") or arcanitePick)
@@ -885,8 +895,8 @@ local function StartAutoDuty()
         gotoState(STATE.FAIL)
         return false
     end
-    Log("StartAutoDuty: setting DutyModeEnum to Trust")
-    yield("/ad cfg dutyModeEnum Trust")
+    Log("StartAutoDuty: setting DutyModeEnum to %s", autoDutyMode)
+    yield("/ad cfg dutyModeEnum " .. autoDutyMode)
     sleep(0.5)
     IPC.AutoDuty.Run(DungeonToDo, RunsToGo(), false)
     sleep(TIME.POLL)
