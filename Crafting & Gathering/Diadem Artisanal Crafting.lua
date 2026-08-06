@@ -1,9 +1,9 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.5
+version: 0.1.7
 description: |
-  Monitor Diadem gathering materials, approve them in the Firmament, craft a selected Grade 4 Artisanal Skybuilders' item with Artisan, then turn it in to Potkin.
+  Gather Diadem materials, approve them in the Firmament, and optionally craft a selected Grade 4 Artisanal Skybuilders' item with Artisan before turning it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
 plugin_dependencies:
 - GatherBuddyReborn
@@ -15,7 +15,7 @@ configs:
     description: Grade 4 Artisanal Skybuilders' craft to make and turn in
     default: "Grade 4 Artisanal Skybuilders' Icebox"
     is_choice: true
-    choices: ["Grade 4 Artisanal Skybuilders' Icebox", "Grade 4 Artisanal Skybuilders' Chocobo Weathervane", "Grade 4 Artisanal Skybuilders' Company Chest", "Grade 4 Artisanal Skybuilders' Astroscope", "Grade 4 Artisanal Skybuilders' Tool Belt", "Grade 4 Artisanal Skybuilders' Vest", "Grade 4 Artisanal Skybuilders' Tincture", "Grade 4 Artisanal Skybuilders' Sorbet"]
+    choices: ["None", "Grade 4 Artisanal Skybuilders' Icebox", "Grade 4 Artisanal Skybuilders' Chocobo Weathervane", "Grade 4 Artisanal Skybuilders' Company Chest", "Grade 4 Artisanal Skybuilders' Astroscope", "Grade 4 Artisanal Skybuilders' Tool Belt", "Grade 4 Artisanal Skybuilders' Vest", "Grade 4 Artisanal Skybuilders' Tincture", "Grade 4 Artisanal Skybuilders' Sorbet"]
   Target Amount:
     description: Number of selected crafted items to make this run
     default: 10
@@ -27,13 +27,18 @@ configs:
     min: 0
     max: 999
   Monitor Gather Stalls:
-    description: Leave Diadem and let GatherBuddy Reborn re-enter if no gather activity is detected while waiting for materials
+    description: Leave Diadem and let GatherBuddy Reborn re-enter if no gather activity is detected while waiting for materials; None mode always monitors stalls
     default: false
   Gather Stall Timeout Seconds:
     description: Seconds with no gather activity before leaving Diadem so GatherBuddy Reborn can retry
     default: 10
     min: 3
     max: 120
+  Gather-only Time Limit Minutes:
+    description: Gathering duration when Craft Item is None; GBR is stopped and gathered items are approved when this expires
+    default: 60
+    min: 1
+    max: 1440
   Follow-up script:
     description: SND script to run after this Diadem script completes successfully
     default: ""
@@ -517,6 +522,7 @@ local function restorePandoraTurninAutomation(state)
 end
 
 local safeCallback
+local runGatherBuddyAuto
 
 local function isCraftingConditionActive()
     if not (Svc and Svc.Condition) then
@@ -633,6 +639,9 @@ local function stopVnav()
 end
 
 function OnStop()
+    if runGatherBuddyAuto ~= nil then
+        runGatherBuddyAuto(false)
+    end
     stopVnav()
 end
 
@@ -1079,9 +1088,15 @@ local function isNormalConditionActive()
         and Svc.Condition[CHARACTER_CONDITION.normalConditions] == true
 end
 
-local function waitForMaterialsOrGatherStall(materials)
-    log("Waiting for required Diadem materials.", true)
-    local monitorEnabled = Config and Config.Get and Config.Get("Monitor Gather Stalls") == true
+local function waitForMaterialsOrGatherStall(materials, deadline, forceMonitor)
+    if materials ~= nil then
+        log("Waiting for required Diadem materials.", true)
+    else
+        log("Gather-only mode is active.", true)
+    end
+
+    local monitorEnabled = forceMonitor == true
+        or (Config and Config.Get and Config.Get("Monitor Gather Stalls") == true)
     local stallTimeout = getGatherStallTimeout()
     local lastActivityTime = os.clock()
     local normalConditionStart = nil
@@ -1096,15 +1111,21 @@ local function waitForMaterialsOrGatherStall(materials)
     end
 
     while true do
-        if materialsFullyReady(materials) then
+        if deadline ~= nil and os.clock() >= deadline then
+            return "timeout"
+        end
+
+        if materials ~= nil and materialsFullyReady(materials) then
             log("All required materials detected.", true)
             return "ready"
         end
 
-        local snapshot = buildMaterialSnapshot(materials)
-        if snapshot ~= lastSnapshot then
-            log(snapshot)
-            lastSnapshot = snapshot
+        if materials ~= nil then
+            local snapshot = buildMaterialSnapshot(materials)
+            if snapshot ~= lastSnapshot then
+                log(snapshot)
+                lastSnapshot = snapshot
+            end
         end
 
         if monitorEnabled and isGatherActivityObserved() then
@@ -1145,7 +1166,7 @@ local function waitForMaterialsOrGatherStall(materials)
     end
 end
 
-local function runGatherBuddyAuto(enabled)
+runGatherBuddyAuto = function(enabled)
     local command = enabled and "/gbr auto on" or "/gbr auto off"
     log("Running " .. command, true)
     yield(command)
@@ -1688,10 +1709,63 @@ local function processCraftTurnInBatches(craftConfig, totalQuantity)
     return true
 end
 
+local function runGatherOnly(timeLimitMinutes)
+    runGatherBuddyAuto(true)
+    sleep(TIME.MEDIUM)
+    local deadline = os.clock() + (timeLimitMinutes * 60)
+
+    while true do
+        local result = waitForMaterialsOrGatherStall(nil, deadline, true)
+        if result == "timeout" then
+            log(string.format("Gather-only time limit reached after %d minute(s).", timeLimitMinutes), true)
+            break
+        end
+
+        if result == "stalled" then
+            if not leaveDiademIfNeeded() then
+                return nil
+            end
+            sleep(TIME.MEDIUM)
+        end
+    end
+
+    runGatherBuddyAuto(false)
+    sleep(TIME.MEDIUM)
+
+    if not leaveDiademIfNeeded() then
+        return nil
+    end
+
+    if not ensureFirmament() then
+        return nil
+    end
+
+    if not approveRemainingNonApprovedInventory() then
+        return nil
+    end
+
+    return runCompletionFollowUp()
+end
+
 local craftChoice = Config and Config.Get and tostring(Config.Get("Craft Item") or "") or ""
 local quantity = toInteger(Config and Config.Get and Config.Get("Target Amount") or 1, 1, 1, 999)
 local totalCycles = toInteger(Config and Config.Get and Config.Get("Turn-in Cycles") or 1, 1, 0, 999)
-local craftConfig = CRAFT_CHOICES[craftChoice]
+local gatherOnly = craftChoice == "None"
+local craftConfig = gatherOnly and nil or CRAFT_CHOICES[craftChoice]
+
+if gatherOnly then
+    local timeLimitMinutes = toInteger(
+        Config and Config.Get and Config.Get("Gather-only Time Limit Minutes") or 60,
+        60,
+        1,
+        1440
+    )
+    if not runGatherOnly(timeLimitMinutes) then
+        return
+    end
+    log("Gather-only run complete.")
+    return
+end
 
 if craftConfig == nil then
     fail("Invalid Craft Item config: " .. tostring(craftChoice))
