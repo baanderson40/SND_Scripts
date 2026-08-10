@@ -1,7 +1,7 @@
 --[=====[
 [[SND Metadata]]
 author: baanderson40
-version: 0.1.7
+version: 0.1.8
 description: |
   Gather Diadem materials, approve them in the Firmament, and optionally craft a selected Grade 4 Artisanal Skybuilders' item with Artisan before turning it in to Potkin.
   Requires an existing GatherBuddy Reborn auto-gather list with the required ingredients already enabled.
@@ -15,7 +15,7 @@ configs:
     description: Grade 4 Artisanal Skybuilders' craft to make and turn in
     default: "Grade 4 Artisanal Skybuilders' Icebox"
     is_choice: true
-    choices: ["None", "Grade 4 Artisanal Skybuilders' Icebox", "Grade 4 Artisanal Skybuilders' Chocobo Weathervane", "Grade 4 Artisanal Skybuilders' Company Chest", "Grade 4 Artisanal Skybuilders' Astroscope", "Grade 4 Artisanal Skybuilders' Tool Belt", "Grade 4 Artisanal Skybuilders' Vest", "Grade 4 Artisanal Skybuilders' Tincture", "Grade 4 Artisanal Skybuilders' Sorbet"]
+    choices: ["None", "Fishing", "Grade 4 Artisanal Skybuilders' Icebox", "Grade 4 Artisanal Skybuilders' Chocobo Weathervane", "Grade 4 Artisanal Skybuilders' Company Chest", "Grade 4 Artisanal Skybuilders' Astroscope", "Grade 4 Artisanal Skybuilders' Tool Belt", "Grade 4 Artisanal Skybuilders' Vest", "Grade 4 Artisanal Skybuilders' Tincture", "Grade 4 Artisanal Skybuilders' Sorbet"]
   Target Amount:
     description: Number of selected crafted items to make this run
     default: 10
@@ -35,7 +35,7 @@ configs:
     min: 3
     max: 120
   Gather-only Time Limit Minutes:
-    description: Gathering duration when Craft Item is None; GBR is stopped and gathered items are approved when this expires
+    description: Gathering duration when Craft Item is None or Fishing; GBR is stopped and the Diadem is exited when this expires
     default: 60
     min: 1
     max: 1440
@@ -75,9 +75,12 @@ local POTKIN_TARGET_COMMAND = '/target "Potkin"'
 local DIADEM_STALL_EXEMPT_POSITION = Vector3(-656.904, 285.346, -156.401)
 local DIADEM_STALL_EXEMPT_RADIUS = 30.0
 local DIADEM_NORMAL_CONDITION_TIMEOUT = 30
+local FISHING_SEGMENT_SECONDS = 30 * 60
+local FISHING_QUIT_ACTION_ID = 299
 
 local CHARACTER_CONDITION = {
     normalConditions = 1,
+    gathering = 6,
     mounted = 4,
     crafting = 5,
     occupiedMateriaExtractionAndRepair = 39,
@@ -85,6 +88,7 @@ local CHARACTER_CONDITION = {
     preparingToCraft = 41,
     betweenAreas = 45,
     betweenAreasForDuty = 51,
+    fishing = 43,
 }
 
 local TIME = {
@@ -1736,11 +1740,72 @@ local function runGatherOnly(timeLimitMinutes)
         return nil
     end
 
-    if not ensureFirmament() then
-        return nil
+    return runCompletionFollowUp()
+end
+
+local function quitFishing()
+    if not (Actions and Actions.ExecuteAction) then
+        return fail("Actions.ExecuteAction unavailable for fishing quit.")
     end
 
-    if not approveRemainingNonApprovedInventory() then
+    log("Fishing segment complete; using Quit action.", true)
+    local okQuit, quitError = pcall(function()
+        Actions.ExecuteAction(FISHING_QUIT_ACTION_ID)
+    end)
+    if not okQuit then
+        return fail("Failed to execute fishing Quit action: " .. tostring(quitError))
+    end
+
+    local cleared = waitUntil(function()
+        return Svc and Svc.Condition
+            and Svc.Condition[CHARACTER_CONDITION.gathering] ~= true
+            and Svc.Condition[CHARACTER_CONDITION.fishing] ~= true
+    end, 60, TIME.POLL, 0.5)
+    if not cleared then
+        return fail("Fishing or gathering condition did not clear after Quit action.")
+    end
+
+    return true
+end
+
+local function runFishing(timeLimitMinutes)
+    runGatherBuddyAuto(true)
+    sleep(TIME.MEDIUM)
+    local deadline = os.clock() + (timeLimitMinutes * 60)
+
+    while true do
+        local remaining = deadline - os.clock()
+        if remaining <= 0 then
+            break
+        end
+
+        local segmentDeadline = os.clock() + math.min(FISHING_SEGMENT_SECONDS, remaining)
+        local result = waitForMaterialsOrGatherStall(nil, segmentDeadline, true)
+        if result == "stalled" then
+            if not leaveDiademIfNeeded() then
+                return nil
+            end
+            sleep(TIME.MEDIUM)
+        elseif result == "timeout" then
+            if not quitFishing() then
+                return nil
+            end
+
+            if os.clock() >= deadline then
+                break
+            end
+
+            if not leaveDiademIfNeeded() then
+                return nil
+            end
+            sleep(TIME.MEDIUM)
+        end
+    end
+
+    runGatherBuddyAuto(false)
+    sleep(TIME.MEDIUM)
+
+    if not leaveDiademIfNeeded() then
         return nil
     end
 
@@ -1751,6 +1816,7 @@ local craftChoice = Config and Config.Get and tostring(Config.Get("Craft Item") 
 local quantity = toInteger(Config and Config.Get and Config.Get("Target Amount") or 1, 1, 1, 999)
 local totalCycles = toInteger(Config and Config.Get and Config.Get("Turn-in Cycles") or 1, 1, 0, 999)
 local gatherOnly = craftChoice == "None"
+local fishing = craftChoice == "Fishing"
 local craftConfig = gatherOnly and nil or CRAFT_CHOICES[craftChoice]
 
 if gatherOnly then
@@ -1764,6 +1830,20 @@ if gatherOnly then
         return
     end
     log("Gather-only run complete.")
+    return
+end
+
+if fishing then
+    local timeLimitMinutes = toInteger(
+        Config and Config.Get and Config.Get("Gather-only Time Limit Minutes") or 60,
+        60,
+        1,
+        1440
+    )
+    if not runFishing(timeLimitMinutes) then
+        return
+    end
+    log("Fishing run complete.")
     return
 end
 
