@@ -6,11 +6,15 @@
 MGP centered SND lua scripts. 
 
 ## Scripts
-- Sell TT Cards
-  - Automatically sells all Triple Triad cards in inventory
-- Triple Triad Farm
-  - Automatically farm MGP by playing Triple Triad NPCs
-  - Automatically uses MGP VIP card
+- [Sell TT Cards](Sell%20TT%20Cards.lua)
+  - Sells available Triple Triad cards through the card trade-in window. Open that window before starting; the script does not navigate to the vendor.
+- [Triple Triad Farm](Triple%20Triad%20Farm.lua)
+  - Farms MGP by playing configured numbers of games against Klynthota, Vorsaile Heuloix, and Hanagasa.
+  - Supports Gold Saucer VIP Cards.
+
+## Requirements and setup
+- Triple Triad Farm requires Saucy and vnavmesh. Configure the number of games for each NPC; set a count to 0 to skip that NPC.
+- Sell TT Cards requires SND and an already-open card trade-in window.
 
 ## Installation
 - Copy script's Github URL and paste into SND GitHub URL option to import and update.

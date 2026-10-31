@@ -1,13 +1,18 @@
 ### Support via [baanderson40's ko-fi](https://ko-fi.com/baanderson40)
 ---
 
-# FATE scripts
+# Grand Company trade scripts
 
 Grand Company centered SND lua scripts. 
 
 ## Scripts
-- Sigmascape (O5N) Parts Trade
+- [Sigmascape (O5N) Parts Trade](Sigmascape%20%28O5N%29%20Parts%20Trade.lua)
   - Automatically trades O5N parts to NPC for gear and trades the gear in to the Grand Company for seals.
+
+## Requirements and setup
+- Requires AutoRetainer, Lifestream, and Pandora's Box in addition to SND.
+- Enable AutoRetainer Grand Company Delivery and Pandora's Box Auto-select Turn-Ins / Automatically Confirm features.
+- Have the O5N parts available before running.
 
 ## Installation
 - Copy script's Github URL and paste into SND GitHub URL option to import and update.

@@ -16,40 +16,26 @@ Collection of various SND scripts
   - Used by multiple users and known to work reliably, though minor bugs or unexpected issues are still possible.
 
 ## Scripts
-- AutoDuty
-  - AutoDuty Multibox Starter
+Each folder README lists its scripts, setup notes, and requirements.
 
-- Auto Retainer
-  - Auto Repricer
-  - Login Repricer
-  - Process AutoRetainer
-    
-- Cosmic Exploration
-  - Cosmic Drone Artifacts
-    
-- Dungeons
-  - Mathematics Farm
-    
-- Fate
-  - Fate Toolkit Helper
-    
-- Guild Company Seals
-  - Sigmascape Parts Trade
-    
-- Manderville Gold Saucer Point
-  - Sell TT Cards
-  - Triple Triad Farm
+| Folder | Contents |
+| --- | --- |
+| [AutoDuty](AutoDuty/README.md) | Multibox startup and hostile-target action rotation. |
+| [Cosmic Exploration](Cosmic%20Exploration/Readme.md) | Red alert, time, and weather jumpers; ICE/AutoRetainer integration. |
+| [Crafting & Gathering](Crafting%20%26%20Gathering/README.md) | Diadem crafting/gathering, inventory monitoring, Ocean Fishing startup, and AutoRetainer handoffs. |
+| [Dungeons](Dungeons/readme.md) | Mathematics and Poetic tome farming with relic-material purchasing. |
+| [FATEs](FATEs/readme.md) | FateToolkit helper and inventory watcher. |
+| [Free Company](Free%20Company/README.md) | Magitek Repair Material crafting. |
+| [GC Trade Scripts](GC%20Trade%20Scripts/Readme.md) | Sigmascape parts exchange for Grand Company seals. |
+| [Hunt](Hunt/README.md) | Hunt flag navigation and target handoff. |
+| [MGP](MGP/Readme.md) | Triple Triad farming and card sales. |
+| [PVP](PVP/Readme.md) | Casual Crystalline Conflict automation. |
+| [Useful Scripts](Useful%20Scripts/README.md) | Diagnostics, navigation tools, helpers, and a script template. |
 
-- Occult Crescent
-   - South Horn - Silver.lua
-
-- PVP
-   - Causal Match PVP
-
-- Useful Scripts
-  - Random scripts for different testing in snd
+`knowledge base/` contains reference material, not the runnable script catalog.
 
 ## Installation
+- Requires SomethingNeedDoing (SND). Check each script's metadata, configuration, and folder README for additional plugins and setup before running it.
 - Copy script's Github URL and paste into SND GitHub URL option to import and update.
 <img width="1186" height="297" alt="image" src="https://github.com/user-attachments/assets/e862f1f7-d8ae-4957-9e2c-d5fc471351cc" />
 
