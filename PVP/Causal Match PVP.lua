@@ -330,9 +330,9 @@ local function classJobId()
 end
 
 local function objectPos(name)
-    if not (Entity and Entity.GetEntityByName) then return 0, 0, 0 end
-    local e = Entity.GetEntityByName(name)
-    if not (e and e.Position) then return 0, 0, 0 end
+    if not name or name == "" or not (Entity and Entity.GetEntityByName) then return nil end
+    local ok, e = pcall(Entity.GetEntityByName, name)
+    if not ok or not (e and e.Position) then return nil end
     return e.Position.X or 0, e.Position.Y or 0, e.Position.Z or 0
 end
 
@@ -350,6 +350,7 @@ end
 
 local function distToName(name)
     local x2,y2,z2 = objectPos(name)
+    if x2 == nil then return nil end
     return distToXYZ(x2,y2,z2)
 end
 
@@ -410,28 +411,26 @@ local function checkDeathAndReapplyRotation()
 end
 
 -- =========================================================
--- Enemy extraction (always returns strings)
+-- Enemy extraction (nil means the party-list entry is not currently available)
 -- =========================================================
 local function getEnemyName(slotIndex)
     if not IsAddonReady("PvPMKSPartyList3") then
-        return myName()
+        return nil
     end
 
-    local addon = Addons.GetAddon("PvPMKSPartyList3")
-    local node = addon:GetNode(1, 5, slotIndex, 6, 18, 21)
+    local ok, addon = pcall(Addons.GetAddon, "PvPMKSPartyList3")
+    if not ok or not addon then return nil end
+    local nodeOk, node = pcall(function()
+        return addon:GetNode(1, 5, slotIndex, 6, 18, 21)
+    end)
+    if not nodeOk or not node then return nil end
 
-    if type(node) == "table" and node.Text ~= nil and tostring(node.Text) ~= "" then
-        return tostring(node.Text)
+    local textOk, txt = pcall(function() return node.Text end)
+    if textOk and txt ~= nil then
+        local name = trimString(tostring(txt))
+        if name ~= "" then return name end
     end
-
-    if type(node) == "userdata" then
-        local ok, txt = pcall(function() return node.Text end)
-        if ok and txt ~= nil and tostring(txt) ~= "" then
-            return tostring(txt)
-        end
-    end
-
-    return myName()
+    return nil
 end
 
 local function refreshEnemyNames()
@@ -458,12 +457,84 @@ timerMovedFromBaseline = false
 portraitHelloThreshold = nil
 portraitHelloSent = false
 goodMatchSent = false
+local resultsHandled = false
+local resultsVisibleSince = nil
+local lastResultsLeaveAttempt = 0
+local resultsVnavStopped = false
 completedMatches = 0
 stopAfterCurrentMatch = false
 limitStopTriggered = false
 followUpIssued = false
 local equipGearsetSlot = -1
 local gearsetEquipped = false
+
+local crystalSampleAt = 0
+local crystalLastPosition = nil
+local crystalVelocity = { x = 0, y = 0, z = 0 }
+local crystalOffset = nil
+local lastCrystalCommandTarget = nil
+
+local function resetCrystalPrediction()
+    crystalSampleAt = 0
+    crystalLastPosition = nil
+    crystalVelocity = { x = 0, y = 0, z = 0 }
+    crystalOffset = nil
+    lastCrystalCommandTarget = nil
+end
+
+local function updateCrystalPrediction()
+    local now = os.clock()
+    if now - crystalSampleAt < 0.2 then return nil end
+
+    local x, y, z = objectPos(CRYSTAL_NAME)
+    if x == nil then
+        resetCrystalPrediction()
+        return nil
+    end
+
+    if not crystalOffset then
+        crystalOffset = { x = randInt(0, 2), z = randInt(0, 2) }
+    end
+
+    if crystalLastPosition then
+        local dt = now - crystalSampleAt
+        local dx = x - crystalLastPosition.x
+        local dy = y - crystalLastPosition.y
+        local dz = z - crystalLastPosition.z
+        local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        if dt <= 0 or dt > 1.0 or distance > 12 then
+            crystalVelocity = { x = 0, y = 0, z = 0 }
+        elseif distance < 0.05 then
+            crystalVelocity = { x = 0, y = 0, z = 0 }
+        else
+            local vx, vy, vz = dx / dt, dy / dt, dz / dt
+            local reverse = crystalVelocity.x * vx + crystalVelocity.y * vy + crystalVelocity.z * vz < 0
+            if reverse then
+                crystalVelocity = { x = vx, y = vy, z = vz }
+            else
+                local smoothing = 0.5
+                crystalVelocity.x = crystalVelocity.x * (1 - smoothing) + vx * smoothing
+                crystalVelocity.y = crystalVelocity.y * (1 - smoothing) + vy * smoothing
+                crystalVelocity.z = crystalVelocity.z * (1 - smoothing) + vz * smoothing
+            end
+        end
+    end
+
+    crystalSampleAt = now
+    crystalLastPosition = { x = x, y = y, z = z }
+
+    local leadX = crystalVelocity.x * 0.8 + crystalOffset.x
+    local leadY = crystalVelocity.y * 0.8
+    local leadZ = crystalVelocity.z * 0.8 + crystalOffset.z
+    local leadDistance = math.sqrt(leadX * leadX + leadY * leadY + leadZ * leadZ)
+    if leadDistance > 10 then
+        local scale = 10 / leadDistance
+        leadX, leadY, leadZ = leadX * scale, leadY * scale, leadZ * scale
+    end
+
+    return x + leadX, y + leadY, z + leadZ
+end
 
 if GEARSET_SLOT >= 1 then
     equipGearsetSlot = math.floor(GEARSET_SLOT) - 1
@@ -531,9 +602,13 @@ local function runStartupLifestreamCommand()
     end
 
     Log("issuing lifestream command -> %s", LIFESTREAM_COMMAND)
-    pcall(function()
+    local executeOk, executeErr = pcall(function()
         IPC.Lifestream.ExecuteCommand(LIFESTREAM_COMMAND)
     end)
+    if not executeOk then
+        Log("lifestream command failed: %s", tostring(executeErr))
+        return false
+    end
 
     local started = WaitUntil(function()
         return GetCondition(CharacterCondition.casting, true)
@@ -544,7 +619,7 @@ local function runStartupLifestreamCommand()
     end, 2.0, TIME.POLL, 0.0)
 
     if not started then
-        Log("no lifestream activity detected after command; continuing")
+        Log("no lifestream activity detected after command; startup aborted")
         return false
     end
 
@@ -607,6 +682,11 @@ local function resetAllState(reason)
     portraitHelloThreshold = nil
     portraitHelloSent = false
     goodMatchSent = false
+    resultsHandled = false
+    resultsVisibleSince = nil
+    lastResultsLeaveAttempt = 0
+    resultsVnavStopped = false
+    resetCrystalPrediction()
 
     if reason then Log("reset: %s", tostring(reason)) end
 end
@@ -629,13 +709,20 @@ if SET_GARO_TITLES then
     yield("/title set " .. TITLE_2); Sleep(3)
 end
 
-equipConfiguredGearset()
-runStartupLifestreamCommand()
+local startupReady = equipConfiguredGearset()
+if startupReady then
+    startupReady = runStartupLifestreamCommand()
+end
 
--- =========================================================
--- Initial DF clicks
--- =========================================================
-Instances.DutyFinder:QueueRoulette(40)
+if startupReady then
+    -- =========================================================
+    -- Initial DF clicks
+    -- =========================================================
+    Instances.DutyFinder:QueueRoulette(40)
+else
+    Log("startup preparation failed -> not queueing")
+    RUN_LOOP = false
+end
 
 -- =========================================================
 -- Main loop
@@ -647,40 +734,52 @@ while RUN_LOOP do
     -- Match-end detector
     -- =====================================================
     if inDuty then
-        local endScreenStable = WaitUntil(function()
-            return IsAddonVisible("MKSRecord")
-        end, 0.5, 0.10, 0.25)
+        local resultsVisible = IsAddonVisible("MKSRecord")
+        if resultsVisible then
+            resultsVisibleSince = resultsVisibleSince or os.clock()
+        else
+            resultsVisibleSince = nil
+        end
+        local endScreenStable = resultsVisibleSince ~= nil
+            and (os.clock() - resultsVisibleSince) >= 0.25
 
         if endScreenStable then
-            completedMatches = completedMatches + 1
-            if MATCH_LIMIT > 0 then
-                Log("completed match %d/%d", completedMatches, MATCH_LIMIT)
-                if completedMatches >= MATCH_LIMIT then
-                    stopAfterCurrentMatch = true
-                    limitStopTriggered = true
+            if not resultsHandled then
+                resultsHandled = true
+                completedMatches = completedMatches + 1
+                if MATCH_LIMIT > 0 then
+                    Log("completed match %d/%d", completedMatches, MATCH_LIMIT)
+                    if completedMatches >= MATCH_LIMIT then
+                        stopAfterCurrentMatch = true
+                        limitStopTriggered = true
+                    end
+                else
+                    Log("completed match %d", completedMatches)
                 end
-            else
-                Log("completed match %d", completedMatches)
+
+                if SEND_GOOD_MATCH_ON_RESULTS and not goodMatchSent then
+                    yield('/quickchat "Good Match"')
+                    goodMatchSent = true
+                    Log("quickchat Good Match requested on results screen")
+                end
             end
 
-            if SEND_GOOD_MATCH_ON_RESULTS and not goodMatchSent then
-                yield('/quickchat "Good Match"')
-                goodMatchSent = true
-                Log("quickchat Good Match sent on results screen")
-                Sleep(0.5)
+            if not resultsVnavStopped then
+                yield("/vnav stop")
+                resultsVnavStopped = true
             end
 
-            Log("match ended (MKSRecord visible) -> leaving duty")
-            yield("/vnav stop")
-
-            if InstancedContent and InstancedContent.LeaveCurrentContent then
-                pcall(function() InstancedContent.LeaveCurrentContent() end)
-            else
-                Log("ERROR: InstancedContent.LeaveCurrentContent unavailable")
+            if os.clock() - lastResultsLeaveAttempt >= 2.0 then
+                Log("match ended (MKSRecord visible) -> leaving duty")
+                if InstancedContent and InstancedContent.LeaveCurrentContent then
+                    pcall(function() InstancedContent.LeaveCurrentContent() end)
+                else
+                    Log("ERROR: InstancedContent.LeaveCurrentContent unavailable")
+                end
+                lastResultsLeaveAttempt = os.clock()
             end
 
-            Sleep(2.0)
-            resetAllState("left duty (post-match)")
+            Sleep(0.2)
             goto continue_loop
         end
     end
@@ -689,7 +788,7 @@ while RUN_LOOP do
     -- Out of duty: reset + queue
     -- =====================================================
     if not inDuty then
-        if inMatchLive or announcedEntered or ranSafetyMoveThisDuty or baselineCaptured then
+        if inMatchLive or announcedEntered or ranSafetyMoveThisDuty or baselineCaptured or resultsHandled then
             resetAllState("out of duty")
         end
 
@@ -820,21 +919,41 @@ while RUN_LOOP do
         local territoryId = Svc.ClientState.TerritoryType
 
         local shouldHold = false
-        local crystalNear = distToName(CRYSTAL_NAME) < 10
+        local crystalDistance = distToName(CRYSTAL_NAME)
+        local crystalNear = crystalDistance ~= nil and crystalDistance < 10
         if crystalNear then
+            local unresolvedEnemy = false
             for i = 1, 5 do
-                if distToName(enemyNames[i]) < 10 then
-                    shouldHold = true
-                    break
+                if not enemyNames[i] then
+                    unresolvedEnemy = true
+                else
+                    local enemyDistance = distToName(enemyNames[i])
+                    if enemyDistance and enemyDistance < 10 then
+                        shouldHold = true
+                        break
+                    end
                 end
+            end
+            if unresolvedEnemy then
+                enemyNames = refreshEnemyNames()
             end
         end
 
         if not shouldHold then
-            local cx, cy, cz = objectPos(CRYSTAL_NAME)
-            local rX = randInt(0, 2)
-            local rZ = randInt(0, 2)
-            yield(string.format("/vnavmesh moveto %f %f %f", cx + rX, cy, cz + rZ))
+            local tx, ty, tz = updateCrystalPrediction()
+            if tx ~= nil then
+                local target = { x = tx, y = ty, z = tz }
+                local movedEnough = not lastCrystalCommandTarget
+                    or distBetween(target.x, target.y, target.z,
+                        lastCrystalCommandTarget.x, lastCrystalCommandTarget.y, lastCrystalCommandTarget.z) >= 0.75
+                if movedEnough then
+                    yield(string.format("/vnavmesh moveto %f %f %f", tx, ty, tz))
+                    lastCrystalCommandTarget = target
+                end
+            end
+        else
+            -- Continue sampling while holding so velocity prediction stays current.
+            updateCrystalPrediction()
         end
 
         local spawnSide = -1
@@ -866,7 +985,7 @@ while RUN_LOOP do
         end
 
         lbTick = lbTick + 1
-        if lbTick > 5 and inDuty and not isDead() then
+        if lbTick > 14 and inDuty and not isDead() then
             lbTick = 0
             local jobId = classJobId()
             for i = 1, #LIMIT_BREAK_BY_JOB do
@@ -878,7 +997,7 @@ while RUN_LOOP do
         end
     end
 
-    Sleep(0.50)
+    Sleep(0.20)
     ::continue_loop::
 end
 

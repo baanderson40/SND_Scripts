@@ -16,6 +16,9 @@ Collection of various SND scripts
   - Used by multiple users and known to work reliably, though minor bugs or unexpected issues are still possible.
 
 ## Scripts
+- AutoDuty
+  - AutoDuty Multibox Starter
+
 - Auto Retainer
   - Auto Repricer
   - Login Repricer
